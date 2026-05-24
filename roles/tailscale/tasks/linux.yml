@@ -29,6 +29,7 @@
     group: root
     mode: "0644"
   become: true
+  notify: refresh apt cache (tailscale)
   when: tailscale_state == 'present'
 
 - name: Remove Tailscale apt source (state=absent)
@@ -38,10 +39,11 @@
   become: true
   when: tailscale_state == 'absent'
 
-- name: Refresh apt cache after Tailscale source change
-  ansible.builtin.apt:
-    update_cache: true
-  become: true
+# apt cache refresh is now handler-driven (notified by the source-config copy task)
+# so it only runs when the source file actually changes.
+
+- name: Flush apt cache handler before install
+  ansible.builtin.meta: flush_handlers
   when: tailscale_state == 'present'
 
 - name: Remove Tailscale apt signing key

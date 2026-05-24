@@ -5,7 +5,7 @@
 - name: Update package cache
   ansible.builtin.package:
     update_cache: true
-  when: ansible_os_family in ['Debian', 'RedHat']
+  when: ansible_facts['os_family'] in ['Debian', 'RedHat']
   tags:
     - packages
     - update
@@ -51,14 +51,14 @@
   locale_gen:
     name: "{{ common_locale }}"
     state: present
-  when: ansible_os_family == 'Debian'
+  when: ansible_facts['os_family'] == 'Debian'
   tags:
     - system
     - locale
 
 - name: Set system locale
   ansible.builtin.command: localectl set-locale LANG={{ common_locale }}
-  when: ansible_os_family == 'RedHat'
+  when: ansible_facts['os_family'] == 'RedHat'
   changed_when: false
   tags:
     - system
@@ -77,7 +77,7 @@
     name: "{{ ntp_package_name }}"
     state: present
   vars:
-    ntp_package_name: "{{ 'ntp' if ansible_os_family == 'Debian' else 'chrony' }}"
+    ntp_package_name: "{{ 'ntp' if ansible_facts['os_family'] == 'Debian' else 'chrony' }}"
   tags:
     - ntp
     - time
@@ -89,8 +89,8 @@
     backup: true
     mode: "0644"
   vars:
-    ntp_config_template: "{{ 'ntp.conf.j2' if ansible_os_family == 'Debian' else 'chrony.conf.j2' }}"
-    ntp_config_path: "{{ '/etc/ntp.conf' if ansible_os_family == 'Debian' else '/etc/chrony.conf' }}"
+    ntp_config_template: "{{ 'ntp.conf.j2' if ansible_facts['os_family'] == 'Debian' else 'chrony.conf.j2' }}"
+    ntp_config_path: "{{ '/etc/ntp.conf' if ansible_facts['os_family'] == 'Debian' else '/etc/chrony.conf' }}"
   notify: restart ntp
   tags:
     - ntp
@@ -102,7 +102,7 @@
     state: started
     enabled: true
   vars:
-    ntp_service_name: "{{ 'ntp' if ansible_os_family == 'Debian' else 'chronyd' }}"
+    ntp_service_name: "{{ 'ntp' if ansible_facts['os_family'] == 'Debian' else 'chronyd' }}"
   tags:
     - ntp
     - time
@@ -197,7 +197,7 @@
   ansible.builtin.package:
     name: unattended-upgrades
     state: present
-  when: ansible_os_family == 'Debian' and common_auto_security_updates | default(true)
+  when: ansible_facts['os_family'] == 'Debian' and common_auto_security_updates | default(true)
   tags:
     - security
     - updates
@@ -207,7 +207,7 @@
     src: 50unattended-upgrades.j2
     dest: /etc/apt/apt.conf.d/50unattended-upgrades
     mode: "0644"
-  when: ansible_os_family == 'Debian' and common_auto_security_updates | default(true)
+  when: ansible_facts['os_family'] == 'Debian' and common_auto_security_updates | default(true)
   notify: restart unattended-upgrades
   tags:
     - security
@@ -300,7 +300,7 @@
 - name: Clean package cache
   ansible.builtin.command: "{{ package_clean_command }}"
   vars:
-    package_clean_command: "{{ 'apt-get clean' if ansible_os_family == 'Debian' else 'yum clean all' }}"
+    package_clean_command: "{{ 'apt-get clean' if ansible_facts['os_family'] == 'Debian' else 'yum clean all' }}"
   changed_when: false
   when: common_clean_package_cache | default(true)
   tags:

@@ -1,0 +1,34 @@
+---
+# baseline role — security defaults for any Linux host under ansible-pull.
+# Linux-only; macOS hosts that include this role short-circuit to a no-op.
+
+baseline_state: present
+
+# Firewall — opt-in. Cluster hosts (k3s, OrbStack) keep this false to
+# avoid breaking pod-to-pod traffic; non-cluster hosts (styx) flip it on.
+baseline_firewall_enabled: false
+baseline_firewall_allow_from_tailnet_only: true
+baseline_firewall_extra_ports: []         # list of "{port}/{tcp|udp}"
+
+# Hostname enforcement — opt-in. Most hosts let the cloud-init/OS keep
+# the hostname; this is here for fresh-from-PXE provisioning later.
+baseline_set_hostname: false
+
+# Unattended upgrades
+baseline_unattended_auto_reboot: true
+baseline_unattended_auto_reboot_time: "03:00"
+
+# SSH hardening
+baseline_ssh_permit_root_login: "no"
+baseline_ssh_password_auth: "no"
+baseline_ssh_max_auth_tries: 3
+
+# fail2ban
+baseline_fail2ban_bantime: "1h"
+baseline_fail2ban_findtime: "10m"
+baseline_fail2ban_maxretry: 5
+
+# NTP
+baseline_ntp_servers:
+  - time.cloudflare.com
+  - time.google.com

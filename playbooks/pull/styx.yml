@@ -1,0 +1,16 @@
+---
+# Pull-mode playbook for styx.
+# Runs daily at 02:00 via crontab as the `ansible` user.
+
+- name: Styx — Drift Correction
+  hosts: styx
+  gather_facts: true
+
+  pre_tasks:
+    - name: Gather minimal facts
+      ansible.builtin.setup:
+        gather_subset: [min]
+
+  roles:
+    - role: baseline
+      tags: [baseline]

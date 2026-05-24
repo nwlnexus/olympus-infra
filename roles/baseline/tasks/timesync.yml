@@ -1,0 +1,41 @@
+---
+- name: Ensure /etc/systemd/timesyncd.conf.d exists
+  ansible.builtin.file:
+    path: /etc/systemd/timesyncd.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  when: baseline_state == "present"
+
+- name: Configure systemd-timesyncd NTP servers
+  ansible.builtin.copy:
+    dest: /etc/systemd/timesyncd.conf.d/99-baseline.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # Managed by Ansible (baseline role)
+      [Time]
+      NTP={{ baseline_ntp_servers | join(' ') }}
+      FallbackNTP=pool.ntp.org
+  become: true
+  notify: restart timesyncd
+  when: baseline_state == "present"
+
+- name: Enable and start systemd-timesyncd
+  ansible.builtin.service:
+    name: systemd-timesyncd
+    enabled: true
+    state: started
+  become: true
+  when: baseline_state == "present"
+
+- name: Remove time sync override (state=absent)
+  ansible.builtin.file:
+    path: /etc/systemd/timesyncd.conf.d/99-baseline.conf
+    state: absent
+  become: true
+  notify: restart timesyncd
+  when: baseline_state == "absent"

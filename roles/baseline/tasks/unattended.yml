@@ -1,0 +1,41 @@
+---
+- name: Install unattended-upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+    update_cache: false
+  become: true
+  when: baseline_state == "present"
+
+- name: Configure unattended-upgrades policy
+  ansible.builtin.template:
+    src: 50unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: baseline_state == "present"
+
+- name: Enable unattended-upgrades periodic timer
+  ansible.builtin.template:
+    src: 20auto-upgrades.j2
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: baseline_state == "present"
+
+# Removal: drop our config files only. We do NOT uninstall unattended-upgrades
+# (operators may rely on it for other reasons) and we do NOT disable the
+# apt-daily-upgrade.timer (it harmlessly no-ops without config files present).
+- name: Remove unattended-upgrades config (state=absent)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/apt.conf.d/50unattended-upgrades
+    - /etc/apt/apt.conf.d/20auto-upgrades
+  become: true
+  when: baseline_state == "absent"

@@ -1,0 +1,36 @@
+---
+# Linux-only — macOS hosts get a separate baseline later.
+- name: baseline — skip on non-Linux
+  ansible.builtin.meta: end_host
+  when: ansible_os_family == "Darwin"
+
+# Order matters: SSH first (avoid lockout when UFW comes up later),
+# then hardening pieces, then UFW last (so any extra-ports config from
+# later tasks/host_vars is already in place before deny-by-default).
+- name: baseline — SSH hardening
+  ansible.builtin.include_tasks: ssh.yml
+  tags: [baseline, baseline-ssh]
+
+- name: baseline — unattended upgrades
+  ansible.builtin.include_tasks: unattended.yml
+  tags: [baseline, baseline-unattended]
+
+- name: baseline — fail2ban
+  ansible.builtin.include_tasks: fail2ban.yml
+  tags: [baseline, baseline-fail2ban]
+
+- name: baseline — time sync
+  ansible.builtin.include_tasks: timesync.yml
+  tags: [baseline, baseline-timesync]
+
+- name: baseline — logrotate for ansible-pull
+  ansible.builtin.include_tasks: logrotate.yml
+  tags: [baseline, baseline-logrotate]
+
+- name: baseline — optional hostname enforcement
+  ansible.builtin.include_tasks: hostname.yml
+  tags: [baseline, baseline-hostname]
+
+- name: baseline — firewall (UFW)
+  ansible.builtin.include_tasks: firewall.yml
+  tags: [baseline, baseline-firewall]

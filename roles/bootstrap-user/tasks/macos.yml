@@ -63,15 +63,8 @@
   become: true
   when: bootstrap_user_state == "present"
 
-- name: Ensure ansible-pull log directory exists (macOS)
-  ansible.builtin.file:
-    path: /var/log/ansible-pull
-    state: directory
-    owner: "{{ bootstrap_user_name }}"
-    group: admin
-    mode: "0755"
-  become: true
-  when: bootstrap_user_state == "present"
+# `/var/log/ansible-pull/` is owned by the `ansible-pull` role
+# (group: admin on Darwin). Duplicating here breaks idempotency.
 
 - name: Remove ansible user (macOS)
   ansible.builtin.command: sysadminctl -deleteUser {{ bootstrap_user_name }}

@@ -218,7 +218,7 @@ common_temp_dirs_to_clean:
 
 # Swap Configuration
 common_swap_enabled: true
-common_swap_size: "{{ ansible_memtotal_mb // 2 }}M"
+common_swap_size: "{{ ansible_facts['memtotal_mb'] // 2 }}M"
 common_swap_swappiness: 10
 
 # Locale Settings

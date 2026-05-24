@@ -8,6 +8,19 @@
     update_cache: true
   become: true
 
+# One-shot migration: remove legacy cron entries from older cron-based
+# ansible-pull deployments. Configured via `ansible_pull_legacy_users` in
+# host_vars (default: []). Idempotent — `state: absent` cron task is a no-op
+# once the legacy entry is gone.
+- name: Remove legacy ansible-pull cron from old owners (one-shot migration)
+  ansible.builtin.cron:
+    name: olympus-ansible-pull
+    user: "{{ item }}"
+    state: absent
+  loop: "{{ ansible_pull_legacy_users }}"
+  become: true
+  when: ansible_pull_state == "present"
+
 # ── present path ──────────────────────────────────────────────────────────────
 
 - name: Ensure /opt/ansible-pull and log directories exist

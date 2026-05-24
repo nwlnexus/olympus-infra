@@ -1,0 +1,25 @@
+---
+- name: Install logrotate (idempotent — typically already installed)
+  ansible.builtin.apt:
+    name: logrotate
+    state: present
+    update_cache: false
+  become: true
+  when: baseline_state == "present"
+
+- name: Configure logrotate for ansible-pull logs
+  ansible.builtin.template:
+    src: ansible-pull.logrotate.j2
+    dest: /etc/logrotate.d/ansible-pull
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: baseline_state == "present"
+
+- name: Remove ansible-pull logrotate config (state=absent)
+  ansible.builtin.file:
+    path: /etc/logrotate.d/ansible-pull
+    state: absent
+  become: true
+  when: baseline_state == "absent"

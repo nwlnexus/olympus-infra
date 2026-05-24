@@ -1,0 +1,9 @@
+---
+all:
+  hosts:
+    styx:
+      ansible_host: 127.0.0.1
+      ansible_connection: local
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    ansible_user: ansible   # ansible-pull runs locally as the service user

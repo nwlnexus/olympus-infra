@@ -16,8 +16,11 @@ galaxy_info:
     - hardening
     - baseline
 
-dependencies:
-  - role: common
+dependencies: []
+# Intentionally no dependency on `common` — baseline stands alone. The
+# `common` role has bit-rotted code paths (NTP/timesyncd conflict, missing
+# templates, etc.) tracked separately. Hosts that want common's behavior
+# should include it explicitly in their playbook.
 
 collections:
   - ansible.posix

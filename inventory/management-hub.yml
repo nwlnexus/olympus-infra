@@ -6,3 +6,7 @@ all:
       ansible_connection: local
   vars:
     ansible_python_interpreter: /usr/bin/python3
+    # k3s kubeconfig — referenced by 1password-connect role.
+    # Inline here (not in group_vars/) because ansible-pull's single-file `-i`
+    # flag has edge cases around relative group_vars resolution.
+    k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml

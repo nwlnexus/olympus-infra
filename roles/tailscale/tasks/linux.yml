@@ -129,10 +129,12 @@
 - name: Join Tailscale network with ephemeral key
   ansible.builtin.command: >
     tailscale up
+    --reset
     --authkey={{ ts_auth_key.json.key }}
     --hostname={{ tailscale_hostname }}
-    --accept-routes={{ tailscale_accept_routes | lower }}
-    {% if tailscale_advertise_exit_node %}--advertise-exit-node{% endif %}
+    --accept-routes={{ tailscale_accept_routes | default(false) | lower }}
+    {% if tailscale_advertise_exit_node | default(false) %}--advertise-exit-node{% endif %}
+    {% if 'ssh' in (tailscale_services | default([])) %}--ssh{% endif %}
   become: true
   no_log: true
   changed_when: true

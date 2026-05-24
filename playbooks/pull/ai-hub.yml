@@ -9,6 +9,9 @@
   gather_facts: true
 
   roles:
+    - role: baseline
+      tags: [baseline]
+
     # Keep OrbStack k8s running
     - role: orbstack
       tags: [orbstack]

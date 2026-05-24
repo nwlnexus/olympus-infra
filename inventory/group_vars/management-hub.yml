@@ -3,9 +3,12 @@
 # Secrets come from 1Password Connect via External Secrets Operator
 ansible_user: ansible
 
-# k3s
+# k3s (kubeconfig path needed by 1password-connect even though k3s role
+# itself doesn't run in pull mode — k3s defaults aren't loaded when k3s
+# role isn't included in the play)
 k3s_state: present
 k3s_role: server
+k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
 
 # Tailscale
 tailscale_state: present
@@ -16,6 +19,3 @@ cloudflared_state: present
 
 # 1Password Connect — still managed by Ansible (prerequisite for ESO)
 onepassword_connect_state: present
-
-# ArgoCD — still managed by Ansible (prerequisite for GitOps)
-argocd_state: present

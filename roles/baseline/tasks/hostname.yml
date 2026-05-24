@@ -1,0 +1,8 @@
+---
+- name: Set hostname (when baseline_set_hostname is true)
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_set_hostname | bool

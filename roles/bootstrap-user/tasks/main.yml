@@ -1,8 +1,8 @@
 ---
 - name: Bootstrap user — Linux
   ansible.builtin.include_tasks: linux.yml
-  when: ansible_os_family != "Darwin"
+  when: ansible_facts['os_family'] != "Darwin"
 
 - name: Bootstrap user — macOS
   ansible.builtin.include_tasks: macos.yml
-  when: ansible_os_family == "Darwin"
+  when: ansible_facts['os_family'] == "Darwin"

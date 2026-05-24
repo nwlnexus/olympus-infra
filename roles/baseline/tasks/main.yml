@@ -1,0 +1,10 @@
+---
+# Linux-only — macOS hosts get a separate baseline later.
+- name: baseline — skip on non-Linux
+  ansible.builtin.meta: end_host
+  when: ansible_os_family == "Darwin"
+
+# Per-concern task files added in subsequent tasks of this plan.
+# Order is intentional: SSH hardening first (so we don't lock ourselves out
+# after UFW), UFW last (so any new firewall rules from extra_ports apply
+# before the deny-by-default sweep takes effect).

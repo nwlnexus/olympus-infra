@@ -8,10 +8,21 @@
     update_cache: true
   become: true
 
+- name: Remove legacy ansible-pull cron from old owners (one-shot migration)
+  ansible.builtin.cron:
+    name: olympus-ansible-pull
+    user: "{{ item }}"
+    state: absent
+  loop: "{{ ansible_pull_legacy_users }}"
+  when:
+    - ansible_pull_state == "present"
+    - ansible_pull_user != item
+  become: true
+
 - name: Schedule ansible-pull via crontab (Linux)
   ansible.builtin.cron:
     name: olympus-ansible-pull
-    user: "{{ ansible_user }}"
+    user: "{{ ansible_pull_user }}"
     hour: "{{ ansible_pull_hour }}"
     minute: "{{ ansible_pull_minute }}"
     job: >-

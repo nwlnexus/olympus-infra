@@ -1,8 +1,17 @@
 ---
 ansible_pull_state: present
-ansible_pull_repo: https://github.com/nwlucas/olympus-infra.git
+ansible_pull_repo: https://github.com/nwlnexus/olympus-infra.git
 ansible_pull_hour: "2"
 ansible_pull_minute: "0"
+
+# Service identity that owns the cron job, log dir, and pull workspace.
+# Changed from "{{ ansible_user }}" (deployer) to a dedicated service user
+# so the cron survives deployer-account changes.
+ansible_pull_user: ansible
+
+# Old cron owners to clean up by the one-shot migration task.
+# Default empty; populate via host_vars when migrating an existing host.
+ansible_pull_legacy_users: []
 
 # Set per-host in inventory group_vars
 ansible_pull_inventory: ""   # e.g. inventory/management.yml

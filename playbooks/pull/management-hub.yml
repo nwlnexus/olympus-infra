@@ -1,10 +1,11 @@
 ---
-# Pull-mode playbook for management-hub
-# Runs daily at 02:00 via crontab as the ansible user.
+# Pull-mode playbook for management-hub.
+# Runs daily at 02:00 via crontab as the `ansible` user.
 # Re-applies idempotent Ansible-managed foundation roles to correct drift.
 #
 # NOTE: cert-manager, external-secrets, traefik-config, external-dns, and
-# cloudflared Deployment are now managed by ArgoCD (GitOps). Do NOT add them here.
+# cloudflared Deployment are managed by Flux (GitOps). Do NOT add them here.
+# (argocd role removed — replaced by Flux at the platform level.)
 
 - name: Management Hub — Drift Correction
   hosts: management-hub
@@ -16,8 +17,8 @@
         gather_subset: [min]
 
   roles:
+    - role: baseline
+      tags: [baseline]
+
     - role: 1password-connect
       tags: [1password-connect]
-
-    - role: argocd
-      tags: [argocd]

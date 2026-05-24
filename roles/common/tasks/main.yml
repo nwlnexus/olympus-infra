@@ -40,9 +40,10 @@
     - filesystem
 
 - name: Configure timezone
-  timezone:
+  ansible.builtin.timezone:
     name: "{{ common_timezone }}"
-  notify: restart cron
+  # No handler notify needed: on systemd-managed hosts, timedatectl set-timezone
+  # (used by the timezone module) syncs cron/systemd timers automatically.
   tags:
     - system
     - common_timezone

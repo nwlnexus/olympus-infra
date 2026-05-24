@@ -225,7 +225,7 @@
     group: root
     mode: "0644"
   become: true
-  notify: restart k3s
+  notify: Restart k3s
   when:
     - _k3s_state == 'present'
     - not (k3s_ha | default(false))
@@ -239,7 +239,7 @@
     - /var/lib/rancher/k3s/server/manifests/traefik-crd.yaml.skip
     - /var/lib/rancher/k3s/server/manifests/servicelb.yaml.skip
   become: true
-  notify: restart k3s
+  notify: Restart k3s
   when: _k3s_state == 'present'
 
 - name: Remove orphaned Traefik CRDs from prior user-managed install
@@ -399,7 +399,7 @@
       register: _k3s_kubeconfig_b64
       become: true
 
-    - name: Patch kubeconfig server URL and rename context/cluster/user
+    - name: Patch kubeconfig server URL and rename context/cluster/user  # noqa: parser-error
       ansible.builtin.shell: |
         python3 - << 'PYEOF'
         import yaml, sys

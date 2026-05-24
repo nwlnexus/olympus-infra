@@ -15,12 +15,34 @@
   become: true
   when: tailscale_state == 'present'
 
-- name: Add Tailscale apt repository
-  ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/tailscale.gpg] https://pkgs.tailscale.com/stable/ubuntu noble main"
-    state: "{{ 'present' if tailscale_state == 'present' else 'absent' }}"
-    filename: tailscale
+# Deterministically write the Tailscale apt source. Using `copy` (not
+# `apt_repository`) so any pre-existing tailscale.list — possibly with a
+# different signed-by keyring path from an older install — is overwritten
+# wholesale, avoiding APT's "Conflicting values for option Signed-By" error.
+- name: Configure Tailscale apt source (deterministic)
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/tailscale.list
+    content: |
+      # Managed by Ansible (tailscale role)
+      deb [signed-by=/etc/apt/keyrings/tailscale.gpg] https://pkgs.tailscale.com/stable/ubuntu {{ ansible_facts['distribution_release'] }} main
+    owner: root
+    group: root
+    mode: "0644"
   become: true
+  when: tailscale_state == 'present'
+
+- name: Remove Tailscale apt source (state=absent)
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/tailscale.list
+    state: absent
+  become: true
+  when: tailscale_state == 'absent'
+
+- name: Refresh apt cache after Tailscale source change
+  ansible.builtin.apt:
+    update_cache: true
+  become: true
+  when: tailscale_state == 'present'
 
 - name: Remove Tailscale apt signing key
   ansible.builtin.file:

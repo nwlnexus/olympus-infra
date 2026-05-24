@@ -6,3 +6,4 @@ profile: basic
 skip_list:
   - var-naming[no-role-prefix]  # register vars and cross-role vars intentionally short
   - role-name                   # hyphenated role names (1password-connect, cloudflared-k8s) are intentional
+  - parser-error                # k3s linux.yml: ansible-lint cannot parse heredoc with embedded Jinja2

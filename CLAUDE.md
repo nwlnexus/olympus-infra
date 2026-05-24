@@ -24,7 +24,7 @@ Pull playbooks (ansible-pull, runs on hosts automatically):
 
 ```bash
 # Manually trigger on a host
-ssh management-hub 'sudo ansible-pull -U https://github.com/nwlucas/olympus-infra.git \
+ssh management-hub 'sudo ansible-pull -U https://github.com/nwlnexus/olympus-infra.git \
   playbooks/pull/management-hub.yml'
 ```
 

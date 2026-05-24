@@ -112,9 +112,10 @@
         devices:
           create:
             reusable: false
-            ephemeral: true
+            ephemeral: "{{ tailscale_ephemeral | default(false) | bool }}"
             preauthorized: true
-            tags: []
+            # OAuth-scoped clients must use one of their permitted tags.
+            tags: "{{ tailscale_tags | default([]) }}"
       expirySeconds: 300
     status_code: 200
   register: ts_auth_key

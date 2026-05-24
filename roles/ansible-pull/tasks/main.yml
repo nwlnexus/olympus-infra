@@ -3,7 +3,7 @@
   ansible.builtin.file:
     path: "{{ ansible_pull_log_dir }}"
     state: directory
-    owner: "{{ ansible_user }}"
+    owner: "{{ ansible_pull_user }}"
     group: "{{ 'sudo' if ansible_facts['os_family'] != 'Darwin' else 'admin' }}"
     mode: "0755"
   become: true

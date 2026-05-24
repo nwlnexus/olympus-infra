@@ -1,0 +1,12 @@
+# Managed by Ansible (baseline role)
+/var/log/ansible-pull/*.log {
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    # `create` owner is ansible_pull_user, defined in the `ansible-pull` role's
+    # defaults. Falls back to 'ansible' if baseline is applied standalone.
+    create 0644 {{ ansible_pull_user | default('ansible') }} root
+}

@@ -82,7 +82,9 @@
 - name: Store ArgoCD admin password in 1Password
   ansible.builtin.shell: |
     set -o pipefail
-    if /opt/homebrew/bin/op item get "{{ argocd_1password_item | default('olympus-sdk-argocd') }}" --vault={{ argocd_kubeconfig_1password_vault | default('Dev') }} >/dev/null 2>&1; then
+    _item="{{ argocd_1password_item | default('olympus-sdk-argocd') }}"
+    _vault="{{ argocd_kubeconfig_1password_vault | default('Dev') }}"
+    if /opt/homebrew/bin/op item get "${_item}" --vault="${_vault}" >/dev/null 2>&1; then
       /opt/homebrew/bin/op item edit "{{ argocd_1password_item | default('olympus-sdk-argocd') }}" \
         --vault={{ argocd_kubeconfig_1password_vault | default('Dev') }} \
         "password[password]={{ argocd_initial_password.stdout | trim }}"

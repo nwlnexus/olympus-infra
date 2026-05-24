@@ -73,12 +73,16 @@
     - system
     - keyboard
 
+# NTP management is opt-in via common_ntp_enabled (default: true for back-compat).
+# Hosts using baseline's systemd-timesyncd should set common_ntp_enabled: false
+# (the `ntp` apt package conflicts with systemd-timesyncd on Ubuntu noble+).
 - name: Install and configure NTP
   ansible.builtin.package:
     name: "{{ ntp_package_name }}"
     state: present
   vars:
     ntp_package_name: "{{ 'ntp' if ansible_facts['os_family'] == 'Debian' else 'chrony' }}"
+  when: common_ntp_enabled | default(true) | bool
   tags:
     - ntp
     - time
@@ -92,7 +96,9 @@
   vars:
     ntp_config_template: "{{ 'ntp.conf.j2' if ansible_facts['os_family'] == 'Debian' else 'chrony.conf.j2' }}"
     ntp_config_path: "{{ '/etc/ntp.conf' if ansible_facts['os_family'] == 'Debian' else '/etc/chrony.conf' }}"
-  notify: restart ntp
+  # No handler notify: 'restart ntp' has no corresponding handler defined.
+  # If/when this is wired to a real handler in handlers/main.yml, restore it.
+  when: common_ntp_enabled | default(true) | bool
   tags:
     - ntp
     - time
@@ -104,6 +110,7 @@
     enabled: true
   vars:
     ntp_service_name: "{{ 'ntp' if ansible_facts['os_family'] == 'Debian' else 'chronyd' }}"
+  when: common_ntp_enabled | default(true) | bool
   tags:
     - ntp
     - time

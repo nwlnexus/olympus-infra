@@ -14,7 +14,7 @@ services:
       ELECTRIC_SECRET: ${ELECTRIC_ROLE_PASSWORD}
 
   remote-server:
-    image: ghcr.io/nwlucas/vibe-kanban:remote-v0.1.27
+    image: ghcr.io/nwlnexus/vibe-kanban:remote-v0.1.27
     # Upstream image is amd64-only; ai-hub is Apple Silicon (arm64) running
     # Colima. Force amd64 emulation for vibe-kanban services.
     platform: linux/amd64
@@ -36,7 +36,7 @@ services:
         condition: service_started
 
   worker:
-    image: ghcr.io/nwlucas/vibe-kanban:worker-0.1.36
+    image: ghcr.io/nwlnexus/vibe-kanban:worker-0.1.36
     platform: linux/amd64
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/vk-init.sh"]
@@ -75,7 +75,7 @@ services:
         condition: service_started
 
   relay:
-    image: ghcr.io/nwlucas/vibe-kanban:relay-v0.1.7
+    image: ghcr.io/nwlnexus/vibe-kanban:relay-v0.1.7
     platform: linux/amd64
     restart: unless-stopped
     ports:

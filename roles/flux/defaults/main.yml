@@ -1,8 +1,8 @@
 ---
 flux_state: present
 flux_version: "2.4.0"
-# GitHub repo details — nwlucas/olympus-gitops
-flux_github_owner: "nwlucas"
+# GitHub repo details — nwlnexus/olympus-gitops
+flux_github_owner: "nwlnexus"
 flux_github_repo: "olympus-gitops"
 flux_github_branch: "main"
 # Set per-host in host_vars: clusters/management-hub or clusters/ai-hub

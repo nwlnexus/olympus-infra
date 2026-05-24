@@ -1,0 +1,43 @@
+---
+- name: Install fail2ban
+  ansible.builtin.apt:
+    name: fail2ban
+    state: present
+    update_cache: false
+  become: true
+  when: baseline_state == "present"
+
+- name: Configure fail2ban jail.local
+  ansible.builtin.template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: restart fail2ban
+  when: baseline_state == "present"
+
+- name: Ensure fail2ban is enabled and started
+  ansible.builtin.service:
+    name: fail2ban
+    enabled: true
+    state: started
+  become: true
+  when: baseline_state == "present"
+
+- name: Stop and disable fail2ban (state=absent)
+  ansible.builtin.service:
+    name: fail2ban
+    enabled: false
+    state: stopped
+  become: true
+  when: baseline_state == "absent"
+  failed_when: false      # service may not be installed; tolerate absence
+
+- name: Remove fail2ban config (state=absent)
+  ansible.builtin.file:
+    path: /etc/fail2ban/jail.local
+    state: absent
+  become: true
+  when: baseline_state == "absent"

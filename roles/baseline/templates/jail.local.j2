@@ -1,0 +1,11 @@
+# Managed by Ansible (baseline role) — do not edit manually.
+[DEFAULT]
+bantime  = {{ baseline_fail2ban_bantime }}
+findtime = {{ baseline_fail2ban_findtime }}
+maxretry = {{ baseline_fail2ban_maxretry }}
+backend  = systemd
+ignoreip = 127.0.0.1/8 ::1 100.64.0.0/10
+
+[sshd]
+enabled = true
+port    = ssh

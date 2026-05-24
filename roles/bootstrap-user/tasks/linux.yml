@@ -38,15 +38,8 @@
   become: true
   when: bootstrap_user_state == "present"
 
-- name: Ensure ansible-pull log directory exists (Linux)
-  ansible.builtin.file:
-    path: /var/log/ansible-pull
-    state: directory
-    owner: "{{ bootstrap_user_name }}"
-    group: "{{ bootstrap_user_name }}"
-    mode: "0755"
-  become: true
-  when: bootstrap_user_state == "present"
+# `/var/log/ansible-pull/` is owned by the `ansible-pull` role
+# (group: sudo). Duplicating here with a different group breaks idempotency.
 
 - name: Create /etc/olympus credential directory
   ansible.builtin.file:

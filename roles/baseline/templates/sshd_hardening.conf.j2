@@ -1,0 +1,11 @@
+# Managed by Ansible (baseline role) — do not edit manually.
+# Drop-in supplement to /etc/ssh/sshd_config; values here override defaults.
+PermitRootLogin {{ baseline_ssh_permit_root_login }}
+PasswordAuthentication {{ baseline_ssh_password_auth }}
+KbdInteractiveAuthentication {{ baseline_ssh_password_auth }}
+MaxAuthTries {{ baseline_ssh_max_auth_tries }}
+LoginGraceTime 20
+X11Forwarding no
+PermitEmptyPasswords no
+ClientAliveInterval 300
+ClientAliveCountMax 2

@@ -1,0 +1,29 @@
+---
+- name: SSH hardening drop-in
+  ansible.builtin.template:
+    src: sshd_hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/99-baseline.conf
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: restart sshd
+  when: baseline_state == "present"
+
+- name: Remove SSH hardening drop-in (state=absent)
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/99-baseline.conf
+    state: absent
+  become: true
+  notify: restart sshd
+  when: baseline_state == "absent"
+
+# Validate AFTER writing — sshd -t reads main config + all drop-ins.
+# If invalid, the handler will fail and the running sshd is untouched
+# (drop-ins only affect new connections after restart, so existing
+# SSH sessions stay alive; you can fix and re-run).
+- name: Validate sshd config
+  ansible.builtin.command: sshd -t
+  changed_when: false
+  become: true
+  when: baseline_state == "present"

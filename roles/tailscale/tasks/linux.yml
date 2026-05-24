@@ -101,7 +101,7 @@
     - tailscale_state == "present"
     - not tailscale_is_running
     - tailscale_oauth_client_id != ""
-    - ts_oauth_token is defined and ts_oauth_token.status == 200
+    - ts_oauth_token is defined and (ts_oauth_token.status | default(0)) == 200
 
 - name: Join Tailscale network with ephemeral key
   ansible.builtin.command: >
@@ -116,7 +116,7 @@
   when:
     - tailscale_state == "present"
     - not tailscale_is_running
-    - ts_auth_key is defined and ts_auth_key.status == 200
+    - ts_auth_key is defined and (ts_auth_key.status | default(0)) == 200
 
 - name: Tailscale already connected — skip join
   ansible.builtin.debug:

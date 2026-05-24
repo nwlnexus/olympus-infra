@@ -1,0 +1,108 @@
+---
+# UFW is gated behind baseline_firewall_enabled. On k3s/OrbStack hosts
+# we leave this off because k8s uses iptables for service routing and
+# a misconfigured UFW will silently break pod/service traffic.
+
+- name: Install ufw
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: false
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_firewall_enabled | bool
+
+- name: UFW — default deny incoming
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_firewall_enabled | bool
+
+- name: UFW — default allow outgoing
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_firewall_enabled | bool
+
+- name: UFW — allow loopback
+  community.general.ufw:
+    rule: allow
+    interface: lo
+    direction: in
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_firewall_enabled | bool
+
+# Always allow SSH from Tailnet (100.64.0.0/10 — Tailscale's CGNAT range).
+# This is the safety net: even if other rules are wrong we keep Tailscale SSH.
+- name: UFW — allow SSH from Tailnet
+  community.general.ufw:
+    rule: allow
+    src: 100.64.0.0/10
+    port: '22'
+    proto: tcp
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_firewall_enabled | bool
+
+- name: UFW — allow SSH from LAN (when not Tailnet-only)
+  community.general.ufw:
+    rule: allow
+    port: '22'
+    proto: tcp
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_firewall_enabled | bool
+    - not (baseline_firewall_allow_from_tailnet_only | bool)
+
+- name: UFW — validate extra_ports format
+  ansible.builtin.assert:
+    that: "'/' in item"
+    fail_msg: "baseline_firewall_extra_ports entry '{{ item }}' must be in 'port/proto' format (e.g. '8080/tcp')"
+    quiet: true
+  loop: "{{ baseline_firewall_extra_ports }}"
+  when:
+    - baseline_state == "present"
+    - baseline_firewall_enabled | bool
+    - baseline_firewall_extra_ports | length > 0
+
+- name: UFW — allow extra ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.split('/')[0] }}"
+    proto: "{{ item.split('/')[1] }}"
+  loop: "{{ baseline_firewall_extra_ports }}"
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_firewall_enabled | bool
+
+- name: UFW — enable
+  community.general.ufw:
+    state: enabled
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_firewall_enabled | bool
+
+# When the firewall is disabled (default for cluster hosts), or when the
+# whole baseline is being torn down, leave UFW off. Don't uninstall —
+# operators may want it staged for later flip-on.
+- name: UFW — disable (firewall not enabled, or state=absent)
+  community.general.ufw:
+    state: disabled
+  become: true
+  failed_when: false   # tolerate ufw not installed
+  when: >-
+    (baseline_state == "absent")
+    or (baseline_state == "present" and not (baseline_firewall_enabled | bool))

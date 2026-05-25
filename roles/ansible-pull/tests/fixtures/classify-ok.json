@@ -1,0 +1,11 @@
+{
+  "machine_id": "00000000-0000-0000-0000-000000000001",
+  "hostname": "styx",
+  "extra_roles": ["plex"],
+  "vars_global": {"foo": "bar"},
+  "vars_tags": {"infra-server": {"t": 1}},
+  "vars_roles": {"plex": {"plex_root": "/srv/plex"}},
+  "vars_host": {"hkey": "hval"},
+  "computed_at": "2026-05-24T12:00:00Z",
+  "etag": "deadbeef"
+}

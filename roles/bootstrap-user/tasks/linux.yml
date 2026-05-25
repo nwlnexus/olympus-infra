@@ -111,3 +111,35 @@
   when:
     - bootstrap_user_state == "present"
     - op_service_account_token | default('') != ''
+
+# ── Hermes per-host token (SP2) ───────────────────────────────────────────
+# Fetched from 1Password using the local `op` CLI on the controller. Each
+# host opts in by setting hermes_token_op_item in host_vars; default is
+# empty so unconfigured hosts skip cleanly.
+- name: Fetch Hermes token from 1Password
+  ansible.builtin.command:
+    cmd: "op read {{ hermes_token_op_item }}"
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ op_service_account_token | default('') }}"
+  delegate_to: localhost
+  become: false
+  register: _hermes_token_op
+  no_log: true
+  changed_when: false
+  when:
+    - bootstrap_user_state == 'present'
+    - hermes_token_op_item != ''
+
+- name: Write Hermes token file
+  ansible.builtin.copy:
+    content: "{{ _hermes_token_op.stdout }}"
+    dest: "{{ hermes_token_dest }}"
+    owner: "{{ hermes_token_owner }}"
+    group: "{{ hermes_token_group }}"
+    mode: "{{ hermes_token_mode }}"
+  become: true
+  no_log: true
+  when:
+    - bootstrap_user_state == 'present'
+    - hermes_token_op_item != ''
+    - _hermes_token_op.stdout | default('') != ''

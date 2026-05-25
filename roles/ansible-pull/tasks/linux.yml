@@ -36,6 +36,16 @@
   become: true
   when: ansible_pull_state == 'present'
 
+- name: Install play-recap parser
+  ansible.builtin.copy:
+    src: parse-play-recap.sh
+    dest: /opt/ansible-pull/parse-play-recap.sh
+    owner: ansible
+    group: ansible
+    mode: '0750'
+  become: true
+  when: ansible_pull_state == 'present'
+
 - name: Deploy ansible-pull-run wrapper script
   ansible.builtin.template:
     src: ansible-pull-run.j2

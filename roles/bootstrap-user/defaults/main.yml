@@ -20,3 +20,13 @@ bootstrap_cred_files: []
 # 1Password Connect credentials JSON (set via vault var onepassword_credentials_json)
 # If non-empty, written to bootstrap_creds_dest/1password-credentials.json
 onepassword_credentials_json: ""
+
+# Hermes per-host token (issued via Atlas; stored in 1Password).
+# Empty by default — host opts in by setting hermes_token_op_item in host_vars,
+# e.g. "op://Dev/{{ inventory_hostname }}-hermes-token/credential".
+# When empty, the fetch task is a no-op so unconfigured hosts skip cleanly.
+hermes_token_op_item: ""
+hermes_token_dest: "/etc/olympus/hermes-token"
+hermes_token_mode: "0640"
+hermes_token_owner: "root"
+hermes_token_group: "ansible"

@@ -1,27 +1,189 @@
 #!/usr/bin/env bash
-# Managed by Ansible — do not edit manually
+# Managed by Ansible (ansible-pull role) — do not edit manually
 set -euo pipefail
 
-OP_TOKEN_FILE="/opt/ansible-pull/.op-service-account-token"
-LOG_FILE="{{ ansible_pull_log_file }}"
+HERMES_URL="{{ hermes_url | default('https://hermes.nwlnexus.net') }}"
 
-mkdir -p "{{ ansible_pull_log_dir }}"
+# Paths. Each accepts a WRAPPER_<NAME> env-var override so BATS tests can
+# point them at a temp sandbox without rendering a different template.
+HERMES_TOKEN_FILE="${WRAPPER_HERMES_TOKEN_FILE:-/etc/olympus/hermes-token}"
+HERMES_DISABLED_FLAG="${WRAPPER_HERMES_DISABLED_FLAG:-/etc/olympus/hermes-disabled}"
 
+CACHE_DIR="${WRAPPER_CACHE_DIR:-/var/lib/olympus}"
+CACHE_FILE="$CACHE_DIR/classify.json"
+PENDING_DIR="${WRAPPER_PENDING_DIR:-$CACHE_DIR/pending-completions}"
+RUNTIME_DIR="${WRAPPER_RUNTIME_DIR:-/run/olympus}"
+LOG_DIR="${WRAPPER_LOG_DIR:-{{ ansible_pull_log_dir }}}"
+LOG_FILE="${WRAPPER_LOG_FILE:-{{ ansible_pull_log_file }}}"
+
+OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/opt/ansible-pull/.op-service-account-token}"
+PARSER="${WRAPPER_PARSER:-/opt/ansible-pull/parse-play-recap.sh}"
+
+mkdir -p "$CACHE_DIR" "$PENDING_DIR" "$RUNTIME_DIR" "$LOG_DIR"
+
+# ── 1. 1Password token (existing requirement) ─────────────────────────────
 if [[ ! -f "$OP_TOKEN_FILE" ]]; then
   echo "$(date -u '+%Y-%m-%d %H:%M:%S') [WARN] OP token not found at $OP_TOKEN_FILE — skipping run until bootstrap places it" | tee -a "$LOG_FILE" >&2
   exit 0
 fi
-
 export OP_SERVICE_ACCOUNT_TOKEN
 OP_SERVICE_ACCOUNT_TOKEN=$(cat "$OP_TOKEN_FILE")
 
-# Redirect all output to log file from this point on
-exec 1>>"$LOG_FILE" 2>&1
+# ── 2. Hermes disabled? ────────────────────────────────────────────────────
+HERMES_ENABLED=1
+if [[ -f "$HERMES_DISABLED_FLAG" ]]; then
+  HERMES_ENABLED=0
+  echo "$(date -u '+%Y-%m-%d %H:%M:%S') [INFO] Hermes integration disabled (flag file present); running baseline-only" | tee -a "$LOG_FILE"
+fi
 
+# Redirect to log file from here on
+exec 1>>"$LOG_FILE" 2>&1
 echo "Starting Ansible Pull at $(date -u '+%Y-%m-%d %H:%M:%S')"
 
-exec {{ ansible_pull_bin_linux }} \
+RUN_ID=""
+LOG_UPLOAD_URL=""
+
+if [[ "$HERMES_ENABLED" -eq 1 ]]; then
+  # ── 3. Hermes token ───────────────────────────────────────────────────────
+  if [[ ! -s "$HERMES_TOKEN_FILE" ]]; then
+    echo "[FATAL] Hermes token missing at $HERMES_TOKEN_FILE; cannot proceed"
+    exit 78
+  fi
+  HERMES_TOKEN=$(cat "$HERMES_TOKEN_FILE")
+
+  # ── 4. Drain pending completions ───────────────────────────────────────────
+  for pending in "$PENDING_DIR"/*.json; do
+    [[ -e "$pending" ]] || break
+    pid=$(basename "$pending" .json)
+    body=$(cat "$pending")
+    echo "[INFO] retrying pending completion for run $pid"
+    if curl -fsS --max-time 5 -X POST "$HERMES_URL/v1/pull/runs/$pid" \
+         -H "Authorization: Bearer $HERMES_TOKEN" \
+         -H "Content-Type: application/json" \
+         -d "$body" >/dev/null; then
+      rm -f "$pending"
+    else
+      echo "[WARN] still failing; leaving pending"
+    fi
+  done
+
+  # ── 5. Start run ──────────────────────────────────────────────────────────
+  STARTED_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  CLASSIFY_ETAG=$(jq -r '.etag // ""' "$CACHE_FILE" 2>/dev/null || echo "")
+  start_body=$(jq -nc --arg s "$STARTED_AT" --arg e "$CLASSIFY_ETAG" \
+    '{started_at: $s, classify_etag: (if $e=="" then null else $e end)}')
+
+  for i in 1 2 3; do
+    if start_resp=$(curl -fsS --max-time 5 -X POST "$HERMES_URL/v1/pull/runs" \
+                       -H "Authorization: Bearer $HERMES_TOKEN" \
+                       -H "Content-Type: application/json" \
+                       -d "$start_body"); then
+      RUN_ID=$(echo "$start_resp" | jq -r .run_id)
+      LOG_UPLOAD_URL=$(echo "$start_resp" | jq -r .log_upload_url)
+      break
+    fi
+    sleep $((i * 2))
+  done
+  if [[ -z "$RUN_ID" ]]; then
+    echo "[WARN] failed to start run with Hermes (after 3 retries); continuing without server-side record"
+  fi
+
+  # ── 6. Fetch classify ────────────────────────────────────────────────────
+  classify_json=""
+  for i in 1 2 3; do
+    if classify_json=$(curl -fsS --max-time 5 -H "Authorization: Bearer $HERMES_TOKEN" \
+                          "$HERMES_URL/v1/pull/classify"); then
+      break
+    fi
+    sleep $((i * 2))
+  done
+  if [[ -n "$classify_json" ]]; then
+    # Validate shape
+    if ! echo "$classify_json" | jq -e .extra_roles >/dev/null 2>&1; then
+      echo "[FATAL] malformed classify response (no .extra_roles)"
+      exit 70
+    fi
+    echo "$classify_json" > "$CACHE_FILE.tmp" && mv "$CACHE_FILE.tmp" "$CACHE_FILE"
+  elif [[ -f "$CACHE_FILE" ]]; then
+    echo "[WARN] Hermes unreachable for classify; using cache from $(stat -c %y "$CACHE_FILE")"
+    classify_json=$(cat "$CACHE_FILE")
+  else
+    echo "[FATAL] Hermes unreachable AND no cached classify"
+    exit 75
+  fi
+
+  # ── 7. Materialize layered vars files ─────────────────────────────────────
+  rm -f "$RUNTIME_DIR"/*.yml
+  echo "$classify_json" | jq -r '.vars_global // {} | to_entries[] | "\(.key): \(.value | @json)"' > "$RUNTIME_DIR/00-global.yml"
+  echo "$classify_json" | jq -r '[.vars_tags // {} | to_entries[] | .value] | add // {} | to_entries[] | "\(.key): \(.value | @json)"' > "$RUNTIME_DIR/10-tags.yml"
+  echo "$classify_json" | jq -r '[.vars_roles // {} | to_entries[] | .value] | add // {} | to_entries[] | "\(.key): \(.value | @json)"' > "$RUNTIME_DIR/20-roles.yml"
+  echo "$classify_json" | jq -r '.vars_host // {} | to_entries[] | "\(.key): \(.value | @json)"' > "$RUNTIME_DIR/30-host.yml"
+  echo "hermes_extra_roles: $(echo "$classify_json" | jq -c .extra_roles)" > "$RUNTIME_DIR/99-roles.yml"
+else
+  # Hermes disabled: minimal extras
+  echo "hermes_extra_roles: []" > "$RUNTIME_DIR/99-roles.yml"
+fi
+
+# ── 8. Run ansible-pull ────────────────────────────────────────────────────
+START_MS=$(date +%s%3N)
+set +e
+{{ ansible_pull_bin_linux }} \
   -U {{ ansible_pull_repo }} \
   -i {{ ansible_pull_inventory }} \
-  {{ ansible_pull_playbook }} \
-{% if ansible_pull_limit | default('') != '' %}  --limit {{ ansible_pull_limit }}{% endif %}
+  --extra-vars "@$RUNTIME_DIR/00-global.yml" \
+  --extra-vars "@$RUNTIME_DIR/10-tags.yml" \
+  --extra-vars "@$RUNTIME_DIR/20-roles.yml" \
+  --extra-vars "@$RUNTIME_DIR/30-host.yml" \
+  --extra-vars "@$RUNTIME_DIR/99-roles.yml" \
+  {% if ansible_pull_limit | default('') != '' %}--limit {{ ansible_pull_limit }} \{% endif %}
+  {{ ansible_pull_playbook }}
+RC=$?
+set -e
+END_MS=$(date +%s%3N)
+DURATION_MS=$((END_MS - START_MS))
+
+# ── 9. Parse counters + upload log + post completion ───────────────────────
+if [[ "$HERMES_ENABLED" -eq 1 && -n "$RUN_ID" ]]; then
+  counters=$("$PARSER" "$LOG_FILE")
+  FINISHED_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  AUDIT_LOG_KEY="null"
+
+  # Upload log to Worker (proxies to R2). The Worker enforces machine-scoped
+  # bearer auth on /v1/pull/runs/{run_id}/log, same as the other /v1/pull/*
+  # routes. Returns JSON {audit_log_key: "..."} which we forward in the
+  # completion POST so the server records exactly the key the proxy used.
+  if [[ -n "$LOG_UPLOAD_URL" ]]; then
+    if upload_resp=$(curl -fsS --max-time 30 -X PUT \
+                          -H "Authorization: Bearer $HERMES_TOKEN" \
+                          --data-binary "@$LOG_FILE" \
+                          "$HERMES_URL$LOG_UPLOAD_URL"); then
+      key=$(echo "$upload_resp" | jq -r '.audit_log_key // empty')
+      if [[ -n "$key" ]]; then
+        AUDIT_LOG_KEY=$(jq -nc --arg k "$key" '$k')
+      fi
+    else
+      echo "[WARN] log upload failed; completion will be posted without audit_log_key"
+    fi
+  fi
+
+  complete_body=$(jq -nc \
+    --arg fa "$FINISHED_AT" \
+    --argjson rc "$RC" \
+    --argjson dur "$DURATION_MS" \
+    --argjson c "$counters" \
+    --argjson akey "$AUDIT_LOG_KEY" \
+    '{finished_at:$fa, exit_code:$rc, duration_ms:$dur,
+      ok_count:$c.ok, changed_count:$c.changed, failed_count:$c.failed,
+      skipped_count:$c.skipped, unreachable_count:$c.unreachable,
+      audit_log_key:$akey}')
+
+  if ! curl -fsS --max-time 10 -X POST "$HERMES_URL/v1/pull/runs/$RUN_ID" \
+         -H "Authorization: Bearer $HERMES_TOKEN" \
+         -H "Content-Type: application/json" \
+         -d "$complete_body" >/dev/null; then
+    echo "[WARN] completion POST failed; queueing pending"
+    echo "$complete_body" > "$PENDING_DIR/$RUN_ID.json"
+  fi
+fi
+
+exit "$RC"

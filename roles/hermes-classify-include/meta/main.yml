@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  author: Olympus Infrastructure Team
+  description: Include roles dynamically from a list (typically supplied by Hermes ENC)
+  company: Olympus Organization
+  license: MIT
+  min_ansible_version: "2.12"
+  platforms:
+    - name: Ubuntu
+      versions: [jammy, noble]
+    - name: MacOSX
+      versions: ["all"]
+  galaxy_tags: [meta, dynamic-roles, enc]
+
+dependencies: []

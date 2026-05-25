@@ -1,0 +1,6 @@
+---
+- name: Include Hermes-supplied roles
+  ansible.builtin.include_role:
+    name: "{{ item }}"
+  loop: "{{ hermes_extra_roles | default([]) }}"
+  tags: [hermes-classify]

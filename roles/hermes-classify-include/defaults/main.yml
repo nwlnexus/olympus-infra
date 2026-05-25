@@ -1,0 +1,5 @@
+---
+# hermes-classify-include role defaults
+# Roles to be loaded dynamically. Typically supplied via --extra-vars
+# (the ansible-pull wrapper writes /run/olympus/99-roles.yml).
+hermes_extra_roles: []

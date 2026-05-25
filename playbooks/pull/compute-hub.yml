@@ -126,3 +126,7 @@
     # Replaces the cloud-init systemd timer (disabled in pre_tasks above).
     - role: ansible-pull
       tags: [ansible-pull]
+
+    # ── Hermes ENC (must be LAST — appends roles, never displaces) ───────────
+    - role: hermes-classify-include
+      tags: [hermes-classify]

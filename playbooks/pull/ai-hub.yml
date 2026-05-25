@@ -24,6 +24,10 @@
     - role: cloudflared-k8s
       tags: [cloudflared-k8s]
 
+    # ── Hermes ENC (must be LAST — appends roles, never displaces) ───────────
+    - role: hermes-classify-include
+      tags: [hermes-classify]
+
   tasks:
     - name: Check Ollama is responding
       ansible.builtin.uri:

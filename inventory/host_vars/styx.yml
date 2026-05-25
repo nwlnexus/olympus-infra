@@ -1,0 +1,9 @@
+---
+# styx — homelab server host vars (pull-mode)
+# Push-mode vars live in olympus-sdk/infra/inventories/host_vars/styx/vars.yml
+
+# Hermes per-host token (Phase F onboarding — SP2)
+# Issued via: atlas machine create --hostname styx && atlas token issue --hostname styx
+# Save the printed token to 1Password at the path below.
+# bootstrap-user role fetches this at push-bootstrap time.
+hermes_token_op_item: "op://Dev/styx-hermes-token/credential"

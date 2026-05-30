@@ -8,5 +8,8 @@ iscsi_chap_password: ""
 # Optional
 iscsi_mode: "host_mount"  # host_mount | initiator_only
 iscsi_mount_path: "/mnt/data"   # ignored when mode=initiator_only
-iscsi_filesystem: "ext4"        # Linux only; macOS uses APFS
+iscsi_filesystem: "ext4"        # Linux only; macOS uses NFS
 iscsi_port: 3260
+# macOS only: NFS export path on the NAS (e.g. "/ai-hub-data")
+# Defaults to the last component of iscsi_mount_path if not set
+iscsi_nfs_export: ""

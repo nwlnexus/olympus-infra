@@ -9,7 +9,7 @@
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>mount -t nfs -o resvport {{ iscsi_portal }}:/compute-hub/ai-hub {{ iscsi_mount_path }} 2>/dev/null || true</string>
+    <string>mount -t nfs -o nfsvers=4,resvport {{ iscsi_portal }}:{{ _nfs_export }} {{ iscsi_mount_path }} 2>/dev/null || true</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

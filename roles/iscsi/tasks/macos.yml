@@ -1,12 +1,44 @@
 ---
-# macOS: no native iSCSI initiator (removed by Apple).
-# NFSv4 from QNAP requires additional configuration on the NAS side.
-# For now, data directory is created on local disk (927GB available on ai-hub).
-# QNAP NFS integration can be added in a future pass once NFSv4 exports are configured.
+# macOS: no native iSCSI initiator. Uses NFSv4 mount from QNAP instead.
+# Requires NFS share to be exported to 192.168.253.0/27 on the NAS.
 
-- name: Create data directory on local disk
+- name: Resolve NFS export path
+  ansible.builtin.set_fact:
+    _nfs_export: "{{ iscsi_nfs_export if iscsi_nfs_export != '' else '/' + iscsi_mount_path.split('/')[-1] }}"
+
+- name: Create mount point
   ansible.builtin.file:
     path: "{{ iscsi_mount_path }}"
     state: directory
     mode: "0755"
   become: true
+
+- name: Mount NFS share (NFSv4, macOS 26+)
+  ansible.builtin.command: >
+    mount -t nfs -o nfsvers=4,resvport
+    {{ iscsi_portal }}:{{ _nfs_export }}
+    {{ iscsi_mount_path }}
+  become: true
+  register: _mount
+  changed_when: _mount.rc == 0
+  failed_when:
+    - _mount.rc != 0
+    - "'already mounted' not in (_mount.stderr | default(''))"
+    - "'already mounted' not in (_mount.stdout | default(''))"
+
+- name: Install LaunchDaemon for NFS mount at boot
+  ansible.builtin.template:
+    src: macos_launchdaemon.plist.j2
+    dest: "/Library/LaunchDaemons/com.olympus.nfs.{{ iscsi_mount_path | replace('/', '_') }}.plist"
+    mode: "0644"
+    owner: root
+    group: wheel
+  become: true
+  register: _plist
+
+- name: Load LaunchDaemon
+  ansible.builtin.command: >
+    launchctl load
+    /Library/LaunchDaemons/com.olympus.nfs.{{ iscsi_mount_path | replace('/', '_') }}.plist
+  become: true
+  when: _plist.changed

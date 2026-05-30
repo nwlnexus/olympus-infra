@@ -1,0 +1,101 @@
+---
+- name: Install apt-transport-https (prerequisite)
+  ansible.builtin.apt:
+    name: apt-transport-https
+    state: present
+    update_cache: false
+  become: true
+  when: plex_state == "present"
+
+- name: Add Plex GPG key
+  ansible.builtin.apt_key:
+    url: https://downloads.plex.tv/plex-keys/PlexSign.key
+    keyring: /usr/share/keyrings/plex-archive-keyring.gpg
+    state: present
+  become: true
+  when: plex_state == "present"
+
+- name: Add Plex apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/plex-archive-keyring.gpg] https://downloads.plex.tv/repo/deb public main"
+    state: present
+    filename: plexmediaserver
+  become: true
+  when: plex_state == "present"
+
+- name: Install plexmediaserver
+  ansible.builtin.apt:
+    name: plexmediaserver
+    state: present
+    update_cache: true
+  become: true
+  when: plex_state == "present"
+
+- name: Deploy tmpfiles.d config for transcoding directory
+  ansible.builtin.template:
+    src: plexmedia-tmpfiles.conf.j2
+    dest: /etc/tmpfiles.d/plexmedia.conf
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: plex_state == "present"
+
+- name: Create transcoding directory
+  ansible.builtin.file:
+    path: "{{ plex_transcoding_dir }}"
+    state: directory
+    owner: plex
+    group: plex
+    mode: '0755'
+  become: true
+  when: plex_state == "present"
+
+- name: Allow Plex port from Tailscale range (UFW)
+  community.general.ufw:
+    rule: allow
+    src: "{{ plex_ufw_tailscale_src }}"
+    port: '32400'
+    proto: tcp
+  become: true
+  when: plex_state == "present"
+
+- name: Enable and start plexmediaserver
+  ansible.builtin.systemd:
+    name: plexmediaserver
+    enabled: true
+    state: started
+  become: true
+  when: plex_state == "present"
+
+- name: Stop and disable plexmediaserver (state=absent)
+  ansible.builtin.systemd:
+    name: plexmediaserver
+    enabled: false
+    state: stopped
+  become: true
+  failed_when: false
+  when: plex_state == "absent"
+
+- name: Remove plexmediaserver (state=absent)
+  ansible.builtin.apt:
+    name: plexmediaserver
+    state: absent
+    purge: true
+  become: true
+  when: plex_state == "absent"
+
+- name: Remove Plex apt repository (state=absent)
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/plex-archive-keyring.gpg] https://downloads.plex.tv/repo/deb public main"
+    state: absent
+    filename: plexmediaserver
+  become: true
+  when: plex_state == "absent"
+
+- name: Remove tmpfiles config (state=absent)
+  ansible.builtin.file:
+    path: /etc/tmpfiles.d/plexmedia.conf
+    state: absent
+  become: true
+  when: plex_state == "absent"

@@ -61,20 +61,40 @@
     - baseline_state == "present"
     - baseline_op_ssh_pubkey_item != ""
 
-# community.general.onepassword lookup uses `op item get --fields label=<field>`
-# internally, so spaces in field names are handled natively — no %20 encoding needed.
-- name: Provision ansible user SSH public key from 1Password
-  ansible.posix.authorized_key:
-    user: ansible
-    key: "{{ lookup('community.general.onepassword',
-              baseline_op_ssh_pubkey_item,
-              field=baseline_op_ssh_pubkey_field,
-              vault=baseline_op_ssh_pubkey_vault,
-              service_account_token=(_baseline_op_sat.content | b64decode | trim)) }}"
-    state: present
+# Use argv so the field name "public key" (with space) is passed as a single
+# unambiguous argument — no shell quoting or %20 encoding needed.
+# Runs as root (become: true) to match the context that can read the token file,
+# avoiding stale op CLI account cache in the ansible user's home.
+- name: Fetch ansible SSH public key from 1Password
+  ansible.builtin.command:
+    argv:
+      - op
+      - item
+      - get
+      - "{{ baseline_op_ssh_pubkey_item }}"
+      - "--fields"
+      - "label={{ baseline_op_ssh_pubkey_field }}"
+      - "--vault"
+      - "{{ baseline_op_ssh_pubkey_vault }}"
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ _baseline_op_sat.content | b64decode | trim }}"
+  register: _baseline_ssh_pubkey
+  changed_when: false
+  no_log: true
   become: true
   when:
     - baseline_state == "present"
     - baseline_op_ssh_pubkey_item != ""
     - _baseline_op_sat.content is defined
+
+- name: Provision ansible user SSH public key
+  ansible.posix.authorized_key:
+    user: ansible
+    key: "{{ _baseline_ssh_pubkey.stdout | trim }}"
+    state: present
+  become: true
+  when:
+    - baseline_state == "present"
+    - _baseline_ssh_pubkey.stdout is defined
+    - _baseline_ssh_pubkey.stdout | trim | length > 0
   tags: [baseline, baseline-ssh]

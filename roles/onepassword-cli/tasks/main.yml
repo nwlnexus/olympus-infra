@@ -1,0 +1,8 @@
+---
+- name: 1Password CLI — macOS
+  ansible.builtin.include_tasks: macos.yml
+  when: ansible_facts['os_family'] == "Darwin"
+
+- name: 1Password CLI — Linux
+  ansible.builtin.include_tasks: linux.yml
+  when: ansible_facts['os_family'] == "Debian"

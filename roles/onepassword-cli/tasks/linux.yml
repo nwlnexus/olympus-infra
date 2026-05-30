@@ -1,0 +1,28 @@
+---
+- name: Add 1Password apt signing key
+  ansible.builtin.shell: |
+    curl -sS https://downloads.1password.com/linux/keys/1password.asc \
+      | gpg --dearmor \
+      | tee /usr/share/keyrings/1password-archive-keyring.gpg > /dev/null
+  args:
+    creates: /usr/share/keyrings/1password-archive-keyring.gpg
+
+- name: Add 1Password apt repository (arm64)
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=arm64 signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/arm64 stable main"
+    state: present
+    filename: 1password
+  when: ansible_architecture == "aarch64"
+
+- name: Add 1Password apt repository (amd64)
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main"
+    state: present
+    filename: 1password
+  when: ansible_architecture == "x86_64"
+
+- name: Install 1Password CLI
+  ansible.builtin.apt:
+    name: 1password-cli
+    state: present
+    update_cache: true

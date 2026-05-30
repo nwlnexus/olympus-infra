@@ -9,15 +9,7 @@
 
 - name: Management Hub — Drift Correction
   hosts: management-hub
-  gather_facts: false
-
-  pre_tasks:
-    - name: Gather minimal facts
-      ansible.builtin.setup:
-        gather_subset:
-          - "!all"
-          - min
-          - distribution
+  gather_facts: true
 
   roles:
     - role: baseline

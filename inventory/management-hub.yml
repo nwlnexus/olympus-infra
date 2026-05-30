@@ -1,9 +1,11 @@
 ---
 all:
-  hosts:
+  children:
     management-hub:
-      ansible_host: 127.0.0.1  # ansible-pull runs locally on the host
-      ansible_connection: local
+      hosts:
+        naraka-01:
+          ansible_host: 127.0.0.1  # real hostname; ansible-pull uses machine hostname as implicit limit
+          ansible_connection: local
   vars:
     ansible_python_interpreter: /usr/bin/python3
     # k3s kubeconfig — referenced by 1password-connect role.

@@ -167,6 +167,7 @@
            item.item: (item.json.result | default([{}]) | first).id | default('')
          }) }}
   loop: "{{ _ddclient_extra_fqdn_zone_resps.results | default([]) }}"
+  no_log: true
   when:
     - _ddclient_state == 'present'
     - _ddclient_extra_fqdn_zones | length > 0

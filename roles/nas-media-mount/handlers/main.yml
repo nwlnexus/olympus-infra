@@ -1,0 +1,7 @@
+---
+- name: reload systemd and restart automount
+  ansible.builtin.systemd:
+    name: mnt-media.automount
+    state: restarted
+    daemon_reload: true
+  become: true

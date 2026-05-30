@@ -1,0 +1,11 @@
+# Managed by Ansible (nas-media-mount role) — do not edit manually
+[Unit]
+Description=Automount QNAP NAS MEDIA share
+After=network-online.target
+
+[Automount]
+Where={{ nas_media_mount_point }}
+TimeoutIdleSec=0
+
+[Install]
+WantedBy=multi-user.target

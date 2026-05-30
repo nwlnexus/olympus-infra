@@ -1,0 +1,6 @@
+---
+nas_media_mount_state: present
+nas_media_mount_point: /mnt/media
+nas_media_mount_share: /MEDIA
+nas_media_op_token_file: /etc/olympus/op-service-account-token
+nas_media_op_nas_host_ref: "op://Dev/nas-media-share/host"

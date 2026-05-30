@@ -1,0 +1,109 @@
+---
+- name: Install nfs-common
+  ansible.builtin.apt:
+    name: nfs-common
+    state: present
+    update_cache: false
+  become: true
+  when: nas_media_mount_state == "present"
+
+- name: Read OP service account token
+  ansible.builtin.slurp:
+    src: "{{ nas_media_op_token_file }}"
+  register: _nas_op_sat
+  no_log: true
+  failed_when: false
+  when: nas_media_mount_state == "present"
+
+- name: Fetch NAS host from 1Password
+  ansible.builtin.command:
+    argv:
+      - op
+      - read
+      - "{{ nas_media_op_nas_host_ref }}"
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ _nas_op_sat.content | b64decode | trim }}"
+  register: _nas_host_result
+  changed_when: false
+  no_log: true
+  when:
+    - nas_media_mount_state == "present"
+    - _nas_op_sat.content is defined
+
+- name: Set NAS host fact
+  ansible.builtin.set_fact:
+    _nas_media_host: "{{ _nas_host_result.stdout | trim }}"
+  when:
+    - nas_media_mount_state == "present"
+    - _nas_host_result.stdout is defined
+
+- name: Create mount point directory
+  ansible.builtin.file:
+    path: "{{ nas_media_mount_point }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  when:
+    - nas_media_mount_state == "present"
+    - _nas_media_host is defined
+
+- name: Deploy systemd mount unit
+  ansible.builtin.template:
+    src: mnt-media.mount.j2
+    dest: /etc/systemd/system/mnt-media.mount
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: reload systemd and restart automount
+  when:
+    - nas_media_mount_state == "present"
+    - _nas_media_host is defined
+
+- name: Deploy systemd automount unit
+  ansible.builtin.template:
+    src: mnt-media.automount.j2
+    dest: /etc/systemd/system/mnt-media.automount
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: reload systemd and restart automount
+  when:
+    - nas_media_mount_state == "present"
+    - _nas_media_host is defined
+
+- name: Enable and start automount unit
+  ansible.builtin.systemd:
+    name: mnt-media.automount
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true
+  when:
+    - nas_media_mount_state == "present"
+    - _nas_media_host is defined
+
+- name: Remove mount and automount units (state=absent)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - mnt-media.automount
+    - mnt-media.mount
+  become: true
+  failed_when: false
+  when: nas_media_mount_state == "absent"
+
+- name: Remove unit files (state=absent)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/mnt-media.mount
+    - /etc/systemd/system/mnt-media.automount
+  become: true
+  when: nas_media_mount_state == "absent"

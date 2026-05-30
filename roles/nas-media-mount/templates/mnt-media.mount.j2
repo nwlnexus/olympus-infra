@@ -1,0 +1,14 @@
+# Managed by Ansible (nas-media-mount role) — do not edit manually
+[Unit]
+Description=QNAP NAS MEDIA share
+After=network-online.target
+Wants=network-online.target
+
+[Mount]
+What={{ _nas_media_host }}:/MEDIA
+Where={{ nas_media_mount_point }}
+Type=nfs
+Options=nfsvers=4,hard,_netdev,rsize=1048576,wsize=1048576,timeo=600,retrans=2
+
+[Install]
+WantedBy=multi-user.target

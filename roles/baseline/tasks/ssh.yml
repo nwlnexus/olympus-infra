@@ -18,6 +18,18 @@
   notify: restart sshd
   when: baseline_state == "absent"
 
+# Ensure privilege separation dir exists — sshd -t requires it even though
+# systemd normally creates it at sshd start via RuntimeDirectory=sshd.
+- name: Ensure sshd privilege separation directory exists
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  when: baseline_state == "present"
+
 # Validate AFTER writing — sshd -t reads main config + all drop-ins.
 # If invalid, the handler will fail and the running sshd is untouched
 # (drop-ins only affect new connections after restart, so existing

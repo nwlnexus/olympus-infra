@@ -1,104 +1,12 @@
 ---
-# NOTE: Requires macOS 12+ (Monterey). Verify iscsictl path before running:
-# /usr/sbin/iscsictl --version
+# macOS: no native iSCSI initiator (removed by Apple).
+# NFSv4 from QNAP requires additional configuration on the NAS side.
+# For now, data directory is created on local disk (927GB available on ai-hub).
+# QNAP NFS integration can be added in a future pass once NFSv4 exports are configured.
 
-- name: Set deterministic iSCSI initiator name
-  ansible.builtin.copy:
-    content: "InitiatorName=iqn.2004-04.net.olympus:{{ inventory_hostname }}\n"
-    dest: /etc/iscsi/initiatorname.iscsi
-    mode: "0600"
-  become: true
-
-- name: Check if iSCSI target already logged in
-  ansible.builtin.command: /usr/sbin/iscsictl show
-  register: _iscsi_show
-  changed_when: false
-  failed_when: false
-  become: true
-
-- name: Add iSCSI target
-  ansible.builtin.command: >
-    /usr/sbin/iscsictl add-target
-    -a {{ iscsi_portal }}:{{ iscsi_port }}
-    -n {{ iscsi_target_iqn }}
-  become: true
-  when: iscsi_target_iqn not in (_iscsi_show.stdout | default(''))
-  register: _iscsi_add
-  changed_when: _iscsi_add.rc == 0
-
-- name: Configure CHAP authentication on target
-  ansible.builtin.command: >
-    /usr/sbin/iscsictl modify-target
-    -n {{ iscsi_target_iqn }}
-    -a CHAP
-    -U {{ iscsi_chap_user }}
-    -P {{ iscsi_chap_password }}
-  become: true
-  when: _iscsi_add.changed
-  no_log: true
-
-- name: Login to iSCSI target
-  ansible.builtin.command: >
-    /usr/sbin/iscsictl login
-    -n {{ iscsi_target_iqn }}
-  become: true
-  register: _iscsi_login
-  changed_when: _iscsi_login.rc == 0
-  failed_when:
-    - _iscsi_login.rc != 0
-    - "'already' not in (_iscsi_login.stderr | default(''))"
-
-- name: Wait for disk to appear (up to 15s)
-  ansible.builtin.shell: |
-    for i in $(seq 1 15); do
-      DISK=$(diskutil list | grep -i 'external' | awk '{print $1}' | head -1)
-      [ -n "$DISK" ] && echo "$DISK" && exit 0
-      sleep 1
-    done
-    exit 1
-  register: _iscsi_disk
-  changed_when: false
-  become: true
-
-- name: Create APFS container and volume (first run only)
-  ansible.builtin.command: >
-    diskutil apfs createContainer {{ _iscsi_disk.stdout | trim }}
-  become: true
-  register: _apfs_create
-  failed_when: false
-  changed_when: "'created' in (_apfs_create.stdout | default(''))"
-
-- name: Create mount point directory
+- name: Create data directory on local disk
   ansible.builtin.file:
     path: "{{ iscsi_mount_path }}"
     state: directory
     mode: "0755"
   become: true
-
-- name: Mount APFS volume
-  ansible.builtin.command: >
-    diskutil mount -mountPoint {{ iscsi_mount_path }}
-    "{{ _iscsi_disk.stdout | trim }}s1"
-  become: true
-  register: _mount
-  changed_when: _mount.rc == 0
-  failed_when:
-    - _mount.rc != 0
-    - "'already mounted' not in (_mount.stderr | default(''))"
-
-- name: Install LaunchDaemon for boot persistence
-  ansible.builtin.template:
-    src: macos_launchdaemon.plist.j2
-    dest: "/Library/LaunchDaemons/com.olympus.iscsi.{{ iscsi_target_iqn | regex_replace('[^a-zA-Z0-9]', '_') }}.plist"
-    mode: "0644"
-    owner: root
-    group: wheel
-  become: true
-  register: _plist
-
-- name: Load LaunchDaemon
-  ansible.builtin.command: >
-    launchctl load
-    /Library/LaunchDaemons/com.olympus.iscsi.{{ iscsi_target_iqn | regex_replace('[^a-zA-Z0-9]', '_') }}.plist
-  become: true
-  when: _plist.changed

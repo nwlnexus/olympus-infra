@@ -10,6 +10,12 @@
     - role: baseline
       tags: [baseline]
 
+    - role: nas-media-mount
+      tags: [nas-media-mount]
+
+    - role: plex
+      tags: [plex]
+
     # ── Hermes ENC (must be LAST — appends roles, never displaces) ───────────
     - role: hermes-classify-include
       tags: [hermes-classify]

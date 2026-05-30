@@ -7,3 +7,9 @@
 # Save the printed token to 1Password at the path below.
 # bootstrap-user role fetches this at push-bootstrap time.
 hermes_token_op_item: "op://Dev/styx-hermes-token/credential"
+
+# Plex Media Server
+plex_state: present
+
+# QNAP NAS MEDIA share mount
+nas_media_mount_state: present

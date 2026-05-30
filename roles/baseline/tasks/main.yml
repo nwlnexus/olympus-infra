@@ -2,7 +2,7 @@
 # Linux-only — macOS hosts get a separate baseline later.
 - name: baseline — skip on non-Linux
   ansible.builtin.meta: end_host
-  when: ansible_os_family == "Darwin"
+  when: ansible_facts['os_family'] == "Darwin"
 
 # Order matters: SSH first (avoid lockout when UFW comes up later),
 # then hardening pieces, then UFW last (so any extra-ports config from

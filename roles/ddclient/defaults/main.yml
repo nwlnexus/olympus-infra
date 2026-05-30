@@ -11,3 +11,7 @@ ddclient_cf_api_token: ""
 # Optional extra FQDNs that also point to this host's internal IP.
 # e.g. role-based names like management-hub.nwlnexus.net alongside naraka-01.nwlnexus.net
 ddclient_extra_fqdns: []
+# Extra public A records in potentially different zones.
+# Each entry: { fqdn: "media.nwlnexus.io", zone: "nwlnexus.io" }
+# Seeded via Cloudflare API; tracked by ddclient daemon.
+ddclient_extra_public_records: []

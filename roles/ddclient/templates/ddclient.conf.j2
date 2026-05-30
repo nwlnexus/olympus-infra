@@ -28,3 +28,16 @@ use=if, if={{ ansible_facts['default_ipv4']['interface'] }}
 {% for fqdn in ddclient_extra_fqdns %}
 {{ fqdn }}
 {% endfor %}
+{% for zone_group in ddclient_extra_public_records | default([]) | groupby('zone') %}
+# Extra public records — zone {{ zone_group.0 }}
+protocol=cloudflare
+zone={{ zone_group.0 }}
+ttl={{ ddclient_ttl }}
+login=token
+password='{{ _ddclient_cf_token }}'
+use=web, web=https://api.ipify.org/
+{% for record in zone_group.1 %}
+{{ record.fqdn }}
+{% endfor %}
+
+{% endfor %}

@@ -205,6 +205,68 @@
     - _ddclient_state == 'present'
     - (item.json.result | default([]) | length) == 0
 
+# --- Extra public records (cross-zone) ---
+
+- name: Look up Cloudflare zone IDs for extra public records
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones?name={{ item }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ _ddclient_cf_token }}"
+    status_code: 200
+  register: _ddclient_extra_zone_resps
+  no_log: true
+  loop: "{{ ddclient_extra_public_records | map(attribute='zone') | unique | list }}"
+  when:
+    - _ddclient_state == 'present'
+    - ddclient_extra_public_records | length > 0
+
+- name: Check existing extra public A records
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones/{{ _extra_zone_id }}/dns_records?type=A&name={{ item.fqdn }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ _ddclient_cf_token }}"
+    status_code: 200
+  vars:
+    _extra_zone_id: >-
+      {{ (_ddclient_extra_zone_resps.results
+          | selectattr('item', 'equalto', item.zone)
+          | list | first).json.result[0].id }}
+  register: _ddclient_extra_checks
+  no_log: true
+  loop: "{{ ddclient_extra_public_records }}"
+  when:
+    - _ddclient_state == 'present'
+    - ddclient_extra_public_records | length > 0
+
+- name: Create missing extra public A records
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones/{{ _extra_zone_id }}/dns_records"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ _ddclient_cf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      type: A
+      name: "{{ item.item.fqdn }}"
+      content: "{{ ansible_facts['default_ipv4']['address'] }}"
+      ttl: "{{ ddclient_ttl }}"
+      proxied: false
+    status_code: 200
+  vars:
+    _extra_zone_id: >-
+      {{ (_ddclient_extra_zone_resps.results
+          | selectattr('item', 'equalto', item.item.zone)
+          | list | first).json.result[0].id }}
+  no_log: true
+  loop: "{{ _ddclient_extra_checks.results | default([]) }}"
+  when:
+    - _ddclient_state == 'present'
+    - ddclient_extra_public_records | length > 0
+    - (item.json.result | default([]) | length) == 0
+
 # --- ddclient config ---
 
 - name: Render ddclient.conf (Linux)

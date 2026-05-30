@@ -7,6 +7,7 @@
     - colima
     - docker
     - docker-compose
+    - bash
   become: false
 
 - name: Ensure ~/.docker/cli-plugins directory exists

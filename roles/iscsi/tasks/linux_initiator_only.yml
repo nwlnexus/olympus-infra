@@ -1,0 +1,77 @@
+# roles/iscsi/tasks/linux_initiator_only.yml
+---
+# Sets up iSCSI initiator and logs into the target but does NOT
+# format or mount the block device. Intended for compute-hub nodes
+# where Longhorn manages the block device as additional disk capacity.
+
+- name: Install open-iscsi
+  ansible.builtin.apt:
+    name: open-iscsi
+    state: present
+    update_cache: true
+  become: true
+
+- name: Enable and start iscsid
+  ansible.builtin.systemd:
+    name: iscsid
+    enabled: true
+    state: started
+  become: true
+
+- name: Discover iSCSI targets
+  ansible.builtin.command: >
+    iscsiadm -m discovery -t sendtargets
+    -p {{ iscsi_portal }}:{{ iscsi_port }}
+  become: true
+  changed_when: false
+
+- name: Configure CHAP — auth method
+  ansible.builtin.command: >
+    iscsiadm -m node -T {{ iscsi_target_iqn }}
+    --op update -n node.session.auth.authmethod -v CHAP
+  become: true
+  changed_when: true
+
+- name: Configure CHAP — username
+  ansible.builtin.command: >
+    iscsiadm -m node -T {{ iscsi_target_iqn }}
+    --op update -n node.session.auth.username -v {{ iscsi_chap_user }}
+  become: true
+  changed_when: true
+  no_log: true
+
+- name: Configure CHAP — password
+  ansible.builtin.command: >
+    iscsiadm -m node -T {{ iscsi_target_iqn }}
+    --op update -n node.session.auth.password -v {{ iscsi_chap_password }}
+  become: true
+  changed_when: true
+  no_log: true
+
+- name: Login to iSCSI target
+  ansible.builtin.command: >
+    iscsiadm -m node -T {{ iscsi_target_iqn }} --login
+  become: true
+  register: _login
+  changed_when: _login.rc == 0
+  failed_when:
+    - _login.rc != 0
+    - "'already exists' not in (_login.stderr | default(''))"
+
+- name: Enable automatic login at boot
+  ansible.builtin.command: >
+    iscsiadm -m node -T {{ iscsi_target_iqn }}
+    --op update -n node.startup -v automatic
+  become: true
+  changed_when: true
+
+- name: Confirm block device is visible (informational)
+  ansible.builtin.shell: |
+    lsblk -d -n -o NAME,TRAN | grep iscsi | awk '{print "/dev/" $1}'
+  register: _iscsi_dev
+  changed_when: false
+  become: true
+
+- name: Show iSCSI block device (for Longhorn configuration)
+  ansible.builtin.debug:
+    msg: "iSCSI block device available at: {{ _iscsi_dev.stdout | trim }} — add this path to Longhorn disk configuration"

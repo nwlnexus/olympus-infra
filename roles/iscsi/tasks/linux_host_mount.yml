@@ -1,0 +1,98 @@
+# roles/iscsi/tasks/linux_host_mount.yml
+---
+- name: Install open-iscsi
+  ansible.builtin.apt:
+    name: open-iscsi
+    state: present
+    update_cache: true
+  become: true
+
+- name: Enable and start iscsid
+  ansible.builtin.systemd:
+    name: iscsid
+    enabled: true
+    state: started
+  become: true
+
+- name: Discover iSCSI targets
+  ansible.builtin.command: >
+    iscsiadm -m discovery -t sendtargets
+    -p {{ iscsi_portal }}:{{ iscsi_port }}
+  become: true
+  register: _discovery
+  changed_when: false
+
+- name: Configure CHAP — auth method
+  ansible.builtin.command: >
+    iscsiadm -m node -T {{ iscsi_target_iqn }}
+    --op update -n node.session.auth.authmethod -v CHAP
+  become: true
+  changed_when: true
+
+- name: Configure CHAP — username
+  ansible.builtin.command: >
+    iscsiadm -m node -T {{ iscsi_target_iqn }}
+    --op update -n node.session.auth.username -v {{ iscsi_chap_user }}
+  become: true
+  changed_when: true
+  no_log: true
+
+- name: Configure CHAP — password
+  ansible.builtin.command: >
+    iscsiadm -m node -T {{ iscsi_target_iqn }}
+    --op update -n node.session.auth.password -v {{ iscsi_chap_password }}
+  become: true
+  changed_when: true
+  no_log: true
+
+- name: Login to iSCSI target
+  ansible.builtin.command: >
+    iscsiadm -m node -T {{ iscsi_target_iqn }} --login
+  become: true
+  register: _login
+  changed_when: _login.rc == 0
+  failed_when:
+    - _login.rc != 0
+    - "'already exists' not in (_login.stderr | default(''))"
+
+- name: Wait for block device to appear
+  ansible.builtin.shell: |
+    for i in $(seq 1 30); do
+      DEV=$(lsblk -d -n -o NAME,TRAN | grep iscsi | awk '{print "/dev/" $1}' | head -1)
+      [ -n "$DEV" ] && echo "$DEV" && exit 0
+      sleep 1
+    done
+    exit 1
+  register: _iscsi_dev
+  changed_when: false
+  become: true
+
+- name: Check if filesystem exists on device
+  ansible.builtin.command: blkid {{ _iscsi_dev.stdout | trim }}
+  register: _blkid
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Format device with ext4 (first run only)
+  ansible.builtin.command: mkfs.ext4 {{ _iscsi_dev.stdout | trim }}
+  become: true
+  when: _blkid.rc != 0
+  register: _mkfs
+  changed_when: _mkfs.rc == 0
+
+- name: Create mount point
+  ansible.builtin.file:
+    path: "{{ iscsi_mount_path }}"
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: Mount device
+  ansible.posix.mount:
+    path: "{{ iscsi_mount_path }}"
+    src: "{{ _iscsi_dev.stdout | trim }}"
+    fstype: "{{ iscsi_filesystem }}"
+    opts: _netdev
+    state: mounted
+  become: true

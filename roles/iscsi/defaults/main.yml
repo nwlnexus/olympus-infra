@@ -1,0 +1,12 @@
+---
+# Required — must be provided by caller
+iscsi_portal: ""          # e.g. "qnap.nwlnexus.net"
+iscsi_target_iqn: ""      # e.g. "iqn.2004-04.com.qnap:ts-873a:iscsi.target-ai-hub"
+iscsi_chap_user: ""
+iscsi_chap_password: ""
+
+# Optional
+iscsi_mode: "host_mount"  # host_mount | initiator_only
+iscsi_mount_path: "/mnt/data"   # ignored when mode=initiator_only
+iscsi_filesystem: "ext4"        # Linux only; macOS uses APFS
+iscsi_port: 3260

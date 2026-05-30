@@ -1,0 +1,24 @@
+{# roles/iscsi/templates/macos_launchdaemon.plist.j2 #}
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.olympus.iscsi.{{ iscsi_target_iqn | regex_replace('[^a-zA-Z0-9]', '_') }}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>/usr/sbin/iscsictl login -n {{ iscsi_target_iqn }} 2>/dev/null; sleep 5; diskutil mount -mountPoint {{ iscsi_mount_path }} /dev/disk$(diskutil list | grep -c 'external')s1 2>/dev/null || true</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/var/log/olympus-iscsi-mount.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/olympus-iscsi-mount.log</string>
+</dict>
+</plist>

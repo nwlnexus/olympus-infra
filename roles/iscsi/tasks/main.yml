@@ -1,0 +1,16 @@
+---
+- name: iSCSI — macOS
+  ansible.builtin.include_tasks: macos.yml
+  when: ansible_facts['os_family'] == "Darwin"
+
+- name: iSCSI — Linux host_mount
+  ansible.builtin.include_tasks: linux_host_mount.yml
+  when:
+    - ansible_facts['os_family'] == "Debian"
+    - iscsi_mode == "host_mount"
+
+- name: iSCSI — Linux initiator_only
+  ansible.builtin.include_tasks: linux_initiator_only.yml
+  when:
+    - ansible_facts['os_family'] == "Debian"
+    - iscsi_mode == "initiator_only"

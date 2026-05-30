@@ -128,11 +128,15 @@
     - _ddclient_state == 'present'
     - (_ddclient_zone_resp.json.result | default([]) | length) > 0
 
-# Build the full list of internal FQDNs to seed
+# Build the full list of internal FQDNs to seed.
+# When ddclient_create_hostname_records is false, omit the host's own record
+# so only ddclient_extra_fqdns are seeded (e.g. styx publishing only media-int.nwlnexus.io).
 - name: Build internal FQDN list
   ansible.builtin.set_fact:
     _ddclient_internal_fqdns: >-
-      {{ [ansible_facts['hostname'] + '.' + ddclient_zone] + (ddclient_extra_fqdns | list) }}
+      {{ (ddclient_create_hostname_records | bool)
+         | ternary([ansible_facts['hostname'] + '.' + ddclient_zone], [])
+         + (ddclient_extra_fqdns | list) }}
   when: _ddclient_state == 'present'
 
 # --- Seed A records (idempotent: create if absent, skip if present) ---
@@ -149,7 +153,9 @@
     status_code: 200
   register: _ddclient_public_check
   no_log: true
-  when: _ddclient_state == 'present'
+  when:
+    - _ddclient_state == 'present'
+    - ddclient_create_hostname_records | bool
 
 - name: Create public A record
   ansible.builtin.uri:
@@ -169,6 +175,7 @@
   no_log: true
   when:
     - _ddclient_state == 'present'
+    - ddclient_create_hostname_records | bool
     - (_ddclient_public_check.json.result | default([]) | length) == 0
 
 - name: Check existing internal A records

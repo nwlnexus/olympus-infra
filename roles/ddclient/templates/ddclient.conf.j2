@@ -18,16 +18,22 @@ ttl={{ ddclient_ttl }}
 login=token
 password='{{ _ddclient_cf_token }}'
 
+{% if ddclient_create_hostname_records | bool %}
 # Public IP record — detected via external web service
 use=web, web=https://api.ipify.org/
 {{ ansible_facts['hostname'] }}.{{ ddclient_subdomain }}.{{ ddclient_zone }}
 
+{% endif %}
+{% if (ddclient_create_hostname_records | bool) or (ddclient_extra_fqdns | length > 0) %}
 # Internal IP records — detected from primary network interface
 use=if, if={{ ansible_facts['default_ipv4']['interface'] }}
+{% if ddclient_create_hostname_records | bool %}
 {{ ansible_facts['hostname'] }}.{{ ddclient_zone }}
+{% endif %}
 {% for fqdn in ddclient_extra_fqdns %}
 {{ fqdn }}
 {% endfor %}
+{% endif %}
 {% for zone_group in ddclient_extra_public_records | default([]) | groupby('zone') %}
 # Extra public records — zone {{ zone_group.0 }}
 protocol=cloudflare

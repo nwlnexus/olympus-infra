@@ -20,7 +20,7 @@
       domain: "{{ _policy.domain }}"
       ipv4Address: "{{ ansible_facts['default_ipv4']['address'] }}"
       ttlSeconds: "{{ _policy.ttlSeconds | default(300) }}"
-    validate_certs: false
+    validate_certs: "{{ unifi_dns_validate_certs }}"
     status_code: 201
   no_log: true
   when: _existing_policy | length == 0
@@ -39,7 +39,7 @@
       domain: "{{ _policy.domain }}"
       ipv4Address: "{{ ansible_facts['default_ipv4']['address'] }}"
       ttlSeconds: "{{ _policy.ttlSeconds | default(300) }}"
-    validate_certs: false
+    validate_certs: "{{ unifi_dns_validate_certs }}"
     status_code: 200
   no_log: true
   when:

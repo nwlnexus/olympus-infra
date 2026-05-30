@@ -7,3 +7,9 @@ unifi_dns_site_name: default
 unifi_dns_policies: []
 # Each policy entry: { domain, type (default A_RECORD), ttlSeconds (default 300) }
 # ipv4Address is always resolved at run time from ansible_facts['default_ipv4']['address']
+
+# TLS verification for UDM SE API calls. Defaults to false because the UDM SE ships with
+# a self-signed cert not in the system CA store. Set to true and provide unifi_dns_ca_path
+# if you have imported the controller cert or use a CA-signed cert.
+unifi_dns_validate_certs: false
+unifi_dns_ca_path: ""

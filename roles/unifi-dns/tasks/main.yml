@@ -56,7 +56,7 @@
     method: GET
     headers:
       X-API-KEY: "{{ _unifi_api_key.stdout | trim }}"
-    validate_certs: false
+    validate_certs: "{{ unifi_dns_validate_certs }}"
     status_code: 200
   register: _unifi_sites
   no_log: true
@@ -91,7 +91,7 @@
     method: GET
     headers:
       X-API-KEY: "{{ _unifi_api_key.stdout | trim }}"
-    validate_certs: false
+    validate_certs: "{{ unifi_dns_validate_certs }}"
     status_code: 200
   register: _unifi_dns_policies_resp
   no_log: true

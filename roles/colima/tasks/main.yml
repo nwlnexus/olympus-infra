@@ -11,7 +11,7 @@
 
 - name: Ensure ~/.docker/cli-plugins directory exists
   ansible.builtin.file:
-    path: "{{ ansible_env.HOME }}/.docker/cli-plugins"
+    path: "/Users/{{ ansible_user }}/.docker/cli-plugins"
     state: directory
     mode: "0755"
   become: false
@@ -20,7 +20,7 @@
 - name: Set up Docker Compose v2 as Docker CLI plugin
   ansible.builtin.file:
     src: /opt/homebrew/opt/docker-compose/bin/docker-compose
-    dest: "{{ ansible_env.HOME }}/.docker/cli-plugins/docker-compose"
+    dest: "/Users/{{ ansible_user }}/.docker/cli-plugins/docker-compose"
     state: link
   become: false
   when: colima_state == "present"

@@ -16,6 +16,9 @@
     - role: plex
       tags: [plex]
 
+    - role: ddclient
+      tags: [ddclient]
+
     # ── Hermes ENC (must be LAST — appends roles, never displaces) ───────────
     - role: hermes-classify-include
       tags: [hermes-classify]

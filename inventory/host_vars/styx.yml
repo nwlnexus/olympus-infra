@@ -13,3 +13,9 @@ plex_state: present
 
 # QNAP NAS MEDIA share mount
 nas_media_mount_state: present
+
+# ddclient — tracks styx's LAN IP and publishes media-int.nwlnexus.io for internal Plex access
+ddclient_state: present
+ddclient_zone: nwlnexus.io
+ddclient_extra_fqdns:
+  - media-int.nwlnexus.io

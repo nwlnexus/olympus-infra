@@ -36,8 +36,5 @@ flux_kubeconfig_path: "/etc/rancher/k3s/k3s.yaml"
 # manually in the Unifi UI — the DNS Policy API requires Ubiquiti account session auth
 # and is not accessible for server-to-server calls from the local network.
 
-# ddclient — keep media.nwlnexus.io DNS-only A record current in Cloudflare
+# ddclient — no extra public records needed; Plex external URL is via Tailscale Funnel
 ddclient_state: present
-ddclient_extra_public_records:
-  - fqdn: media.nwlnexus.io
-    zone: nwlnexus.io

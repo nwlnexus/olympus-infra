@@ -1,0 +1,6 @@
+---
+# Vars applied to every host in the pull inventory.
+
+# SSH — ansible user authorized keys (drift-corrected by baseline role on every pull run)
+baseline_ansible_ssh_pubkeys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBULkYVjdEZlPB+alzYT+pLsM8Kv1fIy8ubZraOGY1im nwilliams-lucas@ansible"

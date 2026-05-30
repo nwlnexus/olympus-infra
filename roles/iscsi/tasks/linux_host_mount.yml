@@ -1,5 +1,13 @@
 # roles/iscsi/tasks/linux_host_mount.yml
 ---
+- name: Set deterministic iSCSI initiator name
+  ansible.builtin.copy:
+    content: "InitiatorName=iqn.2004-04.net.olympus:{{ inventory_hostname }}\n"
+    dest: /etc/iscsi/initiatorname.iscsi
+    mode: "0600"
+  become: true
+  notify: Restart iscsid
+
 - name: Install open-iscsi
   ansible.builtin.apt:
     name: open-iscsi

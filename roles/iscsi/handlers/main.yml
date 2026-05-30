@@ -1,0 +1,7 @@
+---
+- name: Restart iscsid
+  ansible.builtin.systemd:
+    name: iscsid
+    state: restarted
+  become: true
+  when: ansible_facts['os_family'] == "Debian"

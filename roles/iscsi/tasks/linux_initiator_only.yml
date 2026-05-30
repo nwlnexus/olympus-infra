@@ -4,6 +4,14 @@
 # format or mount the block device. Intended for compute-hub nodes
 # where Longhorn manages the block device as additional disk capacity.
 
+- name: Set deterministic iSCSI initiator name
+  ansible.builtin.copy:
+    content: "InitiatorName=iqn.2004-04.net.olympus:{{ inventory_hostname }}\n"
+    dest: /etc/iscsi/initiatorname.iscsi
+    mode: "0600"
+  become: true
+  notify: Restart iscsid
+
 - name: Install open-iscsi
   ansible.builtin.apt:
     name: open-iscsi

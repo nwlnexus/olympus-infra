@@ -2,6 +2,13 @@
 # NOTE: Requires macOS 12+ (Monterey). Verify iscsictl path before running:
 # /usr/sbin/iscsictl --version
 
+- name: Set deterministic iSCSI initiator name
+  ansible.builtin.copy:
+    content: "InitiatorName=iqn.2004-04.net.olympus:{{ inventory_hostname }}\n"
+    dest: /etc/iscsi/initiatorname.iscsi
+    mode: "0600"
+  become: true
+
 - name: Check if iSCSI target already logged in
   ansible.builtin.command: /usr/sbin/iscsictl show
   register: _iscsi_show

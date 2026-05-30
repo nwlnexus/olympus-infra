@@ -99,3 +99,17 @@
     state: absent
   become: true
   when: plex_state == "absent"
+
+- name: Remove transcoding directory (state=absent)
+  ansible.builtin.file:
+    path: "{{ plex_transcoding_dir }}"
+    state: absent
+  become: true
+  when: plex_state == "absent"
+
+- name: Remove Plex GPG keyring (state=absent)
+  ansible.builtin.file:
+    path: /usr/share/keyrings/plex-archive-keyring.gpg
+    state: absent
+  become: true
+  when: plex_state == "absent"

@@ -4,7 +4,7 @@
     _existing_policy: >-
       {{ (_unifi_dns_policies_resp.json.data
           | selectattr('domain', 'equalto', _policy.domain)
-          | list | first) | default({}) }}
+          | list)[0] | default({}) }}
 
 - name: "Create DNS policy for {{ _policy.domain }}"
   ansible.builtin.uri:

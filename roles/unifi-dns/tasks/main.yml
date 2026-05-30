@@ -70,7 +70,16 @@
     _unifi_site_id: >-
       {{ (_unifi_sites.json.data
           | selectattr('name', 'equalto', unifi_dns_site_name)
-          | list | first).id }}
+          | list)[0].id | default('') }}
+  when:
+    - unifi_dns_state == "present"
+    - unifi_dns_policies | length > 0
+    - _unifi_sites.json.data is defined
+
+- name: Assert Unifi site was found
+  ansible.builtin.assert:
+    that: _unifi_site_id | length > 0
+    fail_msg: "Unifi site '{{ unifi_dns_site_name }}' not found in API response. Check unifi_dns_site_name."
   when:
     - unifi_dns_state == "present"
     - unifi_dns_policies | length > 0

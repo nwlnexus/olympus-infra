@@ -6,12 +6,19 @@
   ansible.builtin.set_fact:
     _nfs_export: "{{ iscsi_nfs_export if iscsi_nfs_export != '' else '/' + iscsi_mount_path.split('/')[-1] }}"
 
-- name: Create mount point
+- name: Check if NFS already mounted
+  ansible.builtin.shell: mount | grep -q "{{ iscsi_mount_path }}"
+  register: _already_mounted
+  changed_when: false
+  failed_when: false
+
+- name: Create mount point (only if not already mounted)
   ansible.builtin.file:
     path: "{{ iscsi_mount_path }}"
     state: directory
     mode: "0755"
   become: true
+  when: _already_mounted.rc != 0
 
 - name: Mount NFS share (NFSv4, macOS 26+)
   ansible.builtin.command: >
@@ -25,6 +32,7 @@
     - _mount.rc != 0
     - "'already mounted' not in (_mount.stderr | default(''))"
     - "'already mounted' not in (_mount.stdout | default(''))"
+  when: _already_mounted.rc != 0
 
 - name: Install LaunchDaemon for NFS mount at boot
   ansible.builtin.template:

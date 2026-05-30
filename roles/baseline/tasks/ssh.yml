@@ -27,3 +27,15 @@
   changed_when: false
   become: true
   when: baseline_state == "present"
+
+- name: Provision ansible user authorized keys
+  ansible.posix.authorized_key:
+    user: ansible
+    key: "{{ item }}"
+    state: present
+  loop: "{{ baseline_ansible_ssh_pubkeys }}"
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_ansible_ssh_pubkeys | length > 0
+  tags: [baseline, baseline-ssh]

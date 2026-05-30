@@ -22,6 +22,7 @@ baseline_unattended_auto_reboot_time: "03:00"
 baseline_ssh_permit_root_login: "no"
 baseline_ssh_password_auth: "no"
 baseline_ssh_max_auth_tries: 3
+baseline_ansible_ssh_pubkeys: []   # list of pubkey strings to add to ansible user's authorized_keys
 
 # fail2ban
 baseline_fail2ban_bantime: "1h"

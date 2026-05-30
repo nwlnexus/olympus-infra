@@ -7,3 +7,7 @@
 # Save the printed token to 1Password at the path below.
 # bootstrap-user role fetches this at push-bootstrap time.
 hermes_token_op_item: "op://Dev/styx-hermes-token/credential"
+
+# SSH — ansible user authorized keys (drift-corrected by baseline role)
+baseline_ansible_ssh_pubkeys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBULkYVjdEZlPB+alzYT+pLsM8Kv1fIy8ubZraOGY1im nwilliams-lucas@ansible"

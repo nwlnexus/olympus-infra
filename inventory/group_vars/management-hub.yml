@@ -32,12 +32,9 @@ flux_kubeconfig_external_port: 6443
 flux_kubeconfig_insecure_tls: false
 flux_kubeconfig_path: "/etc/rancher/k3s/k3s.yaml"
 
-# Unifi DNS policy — local split-horizon DNS for media.nwlnexus.io
-unifi_dns_state: present
-unifi_dns_policies:
-  - domain: media.nwlnexus.io
-    type: A_RECORD
-    ttlSeconds: 300
+# Unifi DNS policy (media.nwlnexus.io → management-hub LAN IP) must be configured
+# manually in the Unifi UI — the DNS Policy API requires Ubiquiti account session auth
+# and is not accessible for server-to-server calls from the local network.
 
 # ddclient — keep media.nwlnexus.io DNS-only A record current in Cloudflare
 ddclient_state: present

@@ -4,7 +4,20 @@
   ansible.builtin.meta: end_host
   when: ansible_facts['os_family'] == "Darwin"
 
-# op CLI first — subsequent tasks (SSH key fetch) depend on it.
+# Credential directory traverse — ansible user must be able to read files
+# inside /etc/olympus (token files, etc.) without becoming root.
+- name: Ensure ansible user can traverse /etc/olympus
+  ansible.builtin.file:
+    path: /etc/olympus
+    state: directory
+    owner: root
+    group: ansible
+    mode: '0750'
+  become: true
+  when: baseline_state == "present"
+  tags: [baseline, baseline-credentials]
+
+# op CLI next — SSH key fetch depends on it.
 - name: baseline — install 1Password CLI
   ansible.builtin.include_tasks: op-cli.yml
   tags: [baseline, baseline-op-cli]

@@ -56,8 +56,8 @@
     path: "{{ bootstrap_creds_dest }}"
     state: directory
     owner: root
-    group: root
-    mode: "0700"
+    group: "{{ bootstrap_user_name }}"
+    mode: "0750"
   become: true
   when: bootstrap_user_state == "present"
 

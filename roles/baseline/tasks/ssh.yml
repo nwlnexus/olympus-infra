@@ -54,17 +54,14 @@
   ansible.builtin.slurp:
     src: "{{ baseline_op_token_file }}"
   register: _baseline_op_sat
-  become: true
   no_log: true
   failed_when: false
   when:
     - baseline_state == "present"
     - baseline_op_ssh_pubkey_item != ""
 
-# Use argv so the field name "public key" (with space) is passed as a single
-# unambiguous argument — no shell quoting or %20 encoding needed.
-# Runs as root (become: true) to match the context that can read the token file,
-# avoiding stale op CLI account cache in the ansible user's home.
+# argv passes "label=public key" as a single argument — no shell quoting
+# or %20 encoding needed for the space in the field name.
 - name: Fetch ansible SSH public key from 1Password
   ansible.builtin.command:
     argv:
@@ -81,7 +78,6 @@
   register: _baseline_ssh_pubkey
   changed_when: false
   no_log: true
-  become: true
   when:
     - baseline_state == "present"
     - baseline_op_ssh_pubkey_item != ""

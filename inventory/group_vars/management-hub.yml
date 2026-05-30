@@ -31,3 +31,16 @@ flux_kubeconfig_external_server: ""
 flux_kubeconfig_external_port: 6443
 flux_kubeconfig_insecure_tls: false
 flux_kubeconfig_path: "/etc/rancher/k3s/k3s.yaml"
+
+# Unifi DNS policy — local split-horizon DNS for media.nwlnexus.io
+unifi_dns_state: present
+unifi_dns_policies:
+  - domain: media.nwlnexus.io
+    type: A_RECORD
+    ttlSeconds: 300
+
+# ddclient — keep media.nwlnexus.io DNS-only A record current in Cloudflare
+ddclient_state: present
+ddclient_extra_public_records:
+  - fqdn: media.nwlnexus.io
+    zone: nwlnexus.io

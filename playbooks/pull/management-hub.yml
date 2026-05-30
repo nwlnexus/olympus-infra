@@ -15,6 +15,12 @@
     - role: baseline
       tags: [baseline]
 
+    - role: unifi-dns
+      tags: [unifi-dns]
+
+    - role: ddclient
+      tags: [ddclient]
+
     - role: 1password-connect
       tags: [1password-connect]
 

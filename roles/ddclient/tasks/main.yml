@@ -230,9 +230,9 @@
     status_code: 200
   vars:
     _extra_zone_id: >-
-      {{ (_ddclient_extra_zone_resps.results
-          | selectattr('item', 'equalto', item.zone)
-          | list | first).json.result[0].id }}
+      {{ ((_ddclient_extra_zone_resps.results
+           | selectattr('item', 'equalto', item.zone)
+           | list | first).json.result | default([]) | first | default({})).id | default('') }}
   register: _ddclient_extra_checks
   no_log: true
   loop: "{{ ddclient_extra_public_records }}"
@@ -257,9 +257,9 @@
     status_code: 200
   vars:
     _extra_zone_id: >-
-      {{ (_ddclient_extra_zone_resps.results
-          | selectattr('item', 'equalto', item.item.zone)
-          | list | first).json.result[0].id }}
+      {{ ((_ddclient_extra_zone_resps.results
+           | selectattr('item', 'equalto', item.item.zone)
+           | list | first).json.result | default([]) | first | default({})).id | default('') }}
   no_log: true
   loop: "{{ _ddclient_extra_checks.results | default([]) }}"
   when:

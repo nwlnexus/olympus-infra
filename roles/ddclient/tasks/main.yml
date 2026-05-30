@@ -50,7 +50,7 @@
     OP_SERVICE_ACCOUNT_TOKEN=$(cat /etc/olympus/op-service-account-token 2>/dev/null || echo "")
     if [ -n "$OP_SERVICE_ACCOUNT_TOKEN" ]; then
       export OP_SERVICE_ACCOUNT_TOKEN
-      /usr/local/bin/op read "{{ ddclient_cf_token_op_ref }}"
+      op read "{{ ddclient_cf_token_op_ref }}"
     else
       echo ""
     fi

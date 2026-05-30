@@ -1,10 +1,22 @@
 # ddclient configuration — managed by Ansible, do not edit manually
 #
-# Manages DNS records for this host via Cloudflare:
+# Hostname records ({{ ddclient_zone }}):
 #   {{ ansible_facts['hostname'] }}.{{ ddclient_subdomain }}.{{ ddclient_zone }}  -> public IP (ipify)
 #   {{ ansible_facts['hostname'] }}.{{ ddclient_zone }}                            -> internal IP
 {% for fqdn in ddclient_extra_fqdns %}
+{% if fqdn | regex_replace('^.*?([^.]+\.[^.]+)$', '\1') == ddclient_zone %}
 #   {{ fqdn }}                                                            -> internal IP
+{% endif %}
+{% endfor %}
+{% set _extra_zones = ddclient_extra_fqdns | map('regex_replace', '^.*?([^.]+\.[^.]+)$', '\1') | unique | reject('equalto', ddclient_zone) | list %}
+{% for zone in _extra_zones %}
+#
+# Extra records ({{ zone }}):
+{% for fqdn in ddclient_extra_fqdns %}
+{% if fqdn | regex_replace('^.*?([^.]+\.[^.]+)$', '\1') == zone %}
+#   {{ fqdn }}                                                            -> internal IP
+{% endif %}
+{% endfor %}
 {% endfor %}
 
 daemon={{ ddclient_daemon_interval }}
@@ -12,28 +24,42 @@ ssl=yes
 verbose=no
 quiet=no
 
+# --- Hostname zone: {{ ddclient_zone }} ---
 protocol=cloudflare
 zone={{ ddclient_zone }}
 ttl={{ ddclient_ttl }}
 login=token
 password='{{ _ddclient_cf_token }}'
 
-{% if ddclient_create_hostname_records | bool %}
 # Public IP record — detected via external web service
 use=web, web=https://api.ipify.org/
 {{ ansible_facts['hostname'] }}.{{ ddclient_subdomain }}.{{ ddclient_zone }}
 
-{% endif %}
-{% if (ddclient_create_hostname_records | bool) or (ddclient_extra_fqdns | length > 0) %}
 # Internal IP records — detected from primary network interface
 use=if, if={{ ansible_facts['default_ipv4']['interface'] }}
-{% if ddclient_create_hostname_records | bool %}
 {{ ansible_facts['hostname'] }}.{{ ddclient_zone }}
-{% endif %}
 {% for fqdn in ddclient_extra_fqdns %}
+{% if fqdn | regex_replace('^.*?([^.]+\.[^.]+)$', '\1') == ddclient_zone %}
 {{ fqdn }}
-{% endfor %}
 {% endif %}
+{% endfor %}
+
+{% for zone in _extra_zones %}
+# --- Extra zone: {{ zone }} ---
+protocol=cloudflare
+zone={{ zone }}
+ttl={{ ddclient_ttl }}
+login=token
+password='{{ _ddclient_cf_token }}'
+
+use=if, if={{ ansible_facts['default_ipv4']['interface'] }}
+{% for fqdn in ddclient_extra_fqdns %}
+{% if fqdn | regex_replace('^.*?([^.]+\.[^.]+)$', '\1') == zone %}
+{{ fqdn }}
+{% endif %}
+{% endfor %}
+
+{% endfor %}
 {% for zone_group in ddclient_extra_public_records | default([]) | groupby('zone') %}
 # Extra public records — zone {{ zone_group.0 }}
 protocol=cloudflare

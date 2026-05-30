@@ -128,15 +128,56 @@
     - _ddclient_state == 'present'
     - (_ddclient_zone_resp.json.result | default([]) | length) > 0
 
-# Build the full list of internal FQDNs to seed.
-# When ddclient_create_hostname_records is false, omit the host's own record
-# so only ddclient_extra_fqdns are seeded (e.g. styx publishing only media-int.nwlnexus.io).
-- name: Build internal FQDN list
+# Compute the unique zones required by ddclient_extra_fqdns (inferred from
+# the FQDN itself — last two labels). Zones already covered by ddclient_zone
+# share the existing zone ID; only additional zones need a separate lookup.
+- name: Compute extra FQDN zones
+  ansible.builtin.set_fact:
+    _ddclient_extra_fqdn_zones: >-
+      {{ ddclient_extra_fqdns |
+         map('regex_replace', '^.*?([^.]+\.[^.]+)$', '\1') |
+         unique | reject('equalto', ddclient_zone) | list }}
+  when: _ddclient_state == 'present'
+
+- name: Look up zone IDs for extra FQDN zones
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones?name={{ item }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ _ddclient_cf_token }}"
+    status_code: 200
+  register: _ddclient_extra_fqdn_zone_resps
+  no_log: true
+  loop: "{{ _ddclient_extra_fqdn_zones }}"
+  when:
+    - _ddclient_state == 'present'
+    - _ddclient_extra_fqdn_zones | length > 0
+
+# Zone ID map: { zone_name: zone_id }. Starts with the hostname zone then
+# merges in any additional zones required by extra_fqdns.
+- name: Initialise zone ID map with hostname zone
+  ansible.builtin.set_fact:
+    _ddclient_zone_id_map: "{{ {ddclient_zone: _ddclient_zone_id} }}"
+  when: _ddclient_state == 'present'
+
+- name: Add extra FQDN zone IDs to map
+  ansible.builtin.set_fact:
+    _ddclient_zone_id_map: >-
+      {{ _ddclient_zone_id_map | combine({
+           item.item: (item.json.result | default([{}]) | first).id | default('')
+         }) }}
+  loop: "{{ _ddclient_extra_fqdn_zone_resps.results | default([]) }}"
+  when:
+    - _ddclient_state == 'present'
+    - _ddclient_extra_fqdn_zones | length > 0
+
+# Build the list of internal FQDNs in ddclient_zone for the conf template.
+- name: Build internal FQDN list for hostname zone
   ansible.builtin.set_fact:
     _ddclient_internal_fqdns: >-
-      {{ (ddclient_create_hostname_records | bool)
-         | ternary([ansible_facts['hostname'] + '.' + ddclient_zone], [])
-         + (ddclient_extra_fqdns | list) }}
+      {{ [ansible_facts['hostname'] + '.' + ddclient_zone] +
+         (ddclient_extra_fqdns |
+          select('match', '.*\\.' + ddclient_zone + '$') | list) }}
   when: _ddclient_state == 'present'
 
 # --- Seed A records (idempotent: create if absent, skip if present) ---
@@ -153,9 +194,7 @@
     status_code: 200
   register: _ddclient_public_check
   no_log: true
-  when:
-    - _ddclient_state == 'present'
-    - ddclient_create_hostname_records | bool
+  when: _ddclient_state == 'present'
 
 - name: Create public A record
   ansible.builtin.uri:
@@ -175,10 +214,9 @@
   no_log: true
   when:
     - _ddclient_state == 'present'
-    - ddclient_create_hostname_records | bool
     - (_ddclient_public_check.json.result | default([]) | length) == 0
 
-- name: Check existing internal A records
+- name: Check existing hostname-zone internal A records
   ansible.builtin.uri:
     url: >-
       https://api.cloudflare.com/client/v4/zones/{{ _ddclient_zone_id }}/dns_records?type=A&name={{ item }}
@@ -191,7 +229,7 @@
   loop: "{{ _ddclient_internal_fqdns }}"
   when: _ddclient_state == 'present'
 
-- name: Create missing internal A records
+- name: Create missing hostname-zone internal A records
   ansible.builtin.uri:
     url: "https://api.cloudflare.com/client/v4/zones/{{ _ddclient_zone_id }}/dns_records"
     method: POST
@@ -210,6 +248,51 @@
   loop: "{{ _ddclient_internal_checks.results | default([]) }}"
   when:
     - _ddclient_state == 'present'
+    - (item.json.result | default([]) | length) == 0
+
+# Seed extra FQDNs that live in zones OTHER than ddclient_zone.
+- name: Check existing cross-zone extra FQDN A records
+  ansible.builtin.uri:
+    url: >-
+      https://api.cloudflare.com/client/v4/zones/{{
+        _ddclient_zone_id_map[item | regex_replace('^.*?([^.]+\.[^.]+)$', '\1')] | default('')
+      }}/dns_records?type=A&name={{ item }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ _ddclient_cf_token }}"
+    status_code: 200
+  register: _ddclient_cross_zone_checks
+  no_log: true
+  loop: >-
+    {{ ddclient_extra_fqdns |
+       reject('match', '.*\.' + ddclient_zone + '$') | list }}
+  when:
+    - _ddclient_state == 'present'
+    - _ddclient_extra_fqdn_zones | length > 0
+
+- name: Create missing cross-zone extra FQDN A records
+  ansible.builtin.uri:
+    url: >-
+      https://api.cloudflare.com/client/v4/zones/{{
+        _ddclient_zone_id_map[item.item | regex_replace('^.*?([^.]+\.[^.]+)$', '\1')] | default('')
+      }}/dns_records
+    method: POST
+    headers:
+      Authorization: "Bearer {{ _ddclient_cf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      type: A
+      name: "{{ item.item }}"
+      content: "{{ ansible_facts['default_ipv4']['address'] }}"
+      ttl: "{{ ddclient_ttl }}"
+      proxied: false
+    status_code: 200
+  no_log: true
+  loop: "{{ _ddclient_cross_zone_checks.results | default([]) }}"
+  when:
+    - _ddclient_state == 'present'
+    - _ddclient_extra_fqdn_zones | length > 0
     - (item.json.result | default([]) | length) == 0
 
 # --- Extra public records (cross-zone) ---

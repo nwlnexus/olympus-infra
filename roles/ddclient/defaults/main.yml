@@ -11,10 +11,10 @@ ddclient_cf_api_token: ""
 # Optional extra FQDNs that also point to this host's internal IP.
 # e.g. role-based names like management-hub.nwlnexus.net alongside naraka-01.nwlnexus.net
 ddclient_extra_fqdns: []
-# Set to false to suppress the automatic {hostname}.{subdomain}.{zone} and
-# {hostname}.{zone} records — useful when the host's canonical records live
-# in a different zone (e.g. styx on nwlnexus.net, not nwlnexus.io).
-ddclient_create_hostname_records: true
+# Extra internal FQDNs tracked using the host's primary interface IP.
+# Zone is inferred automatically from the FQDN (last two labels), so
+# media-int.nwlnexus.io lands in the nwlnexus.io zone regardless of
+# ddclient_zone. No cross-zone configuration needed.
 # Extra public A records in potentially different zones.
 # Each entry: { fqdn: "media.nwlnexus.io", zone: "nwlnexus.io" }
 # Seeded via Cloudflare API; tracked by ddclient daemon.

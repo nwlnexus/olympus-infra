@@ -8,6 +8,11 @@
   hosts: ai-hub
   gather_facts: true
 
+  pre_tasks:
+    - name: Fetch olympus inventory from Hermes
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../../roles/baseline/tasks/olympus-inventory.yml"
+      tags: [always, olympus-inventory]
+
   roles:
     - role: baseline
       tags: [baseline]

@@ -1,0 +1,67 @@
+---
+# Fetch olympus inventory vars from Hermes via CF Access service token.
+# Writes resolved vars to /etc/ansible/facts.d/olympus_inventory.json
+# so they are available as ansible_local.olympus_inventory.* throughout the play.
+#
+# Safe fallback behaviour:
+#   - Hermes reachable + host registered  → cache updated, vars available
+#   - Hermes reachable + not registered   → empty vars (unassigned defaults apply)
+#   - Hermes unreachable + cache exists   → stale cache used, no changes
+#   - Hermes unreachable + no cache       → ansible_local.olympus_inventory undefined;
+#                                           playbooks use `| default({})` guards
+
+- name: Ensure facts.d directory exists
+  ansible.builtin.file:
+    path: /etc/ansible/facts.d
+    state: directory
+    owner: root
+    group: ansible
+    mode: '0755'
+  become: true
+
+- name: Load CF Access inventory credentials from 1Password
+  ansible.builtin.set_fact:
+    _inv_client_id: "{{ lookup('community.general.onepassword',
+        'hermes-secrets', field='cf-access-inventory-client-id', vault='Dev') }}"
+    _inv_client_secret: "{{ lookup('community.general.onepassword',
+        'hermes-secrets', field='cf-access-inventory-client-secret', vault='Dev') }}"
+  no_log: true
+
+- name: Resolve inventory vars from Hermes
+  ansible.builtin.uri:
+    url: "https://api.nwlnexus.io/api/v1/inventory/resolve/{{ inventory_hostname }}"
+    headers:
+      CF-Access-Client-Id: "{{ _inv_client_id }}"
+      CF-Access-Client-Secret: "{{ _inv_client_secret }}"
+    timeout: 10
+    return_content: true
+  register: _hermes_inv
+  failed_when: false
+  ignore_errors: true
+
+- name: Cache inventory facts locally
+  ansible.builtin.copy:
+    content: "{{ _hermes_inv.json | to_json }}"
+    dest: /etc/ansible/facts.d/olympus_inventory.json
+    owner: root
+    group: ansible
+    mode: '0644'
+  become: true
+  when:
+    - _hermes_inv.status is defined
+    - _hermes_inv.status == 200
+
+- name: Reload local facts after cache update
+  ansible.builtin.setup:
+    filter: ansible_local
+  when:
+    - _hermes_inv.status is defined
+    - _hermes_inv.status == 200
+
+- name: Log inventory fetch result
+  ansible.builtin.debug:
+    msg: >-
+      Olympus inventory:
+      {{ ansible_local.olympus_inventory.groups | default([]) | join(', ') or 'no groups' }},
+      {{ ansible_local.olympus_inventory.variables | default({}) | length }} vars
+  when: ansible_local.olympus_inventory is defined

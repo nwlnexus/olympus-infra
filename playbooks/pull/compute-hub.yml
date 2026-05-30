@@ -20,6 +20,10 @@
   gather_facts: true
 
   pre_tasks:
+    - name: Fetch olympus inventory from Hermes
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../../roles/baseline/tasks/olympus-inventory.yml"
+      tags: [always, olympus-inventory]
+
     - name: Gather facts (min + network — needed for kube-vip interface detection)
       ansible.builtin.setup:
         gather_subset:

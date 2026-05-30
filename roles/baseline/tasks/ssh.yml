@@ -50,14 +50,31 @@
   become: true
   when: baseline_state == "present"
 
-- name: Provision ansible user authorized keys
+- name: Read OP service account token
+  ansible.builtin.slurp:
+    src: "{{ baseline_op_token_file }}"
+  register: _baseline_op_sat
+  become: true
+  no_log: true
+  failed_when: false
+  when:
+    - baseline_state == "present"
+    - baseline_op_ssh_pubkey_item != ""
+
+# community.general.onepassword lookup uses `op item get --fields label=<field>`
+# internally, so spaces in field names are handled natively — no %20 encoding needed.
+- name: Provision ansible user SSH public key from 1Password
   ansible.posix.authorized_key:
     user: ansible
-    key: "{{ item }}"
+    key: "{{ lookup('community.general.onepassword',
+              baseline_op_ssh_pubkey_item,
+              field=baseline_op_ssh_pubkey_field,
+              vault=baseline_op_ssh_pubkey_vault,
+              service_account_token=(_baseline_op_sat.content | b64decode | trim)) }}"
     state: present
-  loop: "{{ baseline_ansible_ssh_pubkeys }}"
   become: true
   when:
     - baseline_state == "present"
-    - baseline_ansible_ssh_pubkeys | length > 0
+    - baseline_op_ssh_pubkey_item != ""
+    - _baseline_op_sat.content is defined
   tags: [baseline, baseline-ssh]

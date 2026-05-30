@@ -1,6 +1,8 @@
 ---
 # Vars applied to every host in the pull inventory.
 
-# SSH — ansible user authorized keys (drift-corrected by baseline role on every pull run)
-baseline_ansible_ssh_pubkeys:
-  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBULkYVjdEZlPB+alzYT+pLsM8Kv1fIy8ubZraOGY1im nwilliams-lucas@ansible"
+# SSH — ansible user authorized key fetched from 1Password on every pull run.
+# Field name "public key" contains a space; the community.general.onepassword
+# lookup passes it via `op item get --fields label=<field>` which handles spaces
+# natively — no URL encoding required.
+baseline_op_ssh_pubkey_item: "6hssesmhbntdyu3ris7ou44nzi"

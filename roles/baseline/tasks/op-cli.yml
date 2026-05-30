@@ -1,0 +1,39 @@
+---
+# Install the 1Password CLI (op) from the official apt repository.
+# Must run before any task that uses the onepassword lookup or op read.
+
+- name: Download 1Password apt signing key
+  ansible.builtin.get_url:
+    url: https://downloads.1password.com/linux/keys/1password.asc
+    dest: /usr/share/keyrings/1password-archive-keyring.asc
+    mode: '0644'
+  become: true
+  when: baseline_state == "present"
+
+- name: Add 1Password apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ baseline_op_cli_arch }} signed-by=/usr/share/keyrings/1password-archive-keyring.asc]
+      https://downloads.1password.com/linux/debian/{{ baseline_op_cli_arch }} stable main
+    state: present
+    filename: 1password
+  become: true
+  when: baseline_state == "present"
+
+- name: Install 1password-cli
+  ansible.builtin.apt:
+    name: 1password-cli
+    state: present
+    update_cache: true
+  become: true
+  when: baseline_state == "present"
+
+- name: Remove 1Password apt repository (state=absent)
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ baseline_op_cli_arch }} signed-by=/usr/share/keyrings/1password-archive-keyring.asc]
+      https://downloads.1password.com/linux/debian/{{ baseline_op_cli_arch }} stable main
+    state: absent
+    filename: 1password
+  become: true
+  when: baseline_state == "absent"

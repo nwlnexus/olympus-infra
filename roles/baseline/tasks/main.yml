@@ -4,6 +4,11 @@
   ansible.builtin.meta: end_host
   when: ansible_facts['os_family'] == "Darwin"
 
+# op CLI first — subsequent tasks (SSH key fetch) depend on it.
+- name: baseline — install 1Password CLI
+  ansible.builtin.include_tasks: op-cli.yml
+  tags: [baseline, baseline-op-cli]
+
 # Order matters: SSH first (avoid lockout when UFW comes up later),
 # then hardening pieces, then UFW last (so any extra-ports config from
 # later tasks/host_vars is already in place before deny-by-default).

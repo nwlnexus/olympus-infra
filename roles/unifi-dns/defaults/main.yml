@@ -1,0 +1,9 @@
+---
+unifi_dns_state: present
+unifi_dns_op_token_file: /etc/olympus/op-service-account-token
+unifi_dns_op_credential_ref: "op://Dev/unifi-api/credential"
+unifi_dns_op_host_ref: "op://Dev/unifi-api/host"
+unifi_dns_site_name: default
+unifi_dns_policies: []
+# Each policy entry: { domain, type (default A_RECORD), ttlSeconds (default 300) }
+# ipv4Address is always resolved at run time from ansible_facts['default_ipv4']['address']

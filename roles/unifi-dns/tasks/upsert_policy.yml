@@ -1,0 +1,47 @@
+---
+- name: "Find existing policy for {{ _policy.domain }}"
+  ansible.builtin.set_fact:
+    _existing_policy: >-
+      {{ (_unifi_dns_policies_resp.json.data
+          | selectattr('domain', 'equalto', _policy.domain)
+          | list | first) | default({}) }}
+
+- name: "Create DNS policy for {{ _policy.domain }}"
+  ansible.builtin.uri:
+    url: "{{ _unifi_base_url }}/v1/sites/{{ _unifi_site_id }}/dns/policies"
+    method: POST
+    headers:
+      X-API-KEY: "{{ _unifi_api_key.stdout | trim }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      type: "{{ _policy.type | default('A_RECORD') }}"
+      enabled: true
+      domain: "{{ _policy.domain }}"
+      ipv4Address: "{{ ansible_facts['default_ipv4']['address'] }}"
+      ttlSeconds: "{{ _policy.ttlSeconds | default(300) }}"
+    validate_certs: false
+    status_code: 201
+  no_log: true
+  when: _existing_policy | length == 0
+
+- name: "Update DNS policy for {{ _policy.domain }} if IP changed"
+  ansible.builtin.uri:
+    url: "{{ _unifi_base_url }}/v1/sites/{{ _unifi_site_id }}/dns/policies/{{ _existing_policy.id }}"
+    method: PUT
+    headers:
+      X-API-KEY: "{{ _unifi_api_key.stdout | trim }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      type: "{{ _policy.type | default('A_RECORD') }}"
+      enabled: true
+      domain: "{{ _policy.domain }}"
+      ipv4Address: "{{ ansible_facts['default_ipv4']['address'] }}"
+      ttlSeconds: "{{ _policy.ttlSeconds | default(300) }}"
+    validate_certs: false
+    status_code: 200
+  no_log: true
+  when:
+    - _existing_policy | length > 0
+    - _existing_policy.ipv4Address != ansible_facts['default_ipv4']['address']

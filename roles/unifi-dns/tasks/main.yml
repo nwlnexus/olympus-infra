@@ -43,7 +43,7 @@
 
 - name: Set Unifi API base URL fact
   ansible.builtin.set_fact:
-    _unifi_base_url: "https://{{ _unifi_host.stdout | trim }}/proxy/network/v2/api"
+    _unifi_base_url: "https://{{ _unifi_host.stdout | trim }}"
   no_log: true
   when:
     - unifi_dns_state == "present"

@@ -107,3 +107,16 @@
     - /etc/systemd/system/mnt-media.automount
   become: true
   when: nas_media_mount_state == "absent"
+
+- name: Reload systemd after removing unit files (state=absent)
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+  when: nas_media_mount_state == "absent"
+
+- name: Remove mount point directory (state=absent)
+  ansible.builtin.file:
+    path: "{{ nas_media_mount_point }}"
+    state: absent
+  become: true
+  when: nas_media_mount_state == "absent"

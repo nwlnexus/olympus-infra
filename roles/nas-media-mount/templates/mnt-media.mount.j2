@@ -5,7 +5,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Mount]
-What={{ _nas_media_host }}:/MEDIA
+What={{ _nas_media_host }}:{{ nas_media_mount_share }}
 Where={{ nas_media_mount_point }}
 Type=nfs
 Options=nfsvers=4,hard,_netdev,rsize=1048576,wsize=1048576,timeo=600,retrans=2

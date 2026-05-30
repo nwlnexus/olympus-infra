@@ -40,6 +40,16 @@
   become: true
   when: baseline_state == "present"
 
+- name: Ensure ansible user .local/bin exists
+  ansible.builtin.file:
+    path: /home/ansible/.local/bin
+    state: directory
+    owner: ansible
+    group: ansible
+    mode: '0755'
+  become: true
+  when: baseline_state == "present"
+
 - name: Provision ansible user authorized keys
   ansible.posix.authorized_key:
     user: ansible

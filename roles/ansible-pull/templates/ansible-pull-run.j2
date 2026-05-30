@@ -19,6 +19,11 @@ LOG_FILE="${WRAPPER_LOG_FILE:-{{ ansible_pull_log_file }}}"
 OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/opt/ansible-pull/.op-service-account-token}"
 PARSER="${WRAPPER_PARSER:-/opt/ansible-pull/parse-play-recap.sh}"
 
+# Ensure user-local bin is always on PATH — ${HOME} is reliable here since
+# this script runs as the ansible service user (login via su - or systemd User=).
+# Cron and sudo contexts don't source .profile, so we set it explicitly.
+export PATH="${HOME}/.local/bin:${PATH}"
+
 mkdir -p "$CACHE_DIR" "$PENDING_DIR" "$RUNTIME_DIR" "$LOG_DIR"
 
 # ── 1. 1Password token (existing requirement) ─────────────────────────────

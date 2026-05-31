@@ -20,7 +20,9 @@
 
 - name: Install atlas binary
   ansible.builtin.shell:
-    cmd: "curl -fsSL {{ atlas_install_url }} | sh"
+    # pipefail ensures curl 404 propagates through the pipe
+    cmd: "set -o pipefail && curl -fsSL {{ atlas_install_url }} | sh"
+    executable: /bin/bash
   become: true
   when:
     - atlas_state == "present"

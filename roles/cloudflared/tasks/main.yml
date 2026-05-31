@@ -4,10 +4,105 @@
     name: cloudflared
     state: "{{ 'present' if cloudflared_state == 'present' else 'absent' }}"
 
-- name: Cloudflared binary only — service runs in k3s
+# ── macOS: LaunchDaemon + /etc/cloudflared credentials ───────────────────────
+- name: Create /etc/cloudflared directory (macOS)
+  ansible.builtin.file:
+    path: /etc/cloudflared
+    state: directory
+    owner: root
+    group: wheel
+    mode: "0755"
+  become: true
+  when:
+    - cloudflared_state == "present"
+    - ansible_facts['os_family'] == "Darwin"
+    - cloudflared_tunnel_id != ""
+
+- name: Write tunnel credentials to /etc/cloudflared (macOS)
+  ansible.builtin.copy:
+    content: "{{ lookup('community.general.onepassword', cloudflared_credentials_op_item, field=cloudflared_credentials_op_field, vault=cloudflared_credentials_op_vault) }}"
+    dest: "/etc/cloudflared/{{ cloudflared_tunnel_id }}.json"
+    owner: root
+    group: wheel
+    mode: "0640"
+  become: true
+  no_log: true
+  when:
+    - cloudflared_state == "present"
+    - ansible_facts['os_family'] == "Darwin"
+    - cloudflared_tunnel_id != ""
+
+- name: Deploy /etc/cloudflared/config.yml (macOS)
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: /etc/cloudflared/config.yml
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+  when:
+    - cloudflared_state == "present"
+    - ansible_facts['os_family'] == "Darwin"
+    - cloudflared_tunnel_id != ""
+
+- name: Deploy cloudflared LaunchDaemon plist (macOS)
+  ansible.builtin.template:
+    src: cloudflared-launchdaemon.plist.j2
+    dest: /Library/LaunchDaemons/com.cloudflare.cloudflared.plist
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+  when:
+    - cloudflared_state == "present"
+    - ansible_facts['os_family'] == "Darwin"
+    - cloudflared_tunnel_id != ""
+  register: _cloudflared_plist
+
+- name: Remove old user-level LaunchAgent if present (macOS migration)
+  ansible.builtin.file:
+    path: "/Users/{{ item }}/Library/LaunchAgents/com.cloudflare.cloudflared.plist"
+    state: absent
+  become: true
+  loop:
+    - "{{ ansible_user }}"
+    - nwilliams-lucas
+  failed_when: false
+  when:
+    - cloudflared_state == "present"
+    - ansible_facts['os_family'] == "Darwin"
+
+- name: Unload old LaunchAgent (macOS migration, errors ok)
+  ansible.builtin.command: >
+    launchctl bootout user/$(id -u {{ item }}) com.cloudflare.cloudflared
+  become: false
+  failed_when: false
+  changed_when: false
+  loop:
+    - "{{ ansible_user }}"
+    - nwilliams-lucas
+  when:
+    - cloudflared_state == "present"
+    - ansible_facts['os_family'] == "Darwin"
+
+- name: Load cloudflared LaunchDaemon (macOS)
+  ansible.builtin.command: >
+    launchctl load -w /Library/LaunchDaemons/com.cloudflare.cloudflared.plist
+  become: true
+  changed_when: true
+  failed_when: false
+  when:
+    - cloudflared_state == "present"
+    - ansible_facts['os_family'] == "Darwin"
+    - cloudflared_tunnel_id != ""
+    - _cloudflared_plist.changed
+
+# ── non-macOS: binary-only, tunnel service runs in k3s ────────────────────────
+- name: cloudflared binary only — service runs in k3s
   ansible.builtin.debug:
     msg: >
       cloudflared binary installed. The tunnel service runs as a Kubernetes Deployment
-      in the cloudflared namespace on the k3s cluster (managed by ArgoCD).
-      See k8s/mac-studio/argocd-apps/ and k8s/management/argocd-apps/.
-  when: cloudflared_state == "present"
+      managed by Flux. See clusters/ in olympus-gitops.
+  when:
+    - cloudflared_state == "present"
+    - ansible_facts['os_family'] != "Darwin"

@@ -3,3 +3,6 @@ colima_state: present
 colima_cpu: 2
 colima_memory: 4
 colima_disk: 60
+# The macOS user who starts Colima (not the ansible service user).
+# Used to locate the Colima docker socket for the ansible user's DOCKER_HOST.
+colima_deployer_user: "{{ ansible_user }}"

@@ -63,3 +63,14 @@
   changed_when: "'Successfully stopped' in _colima_stop.stdout"
   become: false
   when: colima_state == "absent"
+
+- name: Create /var/run/docker.sock symlink pointing at Colima socket (macOS)
+  ansible.builtin.file:
+    src: "/Users/{{ colima_deployer_user }}/.colima/default/docker.sock"
+    dest: /var/run/docker.sock
+    state: link
+    force: true
+  become: true
+  when:
+    - colima_state == "present"
+    - ansible_facts['os_family'] == "Darwin"

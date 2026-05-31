@@ -43,6 +43,7 @@
     # ── Always run — roles handle OS/arch internally ──────────────────────────
     - role: common
       tags: [common]
+      when: ansible_facts['os_family'] != 'Darwin'
 
     - role: baseline
       tags: [baseline]

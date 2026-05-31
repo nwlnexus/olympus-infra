@@ -17,7 +17,9 @@
     state: directory
     mode: "0755"
   become: false
-  when: colima_state == "present"
+  when:
+    - colima_state == "present"
+    - colima_runtime == "docker"
 
 - name: Set up Docker Compose v2 as Docker CLI plugin
   ansible.builtin.file:
@@ -25,9 +27,37 @@
     dest: "/Users/{{ ansible_user }}/.docker/cli-plugins/docker-compose"
     state: link
   become: false
-  when: colima_state == "present"
+  when:
+    - colima_state == "present"
+    - colima_runtime == "docker"
 
-- name: Initialize Colima VM with configured resources (first run only)
+# ── k3s runtime: write Lima config before first start ────────────────────────
+- name: Ensure Colima default profile config directory exists (k3s runtime)
+  ansible.builtin.file:
+    path: "/var/{{ colima_deployer_user }}/.colima/default"
+    state: directory
+    owner: "{{ colima_deployer_user }}"
+    group: admin
+    mode: "0755"
+  become: true
+  when:
+    - colima_state == "present"
+    - colima_runtime == "k3s"
+
+- name: Write Colima Lima config with provision block (k3s runtime, first run only)
+  ansible.builtin.template:
+    src: colima-config.yaml.j2
+    dest: "/var/{{ colima_deployer_user }}/.colima/default/colima.yaml"
+    owner: "{{ colima_deployer_user }}"
+    group: admin
+    mode: "0644"
+  become: true
+  when:
+    - colima_state == "present"
+    - colima_runtime == "k3s"
+
+# ── Initialize the Colima VM ─────────────────────────────────────────────────
+- name: Initialize Colima VM with configured resources (docker runtime, first run only)
   ansible.builtin.command: >
     /opt/homebrew/bin/colima start
     --cpu {{ colima_cpu }}
@@ -40,33 +70,97 @@
     - _colima_init.rc != 0
     - "'already running' not in (_colima_init.stderr | default(''))"
   become: false
-  when: colima_state == "present"
+  when:
+    - colima_state == "present"
+    - colima_runtime == "docker"
 
-- name: Start Colima as user LaunchAgent (brew services)
+- name: Initialize Colima VM with k3s runtime as deployer user (first run, downloads VM image)
+  ansible.builtin.command: >
+    /opt/homebrew/bin/colima start
+    --cpu {{ colima_cpu }}
+    --memory {{ colima_memory }}
+    --disk {{ colima_disk }}
+    --foreground=false
+  register: _colima_k3s_init
+  changed_when: _colima_k3s_init.rc == 0
+  failed_when:
+    - _colima_k3s_init.rc != 0
+    - "'already running' not in (_colima_k3s_init.stderr | default(''))"
+  become: true
+  become_user: "{{ colima_deployer_user }}"
+  environment:
+    HOME: "/var/{{ colima_deployer_user }}"
+    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin"
+  when:
+    - colima_state == "present"
+    - colima_runtime == "k3s"
+
+# ── Legacy docker runtime: user LaunchAgent (brew services) ──────────────────
+- name: Start Colima as user LaunchAgent (docker runtime only)
   ansible.builtin.command: >
     /opt/homebrew/bin/brew services start colima
   register: _colima_start
   changed_when: "'Successfully started' in _colima_start.stdout"
-  # "Bootstrap failed: 5" = launchctl error when LaunchAgent is already
-  # loaded (re-runs after the first successful bootstrap)
   failed_when:
     - _colima_start.rc != 0
     - "'already started' not in (_colima_start.stderr | default(''))"
     - "'Bootstrap failed' not in (_colima_start.stderr | default(''))"
   become: false
-  when: colima_state == "present"
+  when:
+    - colima_state == "present"
+    - colima_runtime == "docker"
 
-- name: Stop and remove Colima
+# ── k3s runtime: system LaunchDaemon (headless, persists without login) ──────
+- name: Deploy Colima system LaunchDaemon plist (k3s runtime)
+  ansible.builtin.template:
+    src: colima-launchdaemon.plist.j2
+    dest: /Library/LaunchDaemons/com.olympus.colima.plist
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+  register: _colima_daemon_plist
+  when:
+    - colima_state == "present"
+    - colima_runtime == "k3s"
+
+- name: Load Colima LaunchDaemon (k3s runtime)
+  ansible.builtin.command: >
+    launchctl bootstrap system /Library/LaunchDaemons/com.olympus.colima.plist
+  become: true
+  changed_when: true
+  failed_when: false
+  when:
+    - colima_state == "present"
+    - colima_runtime == "k3s"
+    - _colima_daemon_plist.changed
+
+# ── Absent path ───────────────────────────────────────────────────────────────
+- name: Stop Colima (docker runtime)
   ansible.builtin.command: /opt/homebrew/bin/brew services stop colima
   register: _colima_stop
   failed_when: false
   changed_when: "'Successfully stopped' in _colima_stop.stdout"
   become: false
-  when: colima_state == "absent"
+  when:
+    - colima_state == "absent"
+    - colima_runtime == "docker"
 
-- name: Create /var/run/docker.sock symlink pointing at Colima socket (macOS)
+- name: Unload and remove Colima LaunchDaemon (k3s runtime)
+  ansible.builtin.shell: |
+    launchctl bootout system /Library/LaunchDaemons/com.olympus.colima.plist 2>/dev/null || true
+    rm -f /Library/LaunchDaemons/com.olympus.colima.plist
+  become: true
+  failed_when: false
+  changed_when: true
+  when:
+    - colima_state == "absent"
+    - colima_runtime == "k3s"
+
+# ── docker.sock symlink (docker runtime only) ─────────────────────────────────
+- name: Create /var/run/docker.sock symlink pointing at Colima socket (macOS, docker runtime)
   ansible.builtin.file:
-    src: "/Users/{{ colima_deployer_user }}/.colima/default/docker.sock"
+    src: "/var/{{ colima_deployer_user }}/.colima/default/docker.sock"
     dest: /var/run/docker.sock
     state: link
     force: true
@@ -74,3 +168,4 @@
   when:
     - colima_state == "present"
     - ansible_facts['os_family'] == "Darwin"
+    - colima_runtime == "docker"

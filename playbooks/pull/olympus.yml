@@ -19,7 +19,7 @@
   pre_tasks:
     - name: Assert OP service account token is readable
       ansible.builtin.stat:
-        path: "{{ '/etc/olympus/op-service-account-token' if ansible_facts['os_family'] == 'Darwin' else '/opt/ansible-pull/.op-service-account-token' }}"
+        path: /etc/olympus/op-service-account-token
       register: _op_token_stat
       failed_when: not _op_token_stat.stat.exists
       tags: [always]

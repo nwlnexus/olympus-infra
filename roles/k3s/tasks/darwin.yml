@@ -47,16 +47,73 @@
     - k3s_kubeconfig_op_item | default('') != ''
     - k3s_external_server | default('') != ''
 
-- name: Export patched kubeconfig to 1Password (macOS)
-  ansible.builtin.command: >
-    op item edit "{{ k3s_kubeconfig_op_item }}"
-    --vault "{{ k3s_kubeconfig_op_vault | default('Dev') }}"
-    "kubeconfig={{ _kubeconfig_patched }}"
+- name: Write patched kubeconfig to temp file for 1Password upload (macOS)
+  ansible.builtin.copy:
+    content: "{{ _kubeconfig_patched }}"
+    dest: "/tmp/{{ k3s_kubeconfig_op_item }}.yaml"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
   no_log: true
-  changed_when: true
+  when:
+    - _k3s_state == 'present'
+    - k3s_kubeconfig_op_item | default('') != ''
+    - _kubeconfig_patched is defined
+
+- name: Check if kubeconfig document exists in 1Password (macOS)
+  ansible.builtin.command: >
+    op document get "{{ k3s_kubeconfig_op_item }}"
+    --vault "{{ k3s_kubeconfig_op_vault | default('Dev') }}"
+  register: _op_kc_check
+  failed_when: false
+  changed_when: false
+  delegate_to: localhost
+  become: false
   environment:
     OP_SERVICE_ACCOUNT_TOKEN: "{{ lookup('env', 'OP_SERVICE_ACCOUNT_TOKEN') }}"
   when:
     - _k3s_state == 'present'
     - k3s_kubeconfig_op_item | default('') != ''
     - _kubeconfig_patched is defined
+
+- name: Create kubeconfig document in 1Password (first time) (macOS)
+  ansible.builtin.command: >
+    op document create "/tmp/{{ k3s_kubeconfig_op_item }}.yaml"
+    --title "{{ k3s_kubeconfig_op_item }}"
+    --vault "{{ k3s_kubeconfig_op_vault | default('Dev') }}"
+  changed_when: true
+  delegate_to: localhost
+  become: false
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ lookup('env', 'OP_SERVICE_ACCOUNT_TOKEN') }}"
+  when:
+    - _k3s_state == 'present'
+    - k3s_kubeconfig_op_item | default('') != ''
+    - _kubeconfig_patched is defined
+    - _op_kc_check.rc != 0
+
+- name: Update kubeconfig document in 1Password (subsequent runs) (macOS)
+  ansible.builtin.command: >
+    op document edit "{{ k3s_kubeconfig_op_item }}"
+    "/tmp/{{ k3s_kubeconfig_op_item }}.yaml"
+    --vault "{{ k3s_kubeconfig_op_vault | default('Dev') }}"
+  changed_when: true
+  delegate_to: localhost
+  become: false
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ lookup('env', 'OP_SERVICE_ACCOUNT_TOKEN') }}"
+  when:
+    - _k3s_state == 'present'
+    - k3s_kubeconfig_op_item | default('') != ''
+    - _kubeconfig_patched is defined
+    - _op_kc_check.rc == 0
+
+- name: Remove temp kubeconfig file (macOS)
+  ansible.builtin.file:
+    path: "/tmp/{{ k3s_kubeconfig_op_item }}.yaml"
+    state: absent
+  delegate_to: localhost
+  become: false
+  when:
+    - _k3s_state == 'present'
+    - k3s_kubeconfig_op_item | default('') != ''

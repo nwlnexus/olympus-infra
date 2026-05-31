@@ -1,0 +1,16 @@
+[Unit]
+Description=Atlas homelab management daemon
+After=network.target
+
+[Service]
+Type=simple
+User=atlas
+Environment=HOME=/var/lib/atlas
+ExecStart=/usr/local/bin/atlas daemon
+Restart=always
+RestartSec=10
+TimeoutStopSec=35
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+
+[Install]
+WantedBy=multi-user.target

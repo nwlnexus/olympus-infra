@@ -1,0 +1,192 @@
+---
+# ── Install binary ────────────────────────────────────────────────────────────
+- name: Check if atlas binary is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/atlas
+  register: _atlas_binary
+  become: true
+
+- name: Install atlas binary
+  ansible.builtin.shell:
+    cmd: "curl -fsSL {{ atlas_install_url }} | sh"
+  become: true
+  when:
+    - atlas_state == "present"
+    - not _atlas_binary.stat.exists
+  changed_when: true
+
+# ── System user ───────────────────────────────────────────────────────────────
+- name: Create atlas system user
+  ansible.builtin.user:
+    name: "{{ atlas_user }}"
+    system: true
+    home: "{{ atlas_home }}"
+    shell: /usr/sbin/nologin
+    create_home: true
+    comment: "Atlas daemon"
+  become: true
+  when: atlas_state == "present"
+
+- name: Ensure atlas config directory exists
+  ansible.builtin.file:
+    path: "{{ atlas_home }}/.config/atlas"
+    state: directory
+    owner: "{{ atlas_user }}"
+    group: "{{ atlas_user }}"
+    mode: "0750"
+  become: true
+  when: atlas_state == "present"
+
+- name: Write install-method marker
+  ansible.builtin.copy:
+    content: "shell\n"
+    dest: "{{ atlas_home }}/.config/atlas/install-method"
+    owner: "{{ atlas_user }}"
+    group: "{{ atlas_user }}"
+    mode: "0644"
+  become: true
+  when: atlas_state == "present"
+
+# ── Registration ──────────────────────────────────────────────────────────────
+- name: Check atlas registration status
+  ansible.builtin.command:
+    cmd: /usr/local/bin/atlas status
+  become: true
+  become_user: "{{ atlas_user }}"
+  environment:
+    HOME: "{{ atlas_home }}"
+  register: _atlas_status
+  failed_when: false
+  changed_when: false
+  when: atlas_state == "present"
+
+- name: Read 1Password service account token
+  ansible.builtin.slurp:
+    src: "{{ atlas_op_token_file }}"
+  register: _op_token
+  no_log: true
+  failed_when: false
+  become: true
+  when:
+    - atlas_state == "present"
+    - _atlas_status.rc != 0
+
+- name: Fetch atlas bootstrap key from 1Password
+  ansible.builtin.command:
+    argv:
+      - op
+      - read
+      - "{{ atlas_op_bootstrap_key_ref }}"
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ _op_token.content | b64decode | trim }}"
+  register: _atlas_bootstrap_key
+  changed_when: false
+  no_log: true
+  when:
+    - atlas_state == "present"
+    - _atlas_status.rc != 0
+    - _op_token.content is defined
+
+- name: Register atlas with Hermes
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/atlas
+      - setup
+      - --server
+      - "{{ atlas_server }}"
+      - --bootstrap-key
+      - "{{ _atlas_bootstrap_key.stdout | trim }}"
+  become: true
+  become_user: "{{ atlas_user }}"
+  environment:
+    HOME: "{{ atlas_home }}"
+  no_log: true
+  changed_when: true
+  when:
+    - atlas_state == "present"
+    - _atlas_status.rc != 0
+    - _atlas_bootstrap_key.stdout is defined
+
+# ── Systemd units ─────────────────────────────────────────────────────────────
+- name: Deploy atlas.service unit
+  ansible.builtin.copy:
+    src: atlas.service
+    dest: /etc/systemd/system/atlas.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when: atlas_state == "present"
+
+- name: Deploy atlas-updater.service unit
+  ansible.builtin.copy:
+    src: atlas-updater.service
+    dest: /etc/systemd/system/atlas-updater.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when: atlas_state == "present"
+
+- name: Deploy atlas-updater.timer unit
+  ansible.builtin.copy:
+    src: atlas-updater.timer
+    dest: /etc/systemd/system/atlas-updater.timer
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when: atlas_state == "present"
+
+- name: Enable and start atlas service
+  ansible.builtin.systemd:
+    name: atlas
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true
+  when: atlas_state == "present"
+
+- name: Enable and start atlas-updater timer
+  ansible.builtin.systemd:
+    name: atlas-updater.timer
+    enabled: true
+    state: started
+  become: true
+  when: atlas_state == "present"
+
+# ── Absent state ──────────────────────────────────────────────────────────────
+- name: Stop and disable atlas service (state=absent)
+  ansible.builtin.systemd:
+    name: atlas
+    enabled: false
+    state: stopped
+  become: true
+  failed_when: false
+  when: atlas_state == "absent"
+
+- name: Stop and disable atlas-updater timer (state=absent)
+  ansible.builtin.systemd:
+    name: atlas-updater.timer
+    enabled: false
+    state: stopped
+  become: true
+  failed_when: false
+  when: atlas_state == "absent"
+
+- name: Remove atlas systemd units (state=absent)
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop:
+    - atlas.service
+    - atlas-updater.service
+    - atlas-updater.timer
+  become: true
+  when: atlas_state == "absent"
+
+- name: Reload systemd after removing units (state=absent)
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+  when: atlas_state == "absent"

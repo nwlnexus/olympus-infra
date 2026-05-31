@@ -1,0 +1,9 @@
+[Unit]
+Description=Atlas self-updater
+After=network.target
+
+[Service]
+Type=oneshot
+User=atlas
+ExecStart=/usr/local/bin/atlas self update
+ExecStartPost=/bin/systemctl restart atlas.service

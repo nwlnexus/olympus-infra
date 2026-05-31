@@ -1,15 +1,13 @@
 ---
-# Required — must be provided by caller
-iscsi_portal: ""          # e.g. "qnap.nwlnexus.net"
-iscsi_target_iqn: ""      # e.g. "iqn.2004-04.com.qnap:ts-873a:iscsi.target-ai-hub"
+iscsi_state: present
+iscsi_portal: ""
+iscsi_target_iqn: ""
 iscsi_chap_user: ""
 iscsi_chap_password: ""
-
-# Optional
-iscsi_mode: "host_mount"  # host_mount | initiator_only
-iscsi_mount_path: "/mnt/data"   # ignored when mode=initiator_only
-iscsi_filesystem: "ext4"        # Linux only; macOS uses NFS
+iscsi_mode: "host_mount"
+iscsi_mount_path: "/mnt/data"
+iscsi_filesystem: "ext4"
 iscsi_port: 3260
-# macOS only: NFS export path on the NAS (e.g. "/ai-hub-data")
-# Defaults to the last component of iscsi_mount_path if not set
 iscsi_nfs_export: ""
+iscsi_op_item: ""
+iscsi_op_token_file: /etc/olympus/op-service-account-token

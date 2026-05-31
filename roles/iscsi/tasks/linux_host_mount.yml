@@ -1,5 +1,87 @@
 # roles/iscsi/tasks/linux_host_mount.yml
 ---
+# ── 1Password credential resolution ─────────────────────────────────────────
+- name: Read 1Password service account token
+  ansible.builtin.slurp:
+    src: "{{ iscsi_op_token_file }}"
+  register: _iscsi_op_token
+  become: true
+  no_log: true
+  failed_when: false
+  when: iscsi_op_item | length > 0
+
+- name: Fetch iSCSI storage address from 1Password
+  ansible.builtin.command:
+    argv:
+      - op
+      - read
+      - "op://Dev/{{ iscsi_op_item }}/storageAddress"
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ _iscsi_op_token.content | b64decode | trim }}"
+  register: _iscsi_op_portal
+  changed_when: false
+  no_log: true
+  when:
+    - iscsi_op_item | length > 0
+    - _iscsi_op_token.content is defined
+
+- name: Fetch iSCSI target IQN from 1Password
+  ansible.builtin.command:
+    argv:
+      - op
+      - read
+      - "op://Dev/{{ iscsi_op_item }}/iqn"
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ _iscsi_op_token.content | b64decode | trim }}"
+  register: _iscsi_op_iqn
+  changed_when: false
+  no_log: true
+  when:
+    - iscsi_op_item | length > 0
+    - _iscsi_op_token.content is defined
+
+- name: Fetch iSCSI CHAP username from 1Password
+  ansible.builtin.command:
+    argv:
+      - op
+      - read
+      - "op://Dev/{{ iscsi_op_item }}/chapInitiatorUsername"
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ _iscsi_op_token.content | b64decode | trim }}"
+  register: _iscsi_op_chap_user
+  changed_when: false
+  no_log: true
+  when:
+    - iscsi_op_item | length > 0
+    - _iscsi_op_token.content is defined
+
+- name: Fetch iSCSI CHAP password from 1Password
+  ansible.builtin.command:
+    argv:
+      - op
+      - read
+      - "op://Dev/{{ iscsi_op_item }}/chapInitiatorPassword"
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ _iscsi_op_token.content | b64decode | trim }}"
+  register: _iscsi_op_chap_password
+  changed_when: false
+  no_log: true
+  when:
+    - iscsi_op_item | length > 0
+    - _iscsi_op_token.content is defined
+
+- name: Override iSCSI vars from 1Password values
+  ansible.builtin.set_fact:
+    iscsi_portal: "{{ _iscsi_op_portal.stdout | trim }}"
+    iscsi_target_iqn: "{{ _iscsi_op_iqn.stdout | trim }}"
+    iscsi_chap_user: "{{ _iscsi_op_chap_user.stdout | trim }}"
+    iscsi_chap_password: "{{ _iscsi_op_chap_password.stdout | trim }}"
+  no_log: true
+  when:
+    - iscsi_op_item | length > 0
+    - _iscsi_op_token.content is defined
+
+# ── Existing tasks follow ────────────────────────────────────────────────────
 - name: Set deterministic iSCSI initiator name
   ansible.builtin.copy:
     content: "InitiatorName=iqn.2004-04.net.olympus:{{ inventory_hostname }}\n"

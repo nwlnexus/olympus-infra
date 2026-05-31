@@ -45,3 +45,10 @@ ansible_pull_inventory: inventory/management-hub.yml
 ansible_pull_playbook: playbooks/pull/olympus.yml
 ansible_pull_interval: "1h"
 ansible_pull_interval_seconds: 3600
+
+# iSCSI host prereqs — Trident CSI driver manages login/CHAP; Ansible sets initiator name only
+iscsi_state: present
+iscsi_mode: csi_node
+
+# Atlas daemon
+atlas_state: present

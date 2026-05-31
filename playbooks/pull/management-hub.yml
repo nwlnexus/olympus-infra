@@ -20,8 +20,17 @@
     - role: baseline
       tags: [baseline]
 
+    - role: iscsi
+      tags: [iscsi]
+      when: iscsi_state is defined
+
+    - role: atlas
+      tags: [atlas]
+      when: atlas_state is defined
+
     - role: ddclient
       tags: [ddclient]
+      when: ddclient_state is defined
 
     - role: 1password-connect
       tags: [1password-connect]

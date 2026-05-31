@@ -38,3 +38,10 @@ flux_kubeconfig_path: "/etc/rancher/k3s/k3s.yaml"
 
 # ddclient — no extra public records needed; Plex external URL is via Tailscale Funnel
 ddclient_state: present
+
+# --- ansible-pull (pull-mode self-management) ---
+ansible_pull_state: present
+ansible_pull_inventory: inventory/management-hub.yml
+ansible_pull_playbook: playbooks/pull/olympus.yml
+ansible_pull_interval: "1h"
+ansible_pull_interval_seconds: 3600

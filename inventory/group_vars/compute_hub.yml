@@ -44,8 +44,8 @@ tailscale_tags:
   - "tag:infra-server"
   - "tag:k8s"
 # OAuth credentials fetched from 1Password at runtime (see playbook pre_tasks)
-tailscale_oauth_client_id: ""
-tailscale_oauth_client_secret: ""
+tailscale_oauth_client_id: "{{ lookup('community.general.onepassword', 'ansible-tailscale-oauth', field='client-id', vault='Dev') }}"
+tailscale_oauth_client_secret: "{{ lookup('community.general.onepassword', 'ansible-tailscale-oauth', field='client-secret', vault='Dev') }}"
 
 # --- ddclient (per-node DNS: onode-XXXXXX.nwlnexus.net) ---
 ddclient_state: present
@@ -57,6 +57,7 @@ eso_namespace: external-secrets
 eso_kubeconfig_path: "{{ k3s_kubeconfig_path }}"
 
 # --- cloudflared-k8s (primary node only) ---
+cloudflared_k8s_state: present
 cloudflared_tunnel_name: compute-hub
 cloudflared_domain: "nwlnexus.net"
 cloudflared_bootstrap_only: true
@@ -70,6 +71,9 @@ flux_kubeconfig_path: "/etc/rancher/k3s/k3s.yaml"
 # --- ansible-pull (all nodes) ---
 # The ansible-pull role installs the cron that replaces the cloud-init systemd timer.
 ansible_pull_state: present
+ansible_pull_legacy_users:
+  - ansible
+  - ubuntu
 ansible_pull_inventory: inventory/compute-hub.yml
-ansible_pull_playbook: playbooks/pull/compute-hub.yml
+ansible_pull_playbook: playbooks/pull/olympus.yml
 ansible_pull_limit: "$(hostname -s)"

@@ -1,0 +1,16 @@
+# /etc/ntp.conf — Managed by Ansible common role
+# NTP servers configured via common_ntp_servers
+{% for server in common_ntp_servers | default(['pool.ntp.org']) %}
+server {{ server }} iburst
+{% endfor %}
+
+# By default, exchange time with everybody, but don't allow configuration.
+restrict -4 default kod notrap nomodify nopeer noquery
+restrict -6 default kod notrap nomodify nopeer noquery
+
+# Local users may interrogate the ntp server more closely.
+restrict 127.0.0.1
+restrict ::1
+
+# Drift file
+driftfile /var/lib/ntp/ntp.drift

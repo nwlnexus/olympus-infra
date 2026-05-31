@@ -1,0 +1,23 @@
+# /etc/chrony.conf — Managed by Ansible common role
+# NTP servers configured via common_ntp_servers
+{% for server in common_ntp_servers | default(['pool.ntp.org']) %}
+server {{ server }} iburst
+{% endfor %}
+
+# Allow NTP client access from localhost only.
+allow 127.0.0.1
+
+# Serve time even if not synchronized to a time source.
+local stratum 10
+
+# Specify file containing keys for NTP authentication.
+keyfile /etc/chrony.keys
+
+# Specify the key used as password for chronyc.
+commandkey 1
+
+# Get TAI-UTC offset and leap seconds from the system tz database.
+leapsectz right/UTC
+
+# Specify directory for log files.
+logdir /var/log/chrony

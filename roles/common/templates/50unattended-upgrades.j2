@@ -1,0 +1,14 @@
+// /etc/apt/apt.conf.d/50unattended-upgrades — Managed by Ansible common role
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}";
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+
+Unattended-Upgrade::Package-Blacklist {
+};
+
+// Automatically reboot if required (set to true to enable)
+Unattended-Upgrade::Automatic-Reboot "{{ common_reboot_after_updates | default(false) | lower }}";
+Unattended-Upgrade::Automatic-Reboot-Time "{{ common_maintenance_window_start | default('02:00') }}";

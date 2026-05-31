@@ -1,0 +1,7 @@
+# /etc/sudoers.d/admin-users — Managed by Ansible common role
+# Grants sudo access to admin users defined in common_admin_users
+{% for user in common_admin_users %}
+{% if user.state | default('present') == 'present' %}
+{{ user.name }} ALL=(ALL) NOPASSWD: ALL
+{% endif %}
+{% endfor %}

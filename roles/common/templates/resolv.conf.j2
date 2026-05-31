@@ -1,0 +1,5 @@
+# /etc/resolv.conf — Managed by Ansible common role
+# DNS servers configured via common_dns_servers
+{% for server in common_dns_servers %}
+nameserver {{ server }}
+{% endfor %}

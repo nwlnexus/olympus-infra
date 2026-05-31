@@ -1,0 +1,45 @@
+# /etc/rsyslog.conf — Managed by Ansible common role
+# Basic rsyslog configuration with optional remote forwarding
+
+# Provides UDP syslog reception (uncomment to enable)
+#module(load="imudp")
+#input(type="imudp" port="514")
+
+# Provides TCP syslog reception (uncomment to enable)
+#module(load="imtcp")
+#input(type="imtcp" port="514")
+
+# Use traditional timestamp format
+$ActionFileDefaultTemplate RSYSLOG_TraditionalFileFormat
+
+# Include all config snippets from /etc/rsyslog.d/
+$IncludeConfig /etc/rsyslog.d/*.conf
+
+# Log all kernel messages to the console (disabled by default)
+#kern.*                                                 /dev/console
+
+# Log anything (except mail) of level info or higher.
+*.info;mail.none;authpriv.none;cron.none                /var/log/messages
+
+# The authpriv file has restricted access.
+authpriv.*                                              /var/log/secure
+
+# Log all the mail messages in one place.
+mail.*                                                  -/var/log/maillog
+
+# Log cron stuff
+cron.*                                                  /var/log/cron
+
+# Everybody gets emergency messages
+*.emerg                                                 :omusrmsg:*
+
+# Save news errors of level crit and higher in a special file.
+uucp,news.crit                                          /var/log/spooler
+
+# Save boot messages also to boot.log
+local7.*                                                /var/log/boot.log
+
+{% if common_syslog_server is defined and common_syslog_server != "" %}
+# Forward all logs to remote syslog server
+*.* @{{ common_syslog_server }}:{{ common_syslog_port | default(514) }}
+{% endif %}

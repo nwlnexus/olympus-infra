@@ -1,0 +1,35 @@
+# /etc/logrotate.conf — Managed by Ansible common role
+
+# Rotate logs weekly by default
+weekly
+
+# Keep {{ common_log_retention_days | default(30) }} days worth of logs
+rotate {{ (common_log_retention_days | default(30) | int / 7) | round(0, 'ceil') | int }}
+
+# Create new (empty) log files after rotating old ones
+create
+
+# Use date as a suffix of the rotated file
+dateext
+
+# Uncomment this if you want your log files compressed
+compress
+
+# Packages drop log rotation information into this directory
+include /etc/logrotate.d
+
+# No packages own wtmp or btmp -- we'll rotate them here
+/var/log/wtmp {
+    missingok
+    monthly
+    create 0664 root utmp
+    minsize 1M
+    rotate 1
+}
+
+/var/log/btmp {
+    missingok
+    monthly
+    create 0660 root utmp
+    rotate 1
+}

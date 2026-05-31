@@ -1,0 +1,18 @@
+# /etc/logrotate.d/{{ item.name }} — Managed by Ansible common role
+{{ item.path }} {
+    {{ item.frequency | default('daily') }}
+    rotate {{ item.rotate | default(30) }}
+{% if item.compress | default(true) %}
+    compress
+{% endif %}
+{% if item.delaycompress | default(true) %}
+    delaycompress
+{% endif %}
+{% if item.missingok | default(true) %}
+    missingok
+{% endif %}
+{% if item.notifempty | default(true) %}
+    notifempty
+{% endif %}
+    create {{ item.mode | default('0640') }} {{ item.owner | default('root') }} {{ item.group | default('root') }}
+}

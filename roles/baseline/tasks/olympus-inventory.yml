@@ -19,14 +19,27 @@
     mode: '0755'
   become: true
 
+# Slurp the OP service account token from the host (present in both push and pull mode).
+# The token is then passed explicitly to the lookup plugin via service_account_token=
+# so it works without interactive signin (community.general.onepassword >= 6.x).
+- name: Read OP service account token for inventory lookup
+  ansible.builtin.slurp:
+    src: /etc/olympus/op-service-account-token
+  register: _inv_op_token_file
+  become: true
+  no_log: true
+  failed_when: false
+
 - name: Load CF Access inventory credentials from 1Password
   ansible.builtin.set_fact:
     _inv_client_id: "{{ lookup('community.general.onepassword',
-        'hermes-secrets', field='cf-access-inventory-client-id', vault='Dev') }}"
+        'hermes-secrets', field='cf-access-inventory-client-id', vault='Dev',
+        service_account_token=_inv_op_token_file.content | b64decode | trim) }}"
     _inv_client_secret: "{{ lookup('community.general.onepassword',
-        'hermes-secrets', field='cf-access-inventory-client-secret', vault='Dev') }}"
+        'hermes-secrets', field='cf-access-inventory-client-secret', vault='Dev',
+        service_account_token=_inv_op_token_file.content | b64decode | trim) }}"
   no_log: true
-  failed_when: false
+  when: _inv_op_token_file.content is defined
 
 - name: Resolve inventory vars from Hermes
   ansible.builtin.uri:

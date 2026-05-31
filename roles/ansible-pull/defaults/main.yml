@@ -1,8 +1,8 @@
 ---
 ansible_pull_state: present
 ansible_pull_repo: https://github.com/nwlnexus/olympus-infra.git
-ansible_pull_interval: "1h"           # systemd OnUnitActiveSec — understands "1h" natively
-ansible_pull_interval_seconds: 3600   # macOS plist StartInterval (integer seconds)
+ansible_pull_interval: "1h"           # systemd OnUnitActiveSec — keep in sync with ansible_pull_interval_seconds
+ansible_pull_interval_seconds: 3600   # macOS plist StartInterval (integer seconds) — keep in sync with ansible_pull_interval
 
 # Service identity that owns the cron job, log dir, and pull workspace.
 ansible_pull_user: ansible

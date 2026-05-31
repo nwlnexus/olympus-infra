@@ -151,10 +151,14 @@
     for i in $(seq 1 30); do
       RAW=$(lsblk -d -n -o NAME,TRAN | awk '$2=="iscsi"{print $1}' | head -1)
       if [ -n "$RAW" ]; then
-        # Prefer the multipath holder if multipathd has claimed the device
+        # Prefer the multipath holder if multipathd has claimed the device.
+        # Resolve the DM alias from sysfs (e.g. dm-1 → /dev/mapper/mpatha).
         HOLDER=$(ls /sys/block/${RAW}/holders/ 2>/dev/null | head -1)
         if [ -n "$HOLDER" ]; then
-          echo "/dev/mapper/${HOLDER}" && exit 0
+          DM_NAME=$(cat /sys/block/${HOLDER}/dm/name 2>/dev/null)
+          if [ -n "$DM_NAME" ]; then
+            echo "/dev/mapper/${DM_NAME}" && exit 0
+          fi
         fi
         echo "/dev/${RAW}" && exit 0
       fi

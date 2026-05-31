@@ -8,6 +8,7 @@
     - docker
     - docker-compose
     - bash
+    - gnu-sed
   become: false
 
 - name: Ensure ~/.docker/cli-plugins directory exists

@@ -6,6 +6,26 @@
       - git
     state: "{{ 'present' if ansible_pull_state == 'present' else 'absent' }}"
 
+- name: Ensure /opt/ansible-pull directory exists (macOS)
+  ansible.builtin.file:
+    path: /opt/ansible-pull
+    state: directory
+    owner: "{{ ansible_pull_user }}"
+    group: admin
+    mode: "0750"
+  become: true
+  when: ansible_pull_state == "present"
+
+- name: Deploy ansible-pull-run wrapper script (macOS)
+  ansible.builtin.template:
+    src: ansible-pull-run-macos.j2
+    dest: /opt/ansible-pull/ansible-pull-run
+    owner: "{{ ansible_pull_user }}"
+    group: admin
+    mode: "0750"
+  become: true
+  when: ansible_pull_state == "present"
+
 - name: Install ansible-pull LaunchDaemon plist (macOS)
   ansible.builtin.template:
     src: ansible-pull.plist.j2

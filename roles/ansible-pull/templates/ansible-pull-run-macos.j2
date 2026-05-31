@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Managed by Ansible (ansible-pull role) — do not edit manually
+set -euo pipefail
+
+LOG_DIR="{{ ansible_pull_log_dir }}"
+LOG_FILE="{{ ansible_pull_log_file }}"
+OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/etc/olympus/op-service-account-token}"
+
+mkdir -p "$LOG_DIR"
+
+if [[ ! -f "$OP_TOKEN_FILE" ]]; then
+  echo "$(date -u '+%Y-%m-%d %H:%M:%S') [WARN] OP token not found at $OP_TOKEN_FILE — skipping run until bootstrap places it" | tee -a "$LOG_FILE" >&2
+  exit 0
+fi
+
+export OP_SERVICE_ACCOUNT_TOKEN
+OP_SERVICE_ACCOUNT_TOKEN=$(cat "$OP_TOKEN_FILE")
+
+exec 1>>"$LOG_FILE" 2>&1
+echo "Starting Ansible Pull at $(date -u '+%Y-%m-%d %H:%M:%S')"
+
+{{ ansible_pull_bin_macos }} \
+  -U {{ ansible_pull_repo }} \
+  -i {{ ansible_pull_inventory }} \
+  {% if ansible_pull_limit | default('') != '' %}--limit {{ ansible_pull_limit }} \{% endif %}
+  {{ ansible_pull_playbook }}

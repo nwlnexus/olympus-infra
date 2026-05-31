@@ -1,0 +1,110 @@
+---
+- name: Reset per-iteration state
+  ansible.builtin.set_fact:
+    _nfs_op_host: {}
+    _nfs_resolved_src: ""
+
+- name: Resolve NFS source host from 1Password
+  ansible.builtin.command:
+    argv:
+      - op
+      - read
+      - "{{ _nfs_mount.op_host_ref }}"
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ _nfs_op_token.content | b64decode | trim }}"
+  register: _nfs_op_host
+  changed_when: false
+  no_log: true
+  when:
+    - _nfs_mount.op_host_ref is defined
+    - _nfs_op_token.content is defined
+
+- name: Validate NFS mount source is specified
+  ansible.builtin.assert:
+    that:
+      - (_nfs_mount.src is defined) or (_nfs_mount.op_host_ref is defined)
+    fail_msg: "NFS mount {{ _nfs_mount.path }} must define either 'src' or 'op_host_ref'"
+
+- name: Set resolved NFS source
+  ansible.builtin.set_fact:
+    _nfs_resolved_src: >-
+      {{
+        _nfs_mount.src
+        if (_nfs_mount.src is defined)
+        else ((_nfs_op_host.stdout | trim) ~ (_nfs_mount.export | default('')))
+      }}
+
+- name: Derive systemd unit name from path
+  ansible.builtin.set_fact:
+    _nfs_unit_name: "{{ (_nfs_mount.path | regex_replace('/$', ''))[1:] | replace('/', '-') }}"
+
+# ── Present state ─────────────────────────────────────────────────────────────
+- name: Create NFS mount point
+  ansible.builtin.file:
+    path: "{{ _nfs_mount.path }}"
+    state: directory
+    mode: "0755"
+  become: true
+  when: _nfs_mount.state == "present"
+
+- name: Deploy systemd .mount unit
+  ansible.builtin.template:
+    src: mount.mount.j2
+    dest: "/etc/systemd/system/{{ _nfs_unit_name }}.mount"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when: _nfs_mount.state == "present"
+
+- name: Deploy systemd .automount unit
+  ansible.builtin.template:
+    src: mount.automount.j2
+    dest: "/etc/systemd/system/{{ _nfs_unit_name }}.automount"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when: _nfs_mount.state == "present"
+
+- name: Enable and start .automount unit
+  ansible.builtin.systemd:
+    name: "{{ _nfs_unit_name }}.automount"
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true
+  when: _nfs_mount.state == "present"
+
+# ── Absent state ──────────────────────────────────────────────────────────────
+- name: Stop and disable .automount unit
+  ansible.builtin.systemd:
+    name: "{{ _nfs_unit_name }}.automount"
+    enabled: false
+    state: stopped
+  become: true
+  failed_when: false
+  when: _nfs_mount.state == "absent"
+
+- name: Remove .mount and .automount unit files
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ _nfs_unit_name }}.{{ item }}"
+    state: absent
+  loop:
+    - mount
+    - automount
+  become: true
+  when: _nfs_mount.state == "absent"
+
+- name: Reload systemd after removing units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+  when: _nfs_mount.state == "absent"
+
+- name: Remove NFS mount point
+  ansible.builtin.file:
+    path: "{{ _nfs_mount.path }}"
+    state: absent
+  become: true
+  when: _nfs_mount.state == "absent"

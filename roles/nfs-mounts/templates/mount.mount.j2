@@ -1,0 +1,14 @@
+# Managed by Ansible (nfs-mounts role) — do not edit manually
+[Unit]
+Description=NFS mount {{ _nfs_mount.path }}
+After=network-online.target
+Wants=network-online.target
+
+[Mount]
+What={{ _nfs_resolved_src }}
+Where={{ _nfs_mount.path }}
+Type=nfs
+Options={{ _nfs_mount.opts | default('nfsvers=4,hard,_netdev') }}
+
+[Install]
+WantedBy=multi-user.target

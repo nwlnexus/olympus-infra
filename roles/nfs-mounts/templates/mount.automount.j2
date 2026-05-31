@@ -1,0 +1,12 @@
+# Managed by Ansible (nfs-mounts role) — do not edit manually
+[Unit]
+Description=Automount {{ _nfs_mount.path }}
+After=network-online.target
+Wants=network-online.target
+
+[Automount]
+Where={{ _nfs_mount.path }}
+TimeoutIdleSec=0
+
+[Install]
+WantedBy=multi-user.target

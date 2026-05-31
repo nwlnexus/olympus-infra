@@ -82,7 +82,7 @@
     --disk {{ colima_disk }}
     --foreground=false
   register: _colima_k3s_init
-  changed_when: _colima_k3s_init.rc == 0
+  changed_when: "'already running' not in (_colima_k3s_init.stderr | default('')) and _colima_k3s_init.rc == 0"
   failed_when:
     - _colima_k3s_init.rc != 0
     - "'already running' not in (_colima_k3s_init.stderr | default(''))"
@@ -124,12 +124,12 @@
     - colima_state == "present"
     - colima_runtime == "k3s"
 
-- name: Load Colima LaunchDaemon (k3s runtime)
-  ansible.builtin.command: >
+- name: Reload Colima LaunchDaemon after plist change (k3s runtime)
+  ansible.builtin.shell: |
+    launchctl bootout system /Library/LaunchDaemons/com.olympus.colima.plist 2>/dev/null || true
     launchctl bootstrap system /Library/LaunchDaemons/com.olympus.colima.plist
   become: true
   changed_when: true
-  failed_when: false
   when:
     - colima_state == "present"
     - colima_runtime == "k3s"

@@ -1,4 +1,16 @@
 ---
+# acl is required for Ansible's become_user to an unprivileged system user
+# (Ansible uses setfacl to set temp-file permissions during privilege escalation).
+- name: Install acl package
+  ansible.builtin.apt:
+    name: acl
+    state: present
+    update_cache: false
+  become: true
+  when:
+    - atlas_state == "present"
+    - ansible_facts['os_family'] == "Debian"
+
 # ── Install binary ────────────────────────────────────────────────────────────
 - name: Check if atlas binary is installed
   ansible.builtin.stat:

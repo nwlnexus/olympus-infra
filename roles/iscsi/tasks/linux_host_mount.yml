@@ -144,6 +144,7 @@
   failed_when:
     - _login.rc != 0
     - "'already exists' not in (_login.stderr | default(''))"
+    - "'already present' not in (_login.stderr | default(''))"
 
 - name: Wait for block device to appear
   ansible.builtin.shell: |

@@ -1,2 +1,3 @@
 # Managed by Ansible (plex role) — do not edit manually
-d {{ plex_transcoding_dir }} 0755 plex plex -
+d {{ plex_transcoding_dir | mandatory }} 0755 plex plex -
+d {{ plex_tmp_dir | mandatory }} 0755 plex plex -

@@ -51,6 +51,16 @@
   become: true
   when: plex_state == "present"
 
+- name: Create plex tmp directory
+  ansible.builtin.file:
+    path: "{{ plex_tmp_dir }}"
+    state: directory
+    owner: plex
+    group: plex
+    mode: '0755'
+  become: true
+  when: plex_state == "present"
+
 - name: Allow Plex port from Tailscale range (UFW)
   community.general.ufw:
     rule: allow
@@ -103,6 +113,13 @@
 - name: Remove transcoding directory (state=absent)
   ansible.builtin.file:
     path: "{{ plex_transcoding_dir }}"
+    state: absent
+  become: true
+  when: plex_state == "absent"
+
+- name: Remove plex tmp directory (state=absent)
+  ansible.builtin.file:
+    path: "{{ plex_tmp_dir }}"
     state: absent
   become: true
   when: plex_state == "absent"

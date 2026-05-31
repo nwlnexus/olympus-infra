@@ -1,4 +1,5 @@
 ---
 plex_state: present
 plex_transcoding_dir: /tmp/plexmedia
+plex_tmp_dir: /tmp/plextmp
 plex_ufw_tailscale_src: "100.64.0.0/10"

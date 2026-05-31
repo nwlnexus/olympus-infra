@@ -16,17 +16,25 @@ RUNTIME_DIR="${WRAPPER_RUNTIME_DIR:-/run/olympus}"
 LOG_DIR="${WRAPPER_LOG_DIR:-{{ ansible_pull_log_dir }}}"
 LOG_FILE="${WRAPPER_LOG_FILE:-{{ ansible_pull_log_file }}}"
 
-OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/opt/ansible-pull/.op-service-account-token}"
 PARSER="${WRAPPER_PARSER:-/opt/ansible-pull/parse-play-recap.sh}"
 
-# Ensure user-local bin is always on PATH — ${HOME} is reliable here since
-# this script runs as the ansible service user (login via su - or systemd User=).
-# Cron and sudo contexts don't source .profile, so we set it explicitly.
+{% if ansible_facts['os_family'] == 'Darwin' %}
+# ── macOS: set platform-specific env and binary ──────────────────────────────
+export HOME="/var/{{ ansible_pull_user }}"
+export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:${PATH}"
+export DOCKER_HOST="unix:///var/run/docker.sock"
+ANSIBLE_PULL_BIN="{{ ansible_pull_bin_macos }}"
+OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/etc/olympus/op-service-account-token}"
+{% else %}
+# ── Linux: ensure user-local bin is on PATH ───────────────────────────────────
 export PATH="${HOME}/.local/bin:${PATH}"
+ANSIBLE_PULL_BIN="{{ ansible_pull_bin_linux }}"
+OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/opt/ansible-pull/.op-service-account-token}"
+{% endif %}
 
 mkdir -p "$CACHE_DIR" "$PENDING_DIR" "$RUNTIME_DIR" "$LOG_DIR"
 
-# ── 1. 1Password token (existing requirement) ─────────────────────────────
+# ── 1. 1Password token ────────────────────────────────────────────────────────
 if [[ ! -f "$OP_TOKEN_FILE" ]]; then
   echo "$(date -u '+%Y-%m-%d %H:%M:%S') [WARN] OP token not found at $OP_TOKEN_FILE — skipping run until bootstrap places it" | tee -a "$LOG_FILE" >&2
   exit 0
@@ -34,7 +42,7 @@ fi
 export OP_SERVICE_ACCOUNT_TOKEN
 OP_SERVICE_ACCOUNT_TOKEN=$(cat "$OP_TOKEN_FILE")
 
-# ── 2. Hermes disabled? ────────────────────────────────────────────────────
+# ── 2. Hermes disabled? ───────────────────────────────────────────────────────
 HERMES_ENABLED=1
 if [[ -f "$HERMES_DISABLED_FLAG" ]]; then
   HERMES_ENABLED=0
@@ -56,7 +64,7 @@ if [[ "$HERMES_ENABLED" -eq 1 ]]; then
   fi
   HERMES_TOKEN=$(cat "$HERMES_TOKEN_FILE")
 
-  # ── 4. Drain pending completions ───────────────────────────────────────────
+  # ── 4. Drain pending completions ─────────────────────────────────────────
   for pending in "$PENDING_DIR"/*.json; do
     [[ -e "$pending" ]] || break
     pid=$(basename "$pending" .json)
@@ -72,7 +80,7 @@ if [[ "$HERMES_ENABLED" -eq 1 ]]; then
     fi
   done
 
-  # ── 5. Start run ──────────────────────────────────────────────────────────
+  # ── 5. Start run ─────────────────────────────────────────────────────────
   STARTED_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
   CLASSIFY_ETAG=$(jq -r '.etag // ""' "$CACHE_FILE" 2>/dev/null || echo "")
   start_body=$(jq -nc --arg s "$STARTED_AT" --arg e "$CLASSIFY_ETAG" \
@@ -103,21 +111,24 @@ if [[ "$HERMES_ENABLED" -eq 1 ]]; then
     sleep $((i * 2))
   done
   if [[ -n "$classify_json" ]]; then
-    # Validate shape
     if ! echo "$classify_json" | jq -e .extra_roles >/dev/null 2>&1; then
       echo "[FATAL] malformed classify response (no .extra_roles)"
       exit 70
     fi
     echo "$classify_json" > "$CACHE_FILE.tmp" && mv "$CACHE_FILE.tmp" "$CACHE_FILE"
   elif [[ -f "$CACHE_FILE" ]]; then
+{% if ansible_facts['os_family'] == 'Darwin' %}
+    echo "[WARN] Hermes unreachable for classify; using cache from $(stat -f %Sm "$CACHE_FILE")"
+{% else %}
     echo "[WARN] Hermes unreachable for classify; using cache from $(stat -c %y "$CACHE_FILE")"
+{% endif %}
     classify_json=$(cat "$CACHE_FILE")
   else
     echo "[FATAL] Hermes unreachable AND no cached classify"
     exit 75
   fi
 
-  # ── 7. Materialize layered vars files ─────────────────────────────────────
+  # ── 7. Materialize layered vars files ────────────────────────────────────
   rm -f "$RUNTIME_DIR"/*.yml
   echo "$classify_json" | jq -r '.vars_global // {} | to_entries[] | "\(.key): \(.value | @json)"' > "$RUNTIME_DIR/00-global.yml"
   echo "$classify_json" | jq -r '[.vars_tags // {} | to_entries[] | .value] | add // {} | to_entries[] | "\(.key): \(.value | @json)"' > "$RUNTIME_DIR/10-tags.yml"
@@ -125,14 +136,13 @@ if [[ "$HERMES_ENABLED" -eq 1 ]]; then
   echo "$classify_json" | jq -r '.vars_host // {} | to_entries[] | "\(.key): \(.value | @json)"' > "$RUNTIME_DIR/30-host.yml"
   echo "hermes_extra_roles: $(echo "$classify_json" | jq -c .extra_roles)" > "$RUNTIME_DIR/99-roles.yml"
 else
-  # Hermes disabled: minimal extras
   echo "hermes_extra_roles: []" > "$RUNTIME_DIR/99-roles.yml"
 fi
 
-# ── 8. Run ansible-pull ────────────────────────────────────────────────────
+# ── 8. Run ansible-pull ──────────────────────────────────────────────────────
 START_MS=$(date +%s%3N)
 set +e
-{{ ansible_pull_bin_linux }} \
+$ANSIBLE_PULL_BIN \
   -U {{ ansible_pull_repo }} \
   -i {{ ansible_pull_inventory }} \
   --extra-vars "@$RUNTIME_DIR/00-global.yml" \
@@ -147,16 +157,12 @@ set -e
 END_MS=$(date +%s%3N)
 DURATION_MS=$((END_MS - START_MS))
 
-# ── 9. Parse counters + upload log + post completion ───────────────────────
+# ── 9. Parse counters + upload log + post completion ─────────────────────────
 if [[ "$HERMES_ENABLED" -eq 1 && -n "$RUN_ID" ]]; then
   counters=$("$PARSER" "$LOG_FILE")
   FINISHED_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
   AUDIT_LOG_KEY="null"
 
-  # Upload log to Worker (proxies to R2). The Worker enforces machine-scoped
-  # bearer auth on /v1/pull/runs/{run_id}/log, same as the other /v1/pull/*
-  # routes. Returns JSON {audit_log_key: "..."} which we forward in the
-  # completion POST so the server records exactly the key the proxy used.
   if [[ -n "$LOG_UPLOAD_URL" ]]; then
     if upload_resp=$(curl -fsS --max-time 30 -X PUT \
                           -H "Authorization: Bearer $HERMES_TOKEN" \

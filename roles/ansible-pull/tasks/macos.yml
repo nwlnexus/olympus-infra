@@ -18,8 +18,18 @@
 
 - name: Deploy ansible-pull-run wrapper script (macOS)
   ansible.builtin.template:
-    src: ansible-pull-run-macos.j2
+    src: ansible-pull-run.j2
     dest: /opt/ansible-pull/ansible-pull-run
+    owner: "{{ ansible_pull_user }}"
+    group: admin
+    mode: "0750"
+  become: true
+  when: ansible_pull_state == "present"
+
+- name: Deploy parse-play-recap helper (macOS)
+  ansible.builtin.copy:
+    src: parse-play-recap.sh
+    dest: /opt/ansible-pull/parse-play-recap.sh
     owner: "{{ ansible_pull_user }}"
     group: admin
     mode: "0750"
@@ -34,6 +44,7 @@
     group: wheel
     mode: "0644"
   become: true
+  notify: Reload ansible-pull LaunchDaemon
   when: ansible_pull_state == "present"
 
 - name: Load ansible-pull LaunchDaemon (macOS)

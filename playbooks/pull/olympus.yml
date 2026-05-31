@@ -1,0 +1,78 @@
+---
+# Unified pull playbook — all nodes, all platforms.
+# Roles self-manage OS/arch differences internally.
+# Opt-in roles fire when the controlling _state var is defined in host/group vars.
+# Hermes dynamic inventory will set/unset _state vars per node without playbook changes.
+#
+# Intentionally excluded:
+#   k3s         — cluster restarts require coordinated push with human oversight
+#   bootstrap-user — service-user mutation is push-only
+#
+# Run by the ansible service user via:
+#   Linux:  systemd timer → /opt/ansible-pull/ansible-pull-run
+#   macOS:  LaunchDaemon → /opt/ansible-pull/ansible-pull-run
+
+- name: Olympus Pull
+  hosts: all
+  gather_facts: true
+
+  pre_tasks:
+    - name: Assert OP service account token is readable
+      ansible.builtin.stat:
+        path: "{{ '/etc/olympus/op-service-account-token' if ansible_facts['os_family'] == 'Darwin' else '/opt/ansible-pull/.op-service-account-token' }}"
+      register: _op_token_stat
+      failed_when: not _op_token_stat.stat.exists
+      tags: [always]
+
+    - name: Assert Hermes token present or explicitly disabled
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: _hermes_stat
+      loop:
+        - /etc/olympus/hermes-token
+        - /etc/olympus/hermes-disabled
+      tags: [always]
+
+    - name: Fail if neither Hermes token nor disabled flag is present
+      ansible.builtin.fail:
+        msg: "Neither /etc/olympus/hermes-token nor /etc/olympus/hermes-disabled exists. Place one before pull runs."
+      when: not (_hermes_stat.results[0].stat.exists or _hermes_stat.results[1].stat.exists)
+      tags: [always]
+
+  roles:
+    # ── Always run — roles handle OS/arch internally ──────────────────────────
+    - role: common
+      tags: [common]
+
+    - role: baseline
+      tags: [baseline]
+
+    - role: ansible-pull
+      tags: [ansible-pull]
+
+    # ── Opt-in via _state vars set in host/group vars ─────────────────────────
+    - role: tailscale
+      tags: [tailscale]
+      when: tailscale_state is defined
+
+    - role: colima
+      tags: [colima]
+      when: colima_state is defined
+
+    - role: cloudflared
+      tags: [cloudflared]
+      when: cloudflared_state is defined
+
+    - role: cloudflared-k8s
+      tags: [cloudflared-k8s]
+      when: >
+        cloudflared_k8s_state is defined and
+        k3s_primary | default(false)
+
+    - role: ollama
+      tags: [ollama]
+      when: ollama_state is defined
+
+    # ── Always last — Hermes-injected dynamic roles ───────────────────────────
+    - role: hermes-classify-include
+      tags: [hermes-classify]

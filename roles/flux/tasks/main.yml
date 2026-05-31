@@ -21,7 +21,7 @@
 - name: Bootstrap Flux from olympus-gitops
   ansible.builtin.shell: |
     set -o pipefail
-    flux bootstrap github \
+    GITHUB_TOKEN="{{ flux_github_token }}" flux bootstrap github \
       --owner={{ flux_github_owner }} \
       --repository={{ flux_github_repo }} \
       --branch={{ flux_github_branch }} \
@@ -32,8 +32,7 @@
       {% endif %}--kubeconfig={{ flux_kubeconfig_path }}
   args:
     executable: /bin/bash
-  environment:
-    GITHUB_TOKEN: "{{ flux_github_token }}"
+  no_log: true
   become: true
   register: _flux_bootstrap
   changed_when: "'no changes' not in (_flux_bootstrap.stdout | default(''))"

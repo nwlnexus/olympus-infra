@@ -255,25 +255,26 @@
 
 # --- TAILNET KUBECONFIG ---
 
+- name: Write raw kubeconfig to temp file for tailnet patching
+  ansible.builtin.copy:
+    content: "{{ _flux_remote_kubeconfig.content | b64decode }}"
+    dest: /tmp/_flux_kubeconfig_raw.yaml
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when:
+    - flux_state == 'present'
+    - flux_tailnet_kubeconfig_1password_item | default('') != ''
+    - _flux_tailnet_server | default('') != ''
+
 - name: Patch kubeconfig for tailnet export (server URL + context/cluster/user rename)
-  ansible.builtin.shell: |
-    python3 - << 'PYEOF'
-    import yaml
-    kc = yaml.safe_load("""{{ _flux_remote_kubeconfig.content | b64decode | replace('"', '\\"') }}""")
-    ctx = "{{ flux_kubeconfig_context_name | default(flux_kubeconfig_1password_item) }}"
-    kc['clusters'][0]['cluster']['server'] = "https://{{ _flux_tailnet_server }}:{{ flux_kubeconfig_external_port }}"
-    {% if flux_kubeconfig_insecure_tls | default(false) | bool %}
-    kc['clusters'][0]['cluster'].pop('certificate-authority-data', None)
-    kc['clusters'][0]['cluster']['insecure-skip-tls-verify'] = True
-    {% endif %}
-    kc['clusters'][0]['name']                     = ctx + '-cluster'
-    kc['contexts'][0]['context']['cluster']       = ctx + '-cluster'
-    kc['contexts'][0]['context']['user']          = ctx + '-user'
-    kc['contexts'][0]['name']                     = ctx
-    kc['current-context']                         = ctx
-    kc['users'][0]['name']                        = ctx + '-user'
-    print(yaml.dump(kc, default_flow_style=False))
-    PYEOF
+  ansible.builtin.shell: python3 /tmp/_flux_patch_kubeconfig.py
+  environment:
+    KC_FILE: /tmp/_flux_kubeconfig_raw.yaml
+    CTX: "{{ flux_kubeconfig_context_name | default(flux_kubeconfig_1password_item) }}"
+    SERVER: "https://{{ _flux_tailnet_server }}:{{ flux_kubeconfig_external_port }}"
+    INSECURE: "{{ flux_kubeconfig_insecure_tls | default(false) | string | lower }}"
   register: _flux_kubeconfig_tailnet_raw
   changed_when: false
   no_log: true

@@ -1,0 +1,20 @@
+---
+qnap_csi_state: present
+# Git repo for the QNAP CSI Plugin (Trident-based)
+qnap_csi_repo: https://github.com/qnap-dev/QNAP-CSI-PlugIn.git
+qnap_csi_version: "main"    # pin to a tag/SHA after first successful install
+qnap_csi_install_dir: /opt/qnap-csi-plugin
+# Helm release name and namespace
+qnap_csi_helm_release: qnap-trident
+qnap_csi_namespace: trident
+# Idempotency sentinel — presence means Trident is already installed
+qnap_csi_sentinel: /opt/qnap-csi-plugin/.installed
+# 1Password item for QNAP management credentials (shared across clusters)
+qnap_csi_op_item: qnap-csi
+qnap_csi_op_vault: Dev
+# 1Password item for per-host iSCSI CHAP credentials
+# Override per-host: e.g. qnap_iscsi_op_item: ai-hub-qnap-iscsi
+qnap_iscsi_op_item: "{{ inventory_hostname }}-qnap-iscsi"
+qnap_iscsi_op_vault: Dev
+# k3s kubeconfig path (accessible from macOS host via Colima port-forward)
+qnap_csi_kubeconfig: "/var/ansible/.kube/config"

@@ -1,0 +1,92 @@
+---
+- name: Ensure Git is installed (Homebrew, macOS)
+  community.general.homebrew:
+    name: git
+    state: present
+  become: false
+  when: ansible_facts['os_family'] == "Darwin"
+
+- name: Clone QNAP CSI Plugin repository
+  ansible.builtin.git:
+    repo: "{{ qnap_csi_repo }}"
+    dest: "{{ qnap_csi_install_dir }}"
+    version: "{{ qnap_csi_version }}"
+    force: false
+  become: true
+  when: qnap_csi_state == "present"
+
+- name: Fetch QNAP management credentials from 1Password
+  ansible.builtin.command: "op read 'op://{{ qnap_csi_op_vault }}/{{ qnap_csi_op_item }}/{{ item.field }}'"
+  register: _qnap_creds_raw
+  loop:
+    - { field: username, var: _qnap_mgmt_user }
+    - { field: password, var: _qnap_mgmt_pass }
+  no_log: true
+  changed_when: false
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ lookup('env', 'OP_SERVICE_ACCOUNT_TOKEN') }}"
+  when: qnap_csi_state == "present"
+
+- name: Set QNAP management credential facts
+  ansible.builtin.set_fact:
+    _qnap_mgmt_user: "{{ _qnap_creds_raw.results[0].stdout | trim }}"
+    _qnap_mgmt_pass: "{{ _qnap_creds_raw.results[1].stdout | trim }}"
+  no_log: true
+  when: qnap_csi_state == "present"
+
+- name: Fetch iSCSI CHAP credentials from 1Password
+  ansible.builtin.command: "op read 'op://{{ qnap_iscsi_op_vault }}/{{ qnap_iscsi_op_item }}/{{ item.field }}'"
+  register: _iscsi_creds_raw
+  loop:
+    - { field: storageAddress }
+    - { field: chapInitiatorUsername }
+    - { field: chapInitiatorPassword }
+  no_log: true
+  changed_when: false
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ lookup('env', 'OP_SERVICE_ACCOUNT_TOKEN') }}"
+  when: qnap_csi_state == "present"
+
+- name: Set iSCSI credential facts
+  ansible.builtin.set_fact:
+    _qnap_storage_addr: "{{ _iscsi_creds_raw.results[0].stdout | trim }}"
+    _chap_user: "{{ _iscsi_creds_raw.results[1].stdout | trim }}"
+    _chap_pass: "{{ _iscsi_creds_raw.results[2].stdout | trim }}"
+  no_log: true
+  when: qnap_csi_state == "present"
+
+- name: Create trident namespace
+  ansible.builtin.command: >
+    kubectl --kubeconfig {{ qnap_csi_kubeconfig }} create namespace {{ qnap_csi_namespace }}
+  failed_when: false
+  changed_when: true
+  when: qnap_csi_state == "present"
+
+- name: Install QNAP CSI Plugin via Helm (from local clone)
+  ansible.builtin.command: >
+    helm --kubeconfig {{ qnap_csi_kubeconfig }}
+    install {{ qnap_csi_helm_release }}
+    {{ qnap_csi_install_dir }}/Helm/trident
+    -n {{ qnap_csi_namespace }}
+    --create-namespace
+    --set managementLIF={{ _qnap_storage_addr }}
+    --set username={{ _qnap_mgmt_user }}
+    --set password={{ _qnap_mgmt_pass }}
+    --set chapInitiatorSecret={{ _chap_pass }}
+  no_log: true
+  register: _helm_install
+  changed_when: _helm_install.rc == 0
+  failed_when:
+    - _helm_install.rc != 0
+    - "'already exists' not in (_helm_install.stderr | default(''))"
+  when: qnap_csi_state == "present"
+
+- name: Create install sentinel
+  ansible.builtin.file:
+    path: "{{ qnap_csi_sentinel }}"
+    state: touch
+    mode: "0644"
+  become: true
+  when:
+    - qnap_csi_state == "present"
+    - _helm_install is changed

@@ -11,6 +11,15 @@
     - gnu-sed
   become: false
 
+- name: Ensure PyYAML is available for Ansible's Python (required by flux kubeconfig patcher)
+  ansible.builtin.pip:
+    name: pyyaml
+    state: present
+    extra_args: "--break-system-packages"
+  become: false
+  failed_when: false
+  when: colima_state == "present"
+
 - name: Ensure ~/.docker/cli-plugins directory exists
   ansible.builtin.file:
     path: "/Users/{{ ansible_user }}/.docker/cli-plugins"

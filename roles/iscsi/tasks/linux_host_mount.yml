@@ -148,8 +148,15 @@
 - name: Wait for block device to appear
   ansible.builtin.shell: |
     for i in $(seq 1 30); do
-      DEV=$(lsblk -d -n -o NAME,TRAN | grep iscsi | awk '{print "/dev/" $1}' | head -1)
-      [ -n "$DEV" ] && echo "$DEV" && exit 0
+      RAW=$(lsblk -d -n -o NAME,TRAN | awk '$2=="iscsi"{print $1}' | head -1)
+      if [ -n "$RAW" ]; then
+        # Prefer the multipath holder if multipathd has claimed the device
+        HOLDER=$(ls /sys/block/${RAW}/holders/ 2>/dev/null | head -1)
+        if [ -n "$HOLDER" ]; then
+          echo "/dev/mapper/${HOLDER}" && exit 0
+        fi
+        echo "/dev/${RAW}" && exit 0
+      fi
       sleep 1
     done
     exit 1

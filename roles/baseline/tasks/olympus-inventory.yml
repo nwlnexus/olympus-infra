@@ -19,42 +19,14 @@
     mode: '0755'
   become: true
 
-# op read works with OP_SERVICE_ACCOUNT_TOKEN in env (push from laptop) or
-# from /etc/olympus/op-service-account-token on the host (ansible-pull mode).
-- name: Fetch CF Access client ID from 1Password
-  ansible.builtin.shell: |
-    if [ -f /etc/olympus/op-service-account-token ]; then
-      export OP_SERVICE_ACCOUNT_TOKEN=$(cat /etc/olympus/op-service-account-token)
-    fi
-    op read "op://Dev/hermes-secrets/cf-access-inventory-client-id"
-  delegate_to: localhost
-  become: false
-  register: _inv_client_id_result
-  changed_when: false
-  no_log: true
-  failed_when: false
-
-- name: Fetch CF Access client secret from 1Password
-  ansible.builtin.shell: |
-    if [ -f /etc/olympus/op-service-account-token ]; then
-      export OP_SERVICE_ACCOUNT_TOKEN=$(cat /etc/olympus/op-service-account-token)
-    fi
-    op read "op://Dev/hermes-secrets/cf-access-inventory-client-secret"
-  delegate_to: localhost
-  become: false
-  register: _inv_client_secret_result
-  changed_when: false
-  no_log: true
-  failed_when: false
-
-- name: Set CF Access credential facts
+- name: Load CF Access inventory credentials from 1Password
   ansible.builtin.set_fact:
-    _inv_client_id: "{{ _inv_client_id_result.stdout | trim }}"
-    _inv_client_secret: "{{ _inv_client_secret_result.stdout | trim }}"
+    _inv_client_id: "{{ lookup('community.general.onepassword',
+        'hermes-secrets', field='cf-access-inventory-client-id', vault='Dev') }}"
+    _inv_client_secret: "{{ lookup('community.general.onepassword',
+        'hermes-secrets', field='cf-access-inventory-client-secret', vault='Dev') }}"
   no_log: true
-  when:
-    - _inv_client_id_result.rc | default(1) == 0
-    - _inv_client_secret_result.rc | default(1) == 0
+  failed_when: false
 
 - name: Resolve inventory vars from Hermes
   ansible.builtin.uri:
@@ -67,9 +39,6 @@
   register: _hermes_inv
   failed_when: false
   ignore_errors: true
-  when:
-    - _inv_client_id is defined
-    - _inv_client_secret is defined
 
 - name: Cache inventory facts locally
   ansible.builtin.copy:

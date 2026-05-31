@@ -93,4 +93,6 @@
   become: true
   when:
     - qnap_csi_state == "present"
+    - _helm_install is not skipped
+    - _helm_install.rc is defined
     - _helm_install.rc == 0 or 'already exists' in (_helm_install.stderr | default(''))

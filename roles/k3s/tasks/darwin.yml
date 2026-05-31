@@ -3,12 +3,28 @@
 # The Colima role handles VM initialization and k3s startup.
 # This task file handles post-start work: wait for API, export kubeconfig.
 
-- name: Wait for k3s API to be accessible via Colima port-forward (macOS)
+# Colima with --kubernetes exposes k3s via a dynamic SSH tunnel port (e.g. 50278),
+# NOT a fixed port 6443. Wait for the kubeconfig file then verify kubectl works.
+- name: Wait for Colima kubeconfig to be written (macOS)
   ansible.builtin.wait_for:
-    host: 127.0.0.1
-    port: 6443
+    path: "/var/{{ colima_deployer_user | default('ansible') }}/.kube/config"
     timeout: 300
-    delay: 10
+    delay: 5
+  when: _k3s_state == 'present'
+
+- name: Wait for k3s cluster to be reachable via kubectl (macOS)
+  ansible.builtin.command: kubectl cluster-info
+  environment:
+    KUBECONFIG: "/var/{{ colima_deployer_user | default('ansible') }}/.kube/config"
+    HOME: "/var/{{ colima_deployer_user | default('ansible') }}"
+    PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+  register: _k3s_ready
+  until: _k3s_ready.rc == 0
+  retries: 30
+  delay: 10
+  become: true
+  become_user: "{{ colima_deployer_user | default('ansible') }}"
+  changed_when: false
   when: _k3s_state == 'present'
 
 - name: Read kubeconfig written by Colima (macOS)
@@ -24,7 +40,7 @@
   ansible.builtin.set_fact:
     _kubeconfig_patched: >-
       {{ (_kubeconfig_raw.content | b64decode)
-         | regex_replace('server: https://127\.0\.0\.1:6443',
+         | regex_replace('server: https://127\.0\.0\.1:\d+',
                          'server: https://' + (k3s_external_server | default('127.0.0.1')) + ':6443') }}
   when:
     - _k3s_state == 'present'

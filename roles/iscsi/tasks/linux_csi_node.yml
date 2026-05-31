@@ -1,0 +1,36 @@
+# roles/iscsi/tasks/linux_csi_node.yml
+---
+# Ensures host-level iSCSI prerequisites for Trident CSI driver.
+# The CSI driver handles target discovery, CHAP authentication, and login.
+# Ansible only needs: packages installed, services running, initiator name set.
+
+- name: Set deterministic iSCSI initiator name
+  ansible.builtin.copy:
+    content: "InitiatorName=iqn.2004-04.net.olympus:{{ ansible_facts['hostname'] }}\n"
+    dest: /etc/iscsi/initiatorname.iscsi
+    mode: "0600"
+  become: true
+  notify: Restart iscsid
+
+- name: Install iSCSI and multipath packages
+  ansible.builtin.apt:
+    name:
+      - open-iscsi
+      - multipath-tools
+    state: present
+    update_cache: true
+  become: true
+
+- name: Enable and start iscsid
+  ansible.builtin.systemd:
+    name: iscsid
+    enabled: true
+    state: started
+  become: true
+
+- name: Enable and start multipathd
+  ansible.builtin.systemd:
+    name: multipathd
+    enabled: true
+    state: started
+  become: true

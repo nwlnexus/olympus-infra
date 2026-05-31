@@ -18,3 +18,10 @@
     - ansible_facts['os_family'] == "Debian"
     - iscsi_mode == "initiator_only"
     - iscsi_state == "present"
+
+- name: iSCSI — Linux csi_node
+  ansible.builtin.include_tasks: linux_csi_node.yml
+  when:
+    - ansible_facts['os_family'] == "Debian"
+    - iscsi_mode == "csi_node"
+    - iscsi_state == "present"

@@ -3,11 +3,12 @@ colima_state: present
 colima_cpu: 2
 colima_memory: 4
 colima_disk: 60
-colima_runtime: "docker"       # "docker" or "k3s"
+colima_runtime: "docker"        # "docker" or "containerd"
+colima_kubernetes: false        # true = start with --kubernetes (k3s alongside Docker)
 # The user who owns the Colima VM (LaunchDaemon runs as this user).
 # For headless operation use the ansible service user.
 colima_deployer_user: "{{ ansible_user }}"
-# Packages to install in the Lima VM at first boot (k3s runtime only).
+# Packages to install in the Lima VM at first boot (kubernetes mode only).
 # Runs as a root provision script on VM initialization.
 colima_provision_packages:
   - open-iscsi

@@ -2,24 +2,21 @@ cpu: {{ colima_cpu }}
 memory: {{ colima_memory }}
 disk: {{ colima_disk }}
 runtime: {{ colima_runtime }}
-{% if colima_runtime == 'k3s' %}
+{% if colima_kubernetes | default(false) %}
+kubernetes:
+  enabled: true
 provision:
   - mode: system
     script: |
       #!/bin/bash
       set -euo pipefail
-      # iSCSI + storage utilities (QNAP CSI Plugin requirement)
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -q
       apt-get install -y {{ colima_provision_packages | join(' ') }}
       modprobe iscsi_tcp || true
       modprobe dm-multipath || true
-      # Kernel tunables
       printf 'fs.inotify.max_user_instances=8192\nfs.inotify.max_user_watches=1048576\nfs.file-max=2097152\nvm.max_map_count=262144\nnet.ipv4.ip_forward=1\n' > /etc/sysctl.d/99-olympus.conf
       sysctl -p /etc/sysctl.d/99-olympus.conf
-      # Open file limits
       printf '* soft nofile 1048576\n* hard nofile 1048576\nroot soft nofile 1048576\nroot hard nofile 1048576\n' >> /etc/security/limits.conf
-      # k3s TLS SANs (allow remote kubectl via FQDN)
-      mkdir -p /etc/rancher/k3s
       printf 'tls-san:\n  - ai-hub.nwlnexus.net\nwrite-kubeconfig-mode: "0644"\n' > /etc/rancher/k3s/config.yaml
 {% endif %}

@@ -42,7 +42,7 @@
   become: true
   when:
     - colima_state == "present"
-    - colima_runtime == "k3s"
+    - colima_kubernetes | default(false)
 
 - name: Write Colima Lima config with provision block (k3s runtime, first run only)
   ansible.builtin.template:
@@ -54,7 +54,7 @@
   become: true
   when:
     - colima_state == "present"
-    - colima_runtime == "k3s"
+    - colima_kubernetes | default(false)
 
 # ── Initialize the Colima VM ─────────────────────────────────────────────────
 - name: Initialize Colima VM with configured resources (docker runtime, first run only)
@@ -74,9 +74,10 @@
     - colima_state == "present"
     - colima_runtime == "docker"
 
-- name: Initialize Colima VM with k3s runtime as deployer user (first run, downloads VM image)
+- name: Initialize Colima VM with Kubernetes (--kubernetes flag, first run, downloads VM image)
   ansible.builtin.command: >
     /opt/homebrew/bin/colima start
+    --kubernetes
     --cpu {{ colima_cpu }}
     --memory {{ colima_memory }}
     --disk {{ colima_disk }}
@@ -93,7 +94,7 @@
     PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin"
   when:
     - colima_state == "present"
-    - colima_runtime == "k3s"
+    - colima_kubernetes | default(false)
 
 # ── Legacy docker runtime: user LaunchAgent (brew services) ──────────────────
 - name: Start Colima as user LaunchAgent (docker runtime only)
@@ -122,7 +123,7 @@
   register: _colima_daemon_plist
   when:
     - colima_state == "present"
-    - colima_runtime == "k3s"
+    - colima_kubernetes | default(false)
 
 - name: Reload Colima LaunchDaemon after plist change (k3s runtime)
   ansible.builtin.shell: |
@@ -132,7 +133,7 @@
   changed_when: true
   when:
     - colima_state == "present"
-    - colima_runtime == "k3s"
+    - colima_kubernetes | default(false)
     - _colima_daemon_plist.changed
 
 # ── Absent path ───────────────────────────────────────────────────────────────
@@ -155,7 +156,7 @@
   changed_when: true
   when:
     - colima_state == "absent"
-    - colima_runtime == "k3s"
+    - colima_kubernetes | default(false)
 
 # ── docker.sock symlink (docker runtime only) ─────────────────────────────────
 - name: Create /var/run/docker.sock symlink pointing at Colima socket (macOS, docker runtime)

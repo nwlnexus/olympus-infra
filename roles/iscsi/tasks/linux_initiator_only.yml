@@ -6,7 +6,7 @@
 
 - name: Set deterministic iSCSI initiator name
   ansible.builtin.copy:
-    content: "InitiatorName=iqn.2004-04.net.olympus:{{ inventory_hostname }}\n"
+    content: "InitiatorName=iqn.2004-04.net.olympus:{{ ansible_facts['hostname'] }}\n"
     dest: /etc/iscsi/initiatorname.iscsi
     mode: "0600"
   become: true

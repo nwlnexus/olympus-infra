@@ -55,13 +55,6 @@
   no_log: true
   when: qnap_csi_state == "present"
 
-- name: Create trident namespace
-  ansible.builtin.command: >
-    kubectl --kubeconfig {{ qnap_csi_kubeconfig }} create namespace {{ qnap_csi_namespace }}
-  failed_when: false
-  changed_when: true
-  when: qnap_csi_state == "present"
-
 - name: Install QNAP CSI Plugin via Helm (from local clone)
   ansible.builtin.command: >
     helm --kubeconfig {{ qnap_csi_kubeconfig }}
@@ -72,10 +65,12 @@
     --set managementLIF={{ _qnap_storage_addr }}
     --set username={{ _qnap_mgmt_user }}
     --set password={{ _qnap_mgmt_pass }}
+    --set chapInitiatorUser={{ _chap_user }}
     --set chapInitiatorSecret={{ _chap_pass }}
   no_log: true
   register: _helm_install
-  changed_when: _helm_install.rc == 0
+  changed_when:
+    - _helm_install.rc == 0
   failed_when:
     - _helm_install.rc != 0
     - "'already exists' not in (_helm_install.stderr | default(''))"
@@ -89,4 +84,4 @@
   become: true
   when:
     - qnap_csi_state == "present"
-    - _helm_install is changed
+    - _helm_install.rc == 0 or 'already exists' in (_helm_install.stderr | default(''))

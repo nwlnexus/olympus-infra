@@ -18,6 +18,17 @@
   failed_when: _flux_cli_version.rc != 0
   when: flux_state == 'present'
 
+- name: Pre-install Flux components (ensures CRDs exist before bootstrap dry-run)
+  ansible.builtin.shell: >
+    flux install
+    --namespace=flux-system
+    --kubeconfig={{ flux_kubeconfig_path }}
+    {% if flux_kubeconfig_context != '' %}--context={{ flux_kubeconfig_context }}{% endif %}
+  become: true
+  changed_when: true
+  failed_when: false
+  when: flux_state == 'present'
+
 - name: Bootstrap Flux from olympus-gitops
   ansible.builtin.shell: |
     set -o pipefail

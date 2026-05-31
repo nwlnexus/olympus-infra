@@ -55,6 +55,12 @@
   no_log: true
   when: qnap_csi_state == "present"
 
+- name: Check if QNAP CSI Plugin is already installed (sentinel)
+  ansible.builtin.stat:
+    path: "{{ qnap_csi_sentinel }}"
+  register: _qnap_csi_installed
+  when: qnap_csi_state == "present"
+
 - name: Install QNAP CSI Plugin via Helm (from local clone)
   ansible.builtin.command: >
     helm --kubeconfig {{ qnap_csi_kubeconfig }}
@@ -74,7 +80,10 @@
   failed_when:
     - _helm_install.rc != 0
     - "'already exists' not in (_helm_install.stderr | default(''))"
-  when: qnap_csi_state == "present"
+    - "'cannot reuse' not in (_helm_install.stderr | default(''))"
+  when:
+    - qnap_csi_state == "present"
+    - not (_qnap_csi_installed.stat.exists | default(false))
 
 - name: Create install sentinel
   ansible.builtin.file:

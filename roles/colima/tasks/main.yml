@@ -73,6 +73,7 @@
   when:
     - colima_state == "present"
     - colima_runtime == "docker"
+    - not (colima_kubernetes | default(false))
 
 - name: Initialize Colima VM with Kubernetes (--kubernetes flag, first run, downloads VM image)
   ansible.builtin.command: >
@@ -110,8 +111,9 @@
   when:
     - colima_state == "present"
     - colima_runtime == "docker"
+    - not (colima_kubernetes | default(false))
 
-# ── k3s runtime: system LaunchDaemon (headless, persists without login) ──────
+# ── Kubernetes mode: system LaunchDaemon (headless, persists without login) ──
 - name: Deploy Colima system LaunchDaemon plist (k3s runtime)
   ansible.builtin.template:
     src: colima-launchdaemon.plist.j2

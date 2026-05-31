@@ -15,14 +15,25 @@
     - role: baseline
       tags: [baseline]
 
-    - role: nas-media-mount
-      tags: [nas-media-mount]
+    - role: iscsi
+      tags: [iscsi]
+      when: iscsi_state is defined
+
+    - role: nfs-mounts
+      tags: [nfs-mounts]
+      when: nfs_mounts | default([]) | length > 0
 
     - role: plex
       tags: [plex]
+      when: plex_state is defined
+
+    - role: atlas
+      tags: [atlas]
+      when: atlas_state is defined
 
     - role: ddclient
       tags: [ddclient]
+      when: ddclient_state is defined
 
     # ── Hermes ENC (must be LAST — appends roles, never displaces) ───────────
     - role: hermes-classify-include

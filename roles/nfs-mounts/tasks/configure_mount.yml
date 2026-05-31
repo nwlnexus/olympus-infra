@@ -31,7 +31,7 @@
       {{
         _nfs_mount.src
         if (_nfs_mount.src is defined)
-        else ((_nfs_op_host.stdout | trim) ~ (_nfs_mount.export | default('')))
+        else ((_nfs_op_host.stdout | trim) ~ ':' ~ (_nfs_mount.export | default('')))
       }}
 
 - name: Derive systemd unit name from path

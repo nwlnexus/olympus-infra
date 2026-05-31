@@ -2,21 +2,28 @@
 # styx — homelab server host vars (pull-mode)
 # Push-mode vars live in olympus-sdk/infra/inventories/host_vars/styx/vars.yml
 
-# Hermes per-host token (Phase F onboarding — SP2)
-# Issued via: atlas machine create --hostname styx && atlas token issue --hostname styx
-# Save the printed token to 1Password at the path below.
-# bootstrap-user role fetches this at push-bootstrap time.
-hermes_token_op_item: "op://Dev/styx-hermes-token/credential"
-
 # Plex Media Server
 plex_state: present
 
-# QNAP NAS MEDIA share mount
-nas_media_mount_state: present
+# iSCSI — QNAP LUN for styx data storage
+iscsi_state: present
+iscsi_op_item: styx-qnap-iscsi
+iscsi_mount_path: /mnt/styx-data
+iscsi_mode: host_mount
+iscsi_filesystem: ext4
+
+# NFS mounts — managed by nfs-mounts role
+nfs_mounts:
+  - path: /mnt/media
+    op_host_ref: "op://Dev/nas-media-share/host"
+    export: /MEDIA
+    opts: "nfsvers=4,hard,_netdev,rsize=1048576,wsize=1048576,timeo=600,retrans=2"
+    state: present
 
 # ddclient — tracks styx's LAN IP and publishes media-int.nwlnexus.io for internal Plex access
 ddclient_state: present
-# ddclient_zone defaults to nwlnexus.net — styx hostname records land there automatically.
-# media-int.nwlnexus.io zone is inferred from the FQDN itself (no explicit config needed).
 ddclient_extra_fqdns:
   - media-int.nwlnexus.io
+
+# Atlas daemon
+atlas_state: present

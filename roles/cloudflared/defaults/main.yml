@@ -1,5 +1,8 @@
 ---
 cloudflared_state: present
+# Users whose ~/Library/LaunchAgents/com.cloudflare.cloudflared.plist should be
+# removed during migration to the system LaunchDaemon. Set per-host in host_vars.
+cloudflared_legacy_users: []
 # Tunnel UUID — set per-host in host_vars
 cloudflared_tunnel_id: ""
 # 1Password item holding the credentials JSON content

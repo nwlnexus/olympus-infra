@@ -64,9 +64,7 @@
     path: "/Users/{{ item }}/Library/LaunchAgents/com.cloudflare.cloudflared.plist"
     state: absent
   become: true
-  loop:
-    - "{{ ansible_user }}"
-    - nwilliams-lucas
+  loop: "{{ ([ansible_user] + cloudflared_legacy_users) | unique }}"
   failed_when: false
   when:
     - cloudflared_state == "present"
@@ -78,16 +76,14 @@
   become: false
   failed_when: false
   changed_when: false
-  loop:
-    - "{{ ansible_user }}"
-    - nwilliams-lucas
+  loop: "{{ ([ansible_user] + cloudflared_legacy_users) | unique }}"
   when:
     - cloudflared_state == "present"
     - ansible_facts['os_family'] == "Darwin"
 
 - name: Load cloudflared LaunchDaemon (macOS)
   ansible.builtin.command: >
-    launchctl load -w /Library/LaunchDaemons/com.cloudflare.cloudflared.plist
+    launchctl bootstrap system /Library/LaunchDaemons/com.cloudflare.cloudflared.plist
   become: true
   changed_when: true
   failed_when: false

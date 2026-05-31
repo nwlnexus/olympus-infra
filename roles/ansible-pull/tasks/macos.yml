@@ -49,7 +49,7 @@
 
 - name: Load ansible-pull LaunchDaemon (macOS)
   ansible.builtin.command: >
-    launchctl load -w /Library/LaunchDaemons/com.olympus.ansible-pull.plist
+    launchctl bootstrap system /Library/LaunchDaemons/com.olympus.ansible-pull.plist
   become: true
   changed_when: true
   failed_when: false
@@ -57,7 +57,7 @@
 
 - name: Unload ansible-pull LaunchDaemon (macOS)
   ansible.builtin.command: >
-    launchctl unload -w /Library/LaunchDaemons/com.olympus.ansible-pull.plist
+    launchctl bootout system /Library/LaunchDaemons/com.olympus.ansible-pull.plist
   become: true
   failed_when: false
   changed_when: true

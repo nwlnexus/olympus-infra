@@ -6,6 +6,9 @@ LOG_DIR="{{ ansible_pull_log_dir }}"
 LOG_FILE="{{ ansible_pull_log_file }}"
 OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/etc/olympus/op-service-account-token}"
 
+# launchd does not guarantee HOME is set to the service user's home directory
+export HOME="/var/{{ ansible_pull_user }}"
+
 mkdir -p "$LOG_DIR"
 
 if [[ ! -f "$OP_TOKEN_FILE" ]]; then

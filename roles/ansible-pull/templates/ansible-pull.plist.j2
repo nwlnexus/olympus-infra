@@ -11,13 +11,8 @@
   <array>
     <string>/opt/ansible-pull/ansible-pull-run</string>
   </array>
-  <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>
-    <integer>{{ ansible_pull_hour }}</integer>
-    <key>Minute</key>
-    <integer>{{ ansible_pull_minute }}</integer>
-  </dict>
+  <key>StartInterval</key>
+  <integer>{{ ansible_pull_interval_seconds }}</integer>
   <key>RunAtLoad</key>
   <false/>
   <key>StandardOutPath</key>
@@ -27,9 +22,9 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
-    <string>/var/ansible</string>
+    <string>/var/{{ ansible_pull_user }}</string>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 </dict>
 </plist>

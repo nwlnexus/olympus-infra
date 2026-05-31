@@ -79,6 +79,7 @@
   ansible.builtin.command: >
     /opt/homebrew/bin/colima start
     --kubernetes
+    {% if colima_kubernetes_version | default('') != '' %}--kubernetes-version {{ colima_kubernetes_version }}{% endif %}
     --cpu {{ colima_cpu }}
     --memory {{ colima_memory }}
     --disk {{ colima_disk }}

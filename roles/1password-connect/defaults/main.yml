@@ -9,3 +9,5 @@ onepassword_connect_port: 8080
 onepassword_connect_hostname: ""
 # k8s service name as created by the Helm chart (release: connect, chart: connect)
 onepassword_connect_service_name: "onepassword-connect"
+# Kubeconfig path — override for non-standard k8s (e.g. Colima on macOS uses /var/ansible/.kube/config)
+onepassword_connect_kubeconfig: "{{ k3s_kubeconfig_path | default('/var/ansible/.kube/config') }}"

@@ -11,7 +11,7 @@
   when: _1pw_state == 'present'
 
 - name: Skip if credentials file missing
-  ansible.builtin.meta: end_play
+  ansible.builtin.meta: end_host
   when:
     - _1pw_state == 'present'
     - not creds_file.stat.exists or creds_file.stat.size == 0
@@ -24,7 +24,9 @@
     creates: /usr/local/bin/helm
     executable: /bin/bash
   become: true
-  when: _1pw_state == 'present'
+  when:
+    - _1pw_state == 'present'
+    - ansible_facts['os_family'] != 'Darwin'
 
 - name: Add 1Password Helm repo
   ansible.builtin.command: >
@@ -50,7 +52,8 @@
   changed_when: ns_create.rc == 0
   become: true
   environment:
-    KUBECONFIG: "{{ k3s_kubeconfig_path }}"
+    KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
   when: _1pw_state == 'present'
 
 - name: Create credentials secret (base64-encoded — required by Connect Helm chart 1.14+)
@@ -64,7 +67,8 @@
     executable: /bin/bash
   become: true
   environment:
-    KUBECONFIG: "{{ k3s_kubeconfig_path }}"
+    KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
   changed_when: true
   when: _1pw_state == 'present'
 
@@ -77,7 +81,8 @@
     --wait
   become: true
   environment:
-    KUBECONFIG: "{{ k3s_kubeconfig_path }}"
+    KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
   changed_when: true
   when: _1pw_state == 'present'
 
@@ -96,7 +101,8 @@
   ansible.builtin.command: kubectl apply -f /tmp/onepassword-connect-ingressroute.yaml
   become: true
   environment:
-    KUBECONFIG: "{{ k3s_kubeconfig_path }}"
+    KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
   changed_when: true
   when:
     - _1pw_state == 'present'
@@ -106,7 +112,8 @@
   ansible.builtin.command: helm uninstall connect -n {{ onepassword_connect_namespace }}
   become: true
   environment:
-    KUBECONFIG: "{{ k3s_kubeconfig_path }}"
+    KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
   failed_when: false
   changed_when: true
   when: _1pw_state == 'absent'

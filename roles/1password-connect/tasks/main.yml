@@ -35,11 +35,15 @@
   register: repo_add
   changed_when: "'already exists' not in repo_add.stderr"
   become: "{{ onepassword_connect_become }}"
+  environment:
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
   when: _1pw_state == 'present'
 
 - name: Update Helm repos
   ansible.builtin.command: helm repo update
   become: "{{ onepassword_connect_become }}"
+  environment:
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
   changed_when: false
   when: _1pw_state == 'present'
 

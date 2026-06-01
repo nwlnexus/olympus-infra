@@ -65,6 +65,7 @@
   become: "{{ eso_kubectl_become }}"
   environment:
     KUBECONFIG: "{{ eso_kubeconfig_path }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
   when: eso_bootstrap_state == 'present'
 
 - name: Seed ESO 1Password Connect token secret
@@ -79,6 +80,7 @@
   become: "{{ eso_kubectl_become }}"
   environment:
     KUBECONFIG: "{{ eso_kubeconfig_path }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
   no_log: true
   changed_when: true
   when: eso_bootstrap_state == 'present'

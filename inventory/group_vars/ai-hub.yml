@@ -21,3 +21,11 @@ tailscale_hostname: ai-hub
 
 # Cloudflared binary present (tunnel deleted — binary kept for potential future use)
 cloudflared_state: present
+
+# 1Password Connect — k3s via Colima; kubeconfig at non-standard path
+onepassword_connect_state: present
+onepassword_connect_kubeconfig: /var/ansible/.kube/config
+
+# ESO bootstrap — seeds Connect token into ESO secret
+eso_bootstrap_state: present
+eso_kubeconfig_path: /var/ansible/.kube/config

@@ -60,6 +60,18 @@
       tags: [atlas]
       when: atlas_state is defined
 
+    - role: 1password-connect
+      tags: [1password-connect]
+      when:
+        - onepassword_connect_state is defined
+        - k3s_primary | default(true)
+
+    - role: eso-bootstrap
+      tags: [eso-bootstrap]
+      when:
+        - eso_bootstrap_state is defined
+        - k3s_primary | default(true)
+
     - role: tailscale
       tags: [tailscale]
       when: tailscale_state is defined
@@ -81,6 +93,11 @@
     - role: ollama
       tags: [ollama]
       when: ollama_state is defined
+
+    # ddclient last in opt-in block: role uses meta:end_host when CF token unavailable;
+    # placing it last ensures ansible-pull and other critical roles always complete.
+    - role: ddclient
+      tags: [ddclient]
 
     # ── Always last — Hermes-injected dynamic roles ───────────────────────────
     - role: hermes-classify-include

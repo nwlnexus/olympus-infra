@@ -84,3 +84,9 @@ iscsi_mode: csi_node
 
 # Atlas daemon
 atlas_state: present
+
+# 1Password Connect — k3s bare-metal; uses k3s_kubeconfig_path via onepassword_connect_kubeconfig default
+onepassword_connect_state: present
+
+# ESO bootstrap
+eso_bootstrap_state: present

@@ -16,9 +16,8 @@ cloudflared_state: present
 
 # 1Password Connect — still managed by Ansible (prerequisite for ESO)
 onepassword_connect_state: present
-
-# ArgoCD — still managed by Ansible (prerequisite for GitOps)
-argocd_state: present
+eso_bootstrap_state: present
+eso_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
 
 # --- Flux kubeconfig export to 1Password ---
 # Uploads a patched kubeconfig (Tailscale IPv4 as server, proper context/cluster/user names)

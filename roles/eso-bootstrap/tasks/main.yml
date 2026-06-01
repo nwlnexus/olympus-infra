@@ -2,6 +2,52 @@
 # Seeds the 1Password Connect token into the cluster so ESO can bootstrap.
 # This is a one-time operation — subsequent secret rotation goes through ESO itself.
 
+# ── Pull-mode token resolution ────────────────────────────────────────────────
+# If eso_connect_token is provided directly (push mode via vault), these tasks skip.
+# In pull mode, the token is fetched from 1Password using the OP SA token.
+- name: Read OP service account token for ESO bootstrap
+  ansible.builtin.slurp:
+    src: "{{ eso_op_token_file }}"
+  register: _eso_op_token
+  no_log: true
+  failed_when: false
+  become: true
+  when:
+    - eso_bootstrap_state == 'present'
+    - eso_connect_token | length == 0
+
+- name: Fetch 1Password Connect token from 1Password
+  ansible.builtin.command:
+    argv:
+      - op
+      - read
+      - "{{ eso_op_connect_token_ref }}"
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ _eso_op_token.content | b64decode | trim }}"
+  register: _eso_connect_token_result
+  changed_when: false
+  no_log: true
+  when:
+    - eso_bootstrap_state == 'present'
+    - eso_connect_token | length == 0
+    - _eso_op_token.content is defined
+
+- name: Set eso_connect_token from 1Password
+  ansible.builtin.set_fact:
+    eso_connect_token: "{{ _eso_connect_token_result.stdout | trim }}"
+  no_log: true
+  when:
+    - eso_bootstrap_state == 'present'
+    - eso_connect_token | length == 0
+    - _eso_connect_token_result.stdout is defined
+
+- name: Skip ESO bootstrap if no Connect token available
+  ansible.builtin.meta: end_host
+  when:
+    - eso_bootstrap_state == 'present'
+    - eso_connect_token | length == 0
+
+# ── Existing tasks ────────────────────────────────────────────────────────────
 - name: Set kubectl base command
   ansible.builtin.set_fact:
     _eso_kubectl: >-

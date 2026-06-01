@@ -52,6 +52,14 @@
       tags: [ansible-pull]
 
     # ── Opt-in via _state vars set in host/group vars ─────────────────────────
+    - role: iscsi
+      tags: [iscsi]
+      when: iscsi_state is defined
+
+    - role: atlas
+      tags: [atlas]
+      when: atlas_state is defined
+
     - role: tailscale
       tags: [tailscale]
       when: tailscale_state is defined

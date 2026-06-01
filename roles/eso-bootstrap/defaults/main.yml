@@ -8,4 +8,4 @@ eso_kubectl_context: ""
 eso_kubectl_become: "{{ ansible_facts['system'] != 'Darwin' }}"
 # Pull-mode token sourcing — reads Connect token from 1Password if eso_connect_token is empty
 eso_op_token_file: /etc/olympus/op-service-account-token
-eso_op_connect_token_ref: "op://Dev/onepassword-connect-token/credential"
+eso_op_connect_token_ref: "op://Dev/nnb6nddmmfsuvn55ck6bwkx73q/credential"

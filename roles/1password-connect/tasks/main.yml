@@ -34,12 +34,12 @@
     https://1password.github.io/connect-helm-charts
   register: repo_add
   changed_when: "'already exists' not in repo_add.stderr"
-  become: true
+  become: "{{ onepassword_connect_become }}"
   when: _1pw_state == 'present'
 
 - name: Update Helm repos
   ansible.builtin.command: helm repo update
-  become: true
+  become: "{{ onepassword_connect_become }}"
   changed_when: false
   when: _1pw_state == 'present'
 
@@ -50,7 +50,7 @@
     - ns_create.rc != 0
     - "'already exists' not in ns_create.stderr"
   changed_when: ns_create.rc == 0
-  become: true
+  become: "{{ onepassword_connect_become }}"
   environment:
     KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
     PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
@@ -65,7 +65,7 @@
       --dry-run=client -o yaml | kubectl apply -f -
   args:
     executable: /bin/bash
-  become: true
+  become: "{{ onepassword_connect_become }}"
   environment:
     KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
     PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
@@ -79,7 +79,7 @@
     --version {{ onepassword_connect_chart_version }}
     --set connect.serviceType=ClusterIP
     --wait
-  become: true
+  become: "{{ onepassword_connect_become }}"
   environment:
     KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
     PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
@@ -99,7 +99,7 @@
 
 - name: Apply 1Password Connect Traefik IngressRoute
   ansible.builtin.command: kubectl apply -f /tmp/onepassword-connect-ingressroute.yaml
-  become: true
+  become: "{{ onepassword_connect_become }}"
   environment:
     KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
     PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
@@ -110,7 +110,7 @@
 
 - name: Uninstall 1Password Connect
   ansible.builtin.command: helm uninstall connect -n {{ onepassword_connect_namespace }}
-  become: true
+  become: "{{ onepassword_connect_become }}"
   environment:
     KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
     PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin

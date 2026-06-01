@@ -11,3 +11,6 @@ onepassword_connect_hostname: ""
 onepassword_connect_service_name: "onepassword-connect"
 # Kubeconfig path — override for non-standard k8s (e.g. Colima on macOS uses /var/ansible/.kube/config)
 onepassword_connect_kubeconfig: "{{ k3s_kubeconfig_path | default('/var/ansible/.kube/config') }}"
+# On macOS Homebrew tools (helm, kubectl) live in ansible user's PATH, not root's.
+# On Linux become root for system kubeconfig access.
+onepassword_connect_become: "{{ ansible_facts['os_family'] != 'Darwin' }}"

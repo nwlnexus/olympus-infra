@@ -19,7 +19,8 @@ SyslogIdentifier=ansible-pull
 NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=false
-ProtectHome=true
+ProtectHome=false
+Environment=HOME=/home/ansible
 ReadWritePaths=/opt/ansible-pull {{ ansible_pull_log_dir }}
 
 [Install]

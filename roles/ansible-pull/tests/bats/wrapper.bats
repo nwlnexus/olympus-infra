@@ -29,10 +29,10 @@ setup() {
   export WRAPPER_RUNTIME_DIR="$TMPDIR/run/olympus"
   export WRAPPER_LOG_DIR="$TMPDIR/var/log"
   export WRAPPER_LOG_FILE="$TMPDIR/var/log/run.log"
-  export WRAPPER_OP_TOKEN_FILE="$TMPDIR/opt/ansible-pull/.op-service-account-token"
+  export WRAPPER_OP_TOKEN_FILE="$TMPDIR/etc/olympus/op-service-account-token"
   export WRAPPER_PARSER="$PARSER"
 
-  mkdir -p "$TMPDIR/etc/olympus" "$TMPDIR/opt/ansible-pull" "$TMPDIR/var/log"
+  mkdir -p "$TMPDIR/etc/olympus" "$TMPDIR/var/log"
 
   # OP token must exist or the wrapper bails before reaching Hermes logic
   echo "fake-op-token" > "$WRAPPER_OP_TOKEN_FILE"

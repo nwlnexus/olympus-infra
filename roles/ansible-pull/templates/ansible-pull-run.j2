@@ -27,9 +27,10 @@ ANSIBLE_PULL_BIN="{{ ansible_pull_bin_macos }}"
 OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/etc/olympus/op-service-account-token}"
 {% else %}
 # ── Linux: ensure user-local bin is on PATH ───────────────────────────────────
+export HOME="/home/{{ ansible_pull_user }}"
 export PATH="${HOME}/.local/bin:${PATH}"
 ANSIBLE_PULL_BIN="{{ ansible_pull_bin_linux }}"
-OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/opt/ansible-pull/.op-service-account-token}"
+OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/etc/olympus/op-service-account-token}"
 {% endif %}
 
 mkdir -p "$CACHE_DIR" "$PENDING_DIR" "$RUNTIME_DIR" "$LOG_DIR"

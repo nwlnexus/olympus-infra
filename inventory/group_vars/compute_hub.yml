@@ -2,7 +2,7 @@
 # Shared vars for all compute-hub nodes (applied to group: compute_hub)
 # Secrets are read at runtime from 1Password via `op read` in playbook pre_tasks.
 # 1Password service account token (item: olympus-edge-service-account) must be on
-# each node at: /opt/ansible-pull/.op-service-account-token
+# each node at: /etc/olympus/op-service-account-token
 # and must have read/write access to the Dev vault.
 
 ansible_user: ansible
@@ -77,3 +77,10 @@ ansible_pull_legacy_users:
 ansible_pull_inventory: inventory/compute-hub.yml
 ansible_pull_playbook: playbooks/pull/olympus.yml
 ansible_pull_limit: "$(hostname -s)"
+
+# iSCSI host prereqs — QNAP Trident CSI manages login/CHAP; Ansible sets initiator name only
+iscsi_state: present
+iscsi_mode: csi_node
+
+# Atlas daemon
+atlas_state: present

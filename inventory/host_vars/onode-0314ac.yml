@@ -1,6 +1,6 @@
 ---
 # onode-0314ac — k3s secondary (non-init) server node
-# LAN IP: 192.168.253.20
+# LAN IP: 192.168.253.9
 
 k3s_primary: false
 k3s_init: false

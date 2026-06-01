@@ -24,6 +24,7 @@
       - "{{ eso_op_connect_token_ref }}"
   environment:
     OP_SERVICE_ACCOUNT_TOKEN: "{{ _eso_op_token.content | b64decode | trim }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
   register: _eso_connect_token_result
   changed_when: false
   no_log: true

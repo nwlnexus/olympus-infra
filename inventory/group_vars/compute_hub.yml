@@ -85,6 +85,9 @@ iscsi_mode: csi_node
 # Atlas daemon
 atlas_state: present
 
+# k3s kubeconfig path (standard bare-metal k3s location; used by 1password-connect + eso-bootstrap)
+k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
+
 # 1Password Connect — k3s bare-metal; uses k3s_kubeconfig_path via onepassword_connect_kubeconfig default
 onepassword_connect_state: present
 

@@ -22,6 +22,9 @@ tailscale_hostname: ai-hub
 # Cloudflared binary present (tunnel deleted — binary kept for potential future use)
 cloudflared_state: present
 
+# Preserve environment (including PATH) through sudo so Homebrew helm/kubectl are found
+ansible_become_flags: "-E"
+
 # 1Password Connect — k3s via Colima; kubeconfig at non-standard path
 onepassword_connect_state: present
 onepassword_connect_kubeconfig: /var/ansible/.kube/config

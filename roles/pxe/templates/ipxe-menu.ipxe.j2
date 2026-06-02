@@ -1,15 +1,19 @@
 #!ipxe
 
+# Detect CPU architecture for menu labelling
+iseq ${buildarch} arm64 && set arch_label ARM64 || set arch_label AMD64
+
 :start
-menu Olympus Homelab — Network Boot
+menu Olympus Homelab — Network Boot (${arch_label})
 item --gap         --- Ubuntu Autoinstall ---
-item ubuntu-24.04  Ubuntu 24.04 LTS (noble) — autoinstall
+item ubuntu-amd64  Ubuntu 24.04 LTS (noble) — autoinstall AMD64
+item ubuntu-arm64  Ubuntu 24.04 LTS (noble) — autoinstall ARM64
 item --gap         --- Utilities ---
 item shell         iPXE shell
 item reboot        Reboot
-choose --timeout 30 --default ubuntu-24.04 target && goto ${target}
+choose --timeout 30 --default ubuntu-amd64 target && goto ${target}
 
-:ubuntu-24.04
+:ubuntu-amd64
 set base http://{{ pxe_server_ip }}:{{ pxe_http_port }}
 kernel ${base}/ubuntu/{{ pxe_ubuntu_codename }}/vmlinuz \
   initrd=initrd \
@@ -18,6 +22,17 @@ kernel ${base}/ubuntu/{{ pxe_ubuntu_codename }}/vmlinuz \
   ip=dhcp \
   quiet splash
 initrd ${base}/ubuntu/{{ pxe_ubuntu_codename }}/initrd
+boot
+
+:ubuntu-arm64
+set base http://{{ pxe_server_ip }}:{{ pxe_http_port }}
+kernel ${base}/ubuntu/{{ pxe_ubuntu_codename }}-arm64/vmlinuz \
+  initrd=initrd \
+  autoinstall \
+  ds=nocloud-net;seedfrom=${base}/cloud-init/${hostname}/ \
+  ip=dhcp \
+  quiet splash
+initrd ${base}/ubuntu/{{ pxe_ubuntu_codename }}-arm64/initrd
 boot
 
 :shell

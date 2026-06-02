@@ -38,3 +38,6 @@ pxe_hosts: []
 # dnsmasq proxyDHCP — arch-aware PXE boot filename selection
 pxe_proxy_dhcp_enabled: true
 pxe_dhcp_network: "192.168.253.0/24"   # LAN CIDR dnsmasq listens on for PXE
+
+# arm64 iPXE EFI binary
+pxe_ipxe_arm64_efi_url: "https://boot.ipxe.org/arm64-efi/ipxe.efi"

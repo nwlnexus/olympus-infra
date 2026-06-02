@@ -7,7 +7,7 @@ log-dhcp
 
 # ProxyDHCP: respond to PXE requests on this subnet without allocating IPs
 # pxe_dhcp_network must be in CIDR notation (e.g. 192.168.253.0/24)
-dhcp-range={{ pxe_dhcp_network }},proxy
+dhcp-range={{ pxe_dhcp_network.split('/')[0] }},proxy
 
 # Architecture detection via DHCP option 93 (client system architecture)
 dhcp-match=set:bios,option:client-arch,0

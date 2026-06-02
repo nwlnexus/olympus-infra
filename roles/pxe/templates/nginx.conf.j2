@@ -1,0 +1,11 @@
+server {
+    listen {{ pxe_http_port }};
+    server_name _;
+    root {{ pxe_http_root }};
+    autoindex on;
+
+    location /cloud-init/ {
+        autoindex on;
+        default_type text/plain;
+    }
+}

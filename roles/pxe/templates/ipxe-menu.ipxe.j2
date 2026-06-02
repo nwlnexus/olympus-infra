@@ -1,0 +1,27 @@
+#!ipxe
+
+:start
+menu Olympus Homelab — Network Boot
+item --gap         --- Ubuntu Autoinstall ---
+item ubuntu-24.04  Ubuntu 24.04 LTS (noble) — autoinstall
+item --gap         --- Utilities ---
+item shell         iPXE shell
+item reboot        Reboot
+choose --timeout 30 --default ubuntu-24.04 target && goto ${target}
+
+:ubuntu-24.04
+set base http://{{ pxe_server_ip }}:{{ pxe_http_port }}
+kernel ${base}/ubuntu/{{ pxe_ubuntu_codename }}/vmlinuz \
+  initrd=initrd \
+  autoinstall \
+  ds=nocloud-net;seedfrom=${base}/cloud-init/${hostname}/ \
+  ip=dhcp \
+  quiet splash
+initrd ${base}/ubuntu/{{ pxe_ubuntu_codename }}/initrd
+boot
+
+:shell
+shell
+
+:reboot
+reboot

@@ -1,0 +1,49 @@
+#cloud-config
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  network:
+    network:
+      version: 2
+      ethernets:
+        any:
+          match:
+            name: "en*"
+          dhcp4: true
+  storage:
+    layout:
+      name: lvm
+  identity:
+    hostname: {{ item.hostname }}
+    username: ansible
+    password: "{{ item.ansible_user_password | default(pxe_default_ansible_password_hash) }}"
+  ssh:
+    install-server: true
+    authorized-keys:
+      - "{{ pxe_ansible_ssh_pubkey }}"
+    allow-pw: false
+  packages:
+    - git
+    - python3
+    - curl
+  late-commands:
+    - |
+      curtin in-target --target=/target -- bash -c '
+        mkdir -p /etc/ansible
+        useradd -m -s /bin/bash -G sudo ansible 2>/dev/null || true
+        mkdir -p /home/ansible/.ssh
+        echo "{{ pxe_ansible_ssh_pubkey }}" >> /home/ansible/.ssh/authorized_keys
+        chmod 700 /home/ansible/.ssh
+        chmod 600 /home/ansible/.ssh/authorized_keys
+        chown -R ansible:ansible /home/ansible/.ssh
+        cat > /home/ansible/bootstrap-pull.sh << EOF
+#!/bin/bash
+ansible-pull -U {{ pxe_ansible_pull_repo }} -C {{ pxe_ansible_pull_branch }} -i {{ item.inventory }} {{ item.playbook }}
+EOF
+        chmod +x /home/ansible/bootstrap-pull.sh
+        chown ansible:ansible /home/ansible/bootstrap-pull.sh
+      '
+  user-data:
+    disable_root: true

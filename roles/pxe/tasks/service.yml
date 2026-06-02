@@ -1,0 +1,14 @@
+---
+- name: Enable and start tftpd-hpa
+  ansible.builtin.service:
+    name: tftpd-hpa
+    enabled: true
+    state: started
+  become: true
+
+- name: Enable and start nginx
+  ansible.builtin.service:
+    name: nginx
+    enabled: true
+    state: started
+  become: true

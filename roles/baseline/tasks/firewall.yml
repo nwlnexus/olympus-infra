@@ -87,6 +87,30 @@
     - baseline_state == "present"
     - baseline_firewall_enabled | bool
 
+- name: UFW — validate lan_extra_ports format
+  ansible.builtin.assert:
+    that: "'/' in item"
+    fail_msg: "baseline_firewall_lan_extra_ports entry '{{ item }}' must be in 'port/proto' format (e.g. '8080/tcp')"
+    quiet: true
+  loop: "{{ baseline_firewall_lan_extra_ports }}"
+  when:
+    - baseline_state == "present"
+    - baseline_firewall_enabled | bool
+    - baseline_firewall_lan_extra_ports | length > 0
+
+- name: UFW — allow LAN-scoped ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.split('/')[0] }}"
+    proto: "{{ item.split('/')[1] }}"
+    src: "{{ baseline_firewall_lan_cidr }}"
+  become: true
+  loop: "{{ baseline_firewall_lan_extra_ports }}"
+  when:
+    - baseline_state == "present"
+    - baseline_firewall_enabled | bool
+    - baseline_firewall_lan_extra_ports | length > 0
+
 - name: UFW — enable
   community.general.ufw:
     state: enabled

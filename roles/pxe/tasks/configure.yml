@@ -1,0 +1,77 @@
+---
+- name: Configure tftpd-hpa
+  ansible.builtin.template:
+    src: tftpd-hpa.j2
+    dest: /etc/default/tftpd-hpa
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Restart tftpd-hpa
+
+- name: Render iPXE boot menu
+  ansible.builtin.template:
+    src: ipxe-menu.ipxe.j2
+    dest: "{{ pxe_http_root }}/menu/boot.ipxe"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+
+- name: Configure nginx for PXE
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/sites-available/pxe
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload nginx
+
+- name: Enable nginx PXE site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/pxe
+    dest: /etc/nginx/sites-enabled/pxe
+    state: link
+  become: true
+  notify: Reload nginx
+
+- name: Disable nginx default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  become: true
+  notify: Reload nginx
+
+- name: Render cloud-init user-data per host
+  ansible.builtin.template:
+    src: cloud-init/user-data.j2
+    dest: "{{ pxe_http_root }}/cloud-init/{{ item.hostname }}/user-data"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  loop: "{{ pxe_hosts }}"
+  when: pxe_hosts | length > 0
+
+- name: Render cloud-init meta-data per host
+  ansible.builtin.template:
+    src: cloud-init/meta-data.j2
+    dest: "{{ pxe_http_root }}/cloud-init/{{ item.hostname }}/meta-data"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  loop: "{{ pxe_hosts }}"
+  when: pxe_hosts | length > 0
+
+- name: Write empty vendor-data per host
+  ansible.builtin.copy:
+    content: ""
+    dest: "{{ pxe_http_root }}/cloud-init/{{ item.hostname }}/vendor-data"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  loop: "{{ pxe_hosts }}"
+  when: pxe_hosts | length > 0

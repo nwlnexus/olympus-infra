@@ -10,6 +10,10 @@ baseline_firewall_enabled: false
 baseline_firewall_allow_from_tailnet_only: true
 baseline_firewall_extra_ports: []         # list of "{port}/{tcp|udp}"
 
+# LAN-scoped firewall rules (source CIDR limited — not world-open, not tailnet-only)
+baseline_firewall_lan_cidr: "192.168.253.0/24"
+baseline_firewall_lan_extra_ports: []   # list of "{port}/{tcp|udp}"
+
 # Hostname enforcement — opt-in. Most hosts let the cloud-init/OS keep
 # the hostname; this is here for fresh-from-PXE provisioning later.
 baseline_set_hostname: false

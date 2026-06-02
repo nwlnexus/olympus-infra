@@ -1,0 +1,38 @@
+---
+- name: Install tftpd-hpa and nginx
+  ansible.builtin.apt:
+    name:
+      - tftpd-hpa
+      - nginx
+    state: present
+    update_cache: true
+  become: true
+
+- name: Create PXE directory tree
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  loop:
+    - "{{ pxe_tftp_root }}"
+    - "{{ pxe_http_root }}"
+    - "{{ pxe_http_root }}/cloud-init"
+    - "{{ pxe_http_root }}/menu"
+    - "{{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}"
+
+- name: Fetch iPXE EFI binary
+  ansible.builtin.get_url:
+    url: "{{ pxe_ipxe_efi_url }}"
+    dest: "{{ pxe_tftp_root }}/ipxe.efi"
+    mode: "0644"
+  become: true
+
+- name: Fetch iPXE legacy BIOS binary
+  ansible.builtin.get_url:
+    url: "{{ pxe_ipxe_kpxe_url }}"
+    dest: "{{ pxe_tftp_root }}/undionly.kpxe"
+    mode: "0644"
+  become: true

@@ -1,0 +1,32 @@
+---
+pxe_state: present
+
+# TFTP root — iPXE binaries land here
+pxe_tftp_root: /srv/pxe/tftp
+
+# HTTP root — menu scripts + cloud-init configs
+pxe_http_root: /srv/pxe/http
+pxe_http_port: 8080
+
+# iPXE binary source (upstream)
+pxe_ipxe_efi_url: "https://boot.ipxe.org/ipxe.efi"
+pxe_ipxe_kpxe_url: "https://boot.ipxe.org/undionly.kpxe"
+
+# styx LAN IP — used in iPXE menu scripts as the HTTP server
+pxe_server_ip: "192.168.253.6"
+
+# Ubuntu autoinstall defaults
+pxe_ubuntu_version: "24.04"
+pxe_ubuntu_codename: "noble"
+pxe_ubuntu_mirror: "http://archive.ubuntu.com/ubuntu"
+
+# ansible-pull handoff (injected into cloud-init user-data)
+pxe_ansible_pull_repo: "https://github.com/nwlnexus/olympus-infra.git"
+pxe_ansible_pull_branch: "main"
+
+# Secrets (values come from vault)
+pxe_ansible_ssh_pubkey: "{{ vault_pxe_ansible_ssh_pubkey }}"
+pxe_default_ansible_password_hash: "{{ vault_pxe_default_ansible_password_hash }}"
+
+# cloud-init hosts — list of { hostname, ip, inventory, playbook }
+pxe_hosts: []

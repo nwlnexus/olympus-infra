@@ -1,0 +1,8 @@
+---
+- ansible.builtin.import_tasks: install.yml
+  when: pxe_state == 'present'
+
+- ansible.builtin.import_tasks: configure.yml
+  when: pxe_state == 'present'
+
+- ansible.builtin.import_tasks: service.yml

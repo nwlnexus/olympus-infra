@@ -1,0 +1,43 @@
+---
+# One-time / maintenance: distribute the 1Password Connect access token to every
+# host at /etc/olympus/op-connect-token (0600). Read ONCE on the controller to
+# avoid a rate-limit burst, then copied to all hosts.
+#
+#   ansible-playbook -i inventory/management-hub.yml playbooks/place-connect-token.yml
+#   ansible-playbook -i inventory/compute-hub.yml    playbooks/place-connect-token.yml
+#   ansible-playbook -i inventory/styx.yml           playbooks/place-connect-token.yml
+#
+# Reads op://Dev/olympus-connect-access-token/credential. The control node needs an
+# interactive op session or OP_SERVICE_ACCOUNT_TOKEN in env for this one bootstrap
+# read (we use the old path once to seed the new Connect path).
+
+- name: Seed Connect token (read once on controller)
+  hosts: localhost
+  gather_facts: false
+  run_once: true
+  tasks:
+    - name: Read Connect access token from 1Password
+      ansible.builtin.command: op read "op://Dev/olympus-connect-access-token/credential"
+      register: _op_connect_token
+      changed_when: false
+      no_log: true
+
+- name: Distribute Connect token to hosts
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Ensure /etc/olympus exists
+      ansible.builtin.file:
+        path: /etc/olympus
+        state: directory
+        mode: "0755"
+
+    - name: Write Connect token
+      ansible.builtin.copy:
+        dest: /etc/olympus/op-connect-token
+        content: "{{ hostvars['localhost']._op_connect_token.stdout }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true

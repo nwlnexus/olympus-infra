@@ -51,8 +51,11 @@ cloudflared_op_connect_enabled: false
 # 1Password Connect API endpoint reachable from the Ansible controller. The
 # tunnel item is also visible to ESO via the in-cluster ClusterSecretStore.
 cloudflared_op_connect_host: ""
-# 1Password Connect API token (from vault).
+# 1Password Connect API token. Empty by default — role falls back to reading
+# `cloudflared_op_connect_token_file` (same file used by ESO bootstrap), so in
+# ansible-pull mode no vault/op CLI auth is needed.
 cloudflared_op_connect_token: ""
+cloudflared_op_connect_token_file: "{{ onepassword_connect_token_file | default('/etc/olympus/onepassword-connect-token') }}"
 # 1Password vault name (must match the vault ESO is configured to read).
 cloudflared_op_vault: "Dev"
 # 1Password item title. Default: <tunnel_name>-cloudflared.

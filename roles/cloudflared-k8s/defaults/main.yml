@@ -6,9 +6,23 @@ cloudflared_kubeconfig_path: "{{ k3s_kubeconfig_path | default('/etc/rancher/k3s
 cloudflared_kubectl_context: ""       # empty = use default context in kubeconfig
 cloudflared_kubectl_become: "{{ ansible_facts['system'] != 'Darwin' }}"  # false on macOS
 cloudflared_tunnel_name: ""
-# Prefer cloudflared_api_token var (from vault); fall back to file on host
+# --- Cloudflare API token resolution (priority order) ---
+# 1. cloudflared_api_token  — explicit override (e.g. push run / CI)
+# 2. op service-account     — read at runtime from 1Password (NOTHING written
+#                             to disk; uses the SA token every host already has)
+# 3. cloudflared_token_file — legacy on-disk fallback (usually absent)
 cloudflared_api_token: ""
 cloudflared_token_file: "/etc/olympus/cloudflare-api-token"
+# op service-account runtime read. The SA token file is present on every host
+# (it's what ansible-pull itself uses); op binary is resolved at runtime since
+# its path differs across distros/macOS.
+cloudflared_op_service_account_token_file: "/etc/olympus/op-service-account-token"
+cloudflared_op_candidate_bins:
+  - /usr/bin/op
+  - /usr/local/bin/op
+  - /opt/homebrew/bin/op
+# op:// reference to the Cloudflare API token (Bearer; needs Tunnel + DNS edit).
+cloudflared_cf_token_op_ref: "op://Dev/cloudflare-account/api_token"
 cloudflared_account_id: ""   # set in group_vars
 cloudflared_image: "cloudflare/cloudflared:latest"
 cloudflared_replicas: 1
@@ -42,23 +56,19 @@ cloudflared_ingress_hostname: ""
 # ai-hub:         https://traefik.traefik:443
 cloudflared_catch_all_service: "https://traefik.kube-system:443"
 
-# --- GitOps mode (push credentials to 1Password Connect instead of k8s Secret) ---
+# --- GitOps mode (push credentials to 1Password instead of k8s Secret) ---
 # Use with cloudflared_bootstrap_only: true to fully delegate steady-state to
-# Flux + ExternalSecret. Role still owns tunnel existence + ingress CNAME, but
-# the K8s Secret is created by ESO from the 1Password item below instead of by
-# Ansible directly. Pair with cloudflared_skip_k8s_secret: true.
-cloudflared_op_connect_enabled: false
-# 1Password Connect API endpoint reachable from the Ansible controller. The
-# tunnel item is also visible to ESO via the in-cluster ClusterSecretStore.
-cloudflared_op_connect_host: ""
-# 1Password Connect API token. Empty by default — role falls back to reading
-# `cloudflared_op_connect_token_file` (same file used by ESO bootstrap), so in
-# ansible-pull mode no vault/op CLI auth is needed.
-cloudflared_op_connect_token: ""
-cloudflared_op_connect_token_file: "{{ onepassword_connect_token_file | default('/etc/olympus/onepassword-connect-token') }}"
+# Flux + ExternalSecret. The role still owns tunnel existence + ingress CNAME,
+# but the K8s Secret is created by ESO from the 1Password item below instead of
+# by Ansible. Pairs with cloudflared_skip_k8s_secret (defaults to the same).
+#
+# The tunnel item is written via the `op` CLI using the same service-account
+# token used for the CF token read — no Connect token (or any extra secret)
+# on disk.
+cloudflared_op_enabled: false
 # 1Password vault name (must match the vault ESO is configured to read).
 cloudflared_op_vault: "Dev"
 # 1Password item title. Default: <tunnel_name>-cloudflared.
 cloudflared_op_item_title: "{{ cloudflared_tunnel_name }}-cloudflared"
 # When true, skip Ansible's direct K8s Secret write (ESO handles it).
-cloudflared_skip_k8s_secret: "{{ cloudflared_op_connect_enabled }}"
+cloudflared_skip_k8s_secret: "{{ cloudflared_op_enabled }}"

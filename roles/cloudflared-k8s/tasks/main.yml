@@ -10,8 +10,21 @@
       kubectl
       {%- if cloudflared_kubectl_context != '' %} --context {{ cloudflared_kubectl_context }}{% endif %}
 
-# --- TOKEN RESOLUTION: prefer vault var, fall back to file on host ---
-- name: Use vault-provided API token
+# --- Resolve op binary (path differs: /usr/bin/op on k3s, /opt/homebrew on macOS) ---
+- name: Resolve op binary path
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ cloudflared_op_candidate_bins }}"
+  register: _op_bin_stat
+  when: _cf_k8s_state == 'present'
+
+- name: Set op binary fact
+  ansible.builtin.set_fact:
+    _op_bin: "{{ (_op_bin_stat.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists') | map(attribute='item') | list | first) | default('') }}"
+  when: _cf_k8s_state == 'present'
+
+# --- CF API TOKEN RESOLUTION (priority: var → op service-account → file) ---
+- name: Use explicitly-provided API token
   ansible.builtin.set_fact:
     cf_token: "{{ cloudflared_api_token }}"
   no_log: true
@@ -19,6 +32,58 @@
     - _cf_k8s_state == 'present'
     - cloudflared_api_token != ""
 
+# --- op service-account: read CF token at runtime, nothing written to disk ---
+- name: Check op service-account token file
+  ansible.builtin.stat:
+    path: "{{ cloudflared_op_service_account_token_file }}"
+  register: _cf_sa_file
+  become: "{{ cloudflared_kubectl_become }}"
+  when:
+    - _cf_k8s_state == 'present'
+    - cf_token is not defined
+    - _op_bin != ""
+
+- name: Read op service-account token
+  ansible.builtin.slurp:
+    src: "{{ cloudflared_op_service_account_token_file }}"
+  register: _cf_sa_slurp
+  become: "{{ cloudflared_kubectl_become }}"
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cf_token is not defined
+    - _cf_sa_file.stat.exists | default(false)
+    - _cf_sa_file.stat.size | default(0) > 0
+
+- name: Read Cloudflare API token from 1Password via op service-account
+  ansible.builtin.command:
+    argv:
+      - "{{ _op_bin }}"
+      - read
+      - "{{ cloudflared_cf_token_op_ref }}"
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ _cf_sa_slurp.content | b64decode | trim }}"
+  register: _cf_op_read
+  changed_when: false
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cf_token is not defined
+    - _cf_sa_slurp is defined
+    - _cf_sa_slurp.content is defined
+
+- name: Set CF token fact from op read
+  ansible.builtin.set_fact:
+    cf_token: "{{ _cf_op_read.stdout | trim }}"
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cf_token is not defined
+    - _cf_op_read is defined
+    - not (_cf_op_read is skipped)
+    - (_cf_op_read.stdout | default('')) | trim != ""
+
+# --- legacy on-disk fallback (usually absent) ---
 - name: Check Cloudflare API token file (fallback)
   ansible.builtin.stat:
     path: "{{ cloudflared_token_file }}"
@@ -26,23 +91,19 @@
   become: "{{ cloudflared_kubectl_become }}"
   when:
     - _cf_k8s_state == 'present'
-    - cloudflared_api_token == ""
-
-- name: Skip if token unavailable
-  ansible.builtin.meta: end_play
-  when:
-    - _cf_k8s_state == 'present'
-    - cloudflared_api_token == ""
-    - not cf_token_file.stat.exists or cf_token_file.stat.size == 0
+    - cf_token is not defined
 
 - name: Read Cloudflare API token from file (fallback)
   ansible.builtin.slurp:
     src: "{{ cloudflared_token_file }}"
   register: cf_token_raw
+  become: "{{ cloudflared_kubectl_become }}"
   no_log: true
   when:
     - _cf_k8s_state == 'present'
-    - cloudflared_api_token == ""
+    - cf_token is not defined
+    - cf_token_file.stat.exists | default(false)
+    - cf_token_file.stat.size | default(0) > 0
 
 - name: Set token fact from file (fallback)
   ansible.builtin.set_fact:
@@ -50,7 +111,15 @@
   no_log: true
   when:
     - _cf_k8s_state == 'present'
-    - cloudflared_api_token == ""
+    - cf_token is not defined
+    - cf_token_raw is defined
+    - cf_token_raw.content is defined
+
+- name: Skip if no Cloudflare API token could be resolved
+  ansible.builtin.meta: end_play
+  when:
+    - _cf_k8s_state == 'present'
+    - cf_token is not defined
 
 # Look up by name FIRST (CF returns 400 on duplicate-name POST, not 409, so
 # create-then-recover-with-GET fails the play. Reverse the order.)
@@ -157,15 +226,14 @@
     - _cf_k8s_state == 'present'
     - not (cloudflared_skip_k8s_secret | bool)
 
-# GitOps mode: push credentials to 1Password Connect so ESO can hydrate the
-# in-cluster Secret. Skip when not enabled.
-- name: Push tunnel credentials to 1Password Connect
+# GitOps mode: push credentials to 1Password (via op CLI + service-account)
+# so ESO can hydrate the in-cluster Secret. Skip when not enabled.
+- name: Push tunnel credentials to 1Password
   ansible.builtin.include_tasks: onepassword.yml
   when:
     - _cf_k8s_state == 'present'
-    - cloudflared_op_connect_enabled | bool
-    - cloudflared_op_connect_host != ""
-    - cloudflared_op_connect_token != ""
+    - cloudflared_op_enabled | bool
+    - _op_bin != ""
 
 # --- BOOTSTRAP-ONLY: configure catch-all rule + ingress CNAME, then stop ---
 # When cloudflared_bootstrap_only: true, ArgoCD deploys the Deployment.

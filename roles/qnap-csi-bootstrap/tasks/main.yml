@@ -15,37 +15,32 @@
   become: true
   when: qnap_csi_state == "present"
 
-# Read creds via the community.general.onepassword lookup (controller-side),
-# matching the repo convention (see baseline/tasks/olympus-inventory.yml).
-# The SA token is slurped from the host file and passed explicitly to the
-# lookup via service_account_token= — no `op` CLI needed on the target, no
-# OP_SERVICE_ACCOUNT_TOKEN env dependency, and reads run once on the controller.
-- name: Read OP service account token
-  ansible.builtin.slurp:
-    src: /etc/olympus/op-service-account-token
-  register: _qnap_op_token_file
-  become: true
-  no_log: true
-  when: qnap_csi_state == "present"
-
+# Read creds via the community.general.onepassword lookup (controller-side).
+# Auth comes from the environment: the pull/push wrapper exports OP_CONNECT_HOST
+# + OP_CONNECT_TOKEN (Connect, off the rate-limited public API), or falls back to
+# OP_SERVICE_ACCOUNT_TOKEN. We pass no explicit token arg so `op` picks up whichever
+# auth env is present (it rejects more than one being set at once).
 - name: Load QNAP management + iSCSI CHAP credentials from 1Password
   ansible.builtin.set_fact:
     _qnap_mgmt_user: "{{ lookup('community.general.onepassword',
-        qnap_csi_op_item, field='username', vault=qnap_csi_op_vault,
-        service_account_token=_qnap_op_token_file.content | b64decode | trim) }}"
+        qnap_csi_op_item, field='username', vault=qnap_csi_op_vault) }}"
     _qnap_mgmt_pass: "{{ lookup('community.general.onepassword',
-        qnap_csi_op_item, field='password', vault=qnap_csi_op_vault,
-        service_account_token=_qnap_op_token_file.content | b64decode | trim) }}"
+        qnap_csi_op_item, field='password', vault=qnap_csi_op_vault) }}"
     _qnap_storage_addr: "{{ lookup('community.general.onepassword',
-        qnap_iscsi_op_item, field='storageAddress', vault=qnap_iscsi_op_vault,
-        service_account_token=_qnap_op_token_file.content | b64decode | trim) }}"
+        qnap_iscsi_op_item, field='storageAddress', vault=qnap_iscsi_op_vault) }}"
     _chap_user: "{{ lookup('community.general.onepassword',
-        qnap_iscsi_op_item, field='chapInitiatorUsername', vault=qnap_iscsi_op_vault,
-        service_account_token=_qnap_op_token_file.content | b64decode | trim) }}"
+        qnap_iscsi_op_item, field='chapInitiatorUsername', vault=qnap_iscsi_op_vault) }}"
     _chap_pass: "{{ lookup('community.general.onepassword',
-        qnap_iscsi_op_item, field='chapInitiatorPassword', vault=qnap_iscsi_op_vault,
-        service_account_token=_qnap_op_token_file.content | b64decode | trim) }}"
+        qnap_iscsi_op_item, field='chapInitiatorPassword', vault=qnap_iscsi_op_vault) }}"
   no_log: true
+  when: qnap_csi_state == "present"
+
+- name: Relax chart kubeVersion ceiling (chart caps at 1.32; k3s may be newer)
+  ansible.builtin.replace:
+    path: "{{ qnap_csi_install_dir }}/Helm/trident/Chart.yaml"
+    regexp: '^kubeVersion:.*$'
+    replace: 'kubeVersion: ">= 1.24.0"'
+  become: true
   when: qnap_csi_state == "present"
 
 - name: Check if QNAP CSI Plugin is already installed (sentinel)

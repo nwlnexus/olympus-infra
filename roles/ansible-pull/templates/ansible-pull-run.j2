@@ -35,13 +35,24 @@ OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/etc/olympus/op-service-account-token}"
 
 mkdir -p "$CACHE_DIR" "$PENDING_DIR" "$RUNTIME_DIR" "$LOG_DIR"
 
-# ── 1. 1Password token ────────────────────────────────────────────────────────
+# ── 1. 1Password auth ─────────────────────────────────────────────────────────
+# Prefer 1Password Connect (off the rate-limited public API); fall back to the
+# service-account token. The `op` CLI rejects having BOTH set, so export exactly
+# one. The SA token file is left in place untouched — write-ops that Connect
+# can't serve override the env at the task level to use it.
 if [[ ! -f "$OP_TOKEN_FILE" ]]; then
   echo "$(date -u '+%Y-%m-%d %H:%M:%S') [WARN] OP token not found at $OP_TOKEN_FILE — skipping run until bootstrap places it" | tee -a "$LOG_FILE" >&2
   exit 0
 fi
-export OP_SERVICE_ACCOUNT_TOKEN
-OP_SERVICE_ACCOUNT_TOKEN=$(cat "$OP_TOKEN_FILE")
+OP_CONNECT_TOKEN_FILE="${WRAPPER_OP_CONNECT_TOKEN_FILE:-/etc/olympus/op-connect-token}"
+if [[ -s "$OP_CONNECT_TOKEN_FILE" ]]; then
+  export OP_CONNECT_HOST="{{ onepassword_connect_url | default('https://connect.nwlnexus.net') }}"
+  export OP_CONNECT_TOKEN
+  OP_CONNECT_TOKEN=$(cat "$OP_CONNECT_TOKEN_FILE")
+else
+  export OP_SERVICE_ACCOUNT_TOKEN
+  OP_SERVICE_ACCOUNT_TOKEN=$(cat "$OP_TOKEN_FILE")
+fi
 
 # ── 2. Hermes disabled? ───────────────────────────────────────────────────────
 HERMES_ENABLED=1

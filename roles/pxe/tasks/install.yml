@@ -1,9 +1,10 @@
 ---
-- name: Install tftpd-hpa and nginx
+- name: Install tftpd-hpa, nginx, and dnsmasq
   ansible.builtin.apt:
     name:
       - tftpd-hpa
       - nginx
+      - dnsmasq
     state: present
     update_cache: true
   become: true
@@ -22,11 +23,12 @@
     - "{{ pxe_http_root }}/cloud-init"
     - "{{ pxe_http_root }}/menu"
     - "{{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}"
+    - "{{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}-arm64"
 
 - name: Fetch iPXE EFI binary
   ansible.builtin.get_url:
     url: "{{ pxe_ipxe_efi_url }}"
-    dest: "{{ pxe_tftp_root }}/ipxe.efi"
+    dest: "{{ pxe_tftp_root }}/ipxe-x86_64.efi"
     mode: "0644"
   become: true
 
@@ -36,6 +38,30 @@
     dest: "{{ pxe_tftp_root }}/undionly.kpxe"
     mode: "0644"
   become: true
+
+- name: Fetch iPXE arm64 EFI binary
+  ansible.builtin.get_url:
+    url: "{{ pxe_ipxe_arm64_efi_url }}"
+    dest: "{{ pxe_tftp_root }}/ipxe-arm64.efi"
+    mode: "0644"
+  become: true
+
+- name: Check for Ubuntu {{ pxe_ubuntu_codename }} arm64 netboot kernel
+  ansible.builtin.stat:
+    path: "{{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}-arm64/vmlinuz"
+  register: _pxe_ubuntu_arm64_vmlinuz
+
+- name: Warn if Ubuntu arm64 netboot assets are missing
+  ansible.builtin.debug:
+    msg: >-
+      Ubuntu {{ pxe_ubuntu_codename }} arm64 netboot assets not found at
+      {{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}-arm64/.
+      Mount the Ubuntu 24.04 arm64 ISO and copy casper/vmlinuz and casper/initrd:
+        mount -o loop ubuntu-24.04-live-server-arm64.iso /mnt
+        cp /mnt/casper/vmlinuz {{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}-arm64/vmlinuz
+        cp /mnt/casper/initrd  {{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}-arm64/initrd
+        umount /mnt
+  when: not _pxe_ubuntu_arm64_vmlinuz.stat.exists
 
 - name: Check for Ubuntu {{ pxe_ubuntu_codename }} netboot vmlinuz
   ansible.builtin.stat:

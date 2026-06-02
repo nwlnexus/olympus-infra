@@ -5,4 +5,7 @@
 - ansible.builtin.import_tasks: configure.yml
   when: pxe_state == 'present'
 
+- ansible.builtin.import_tasks: pi.yml
+  when: pxe_state == 'present' and pxe_pi_enabled | bool
+
 - ansible.builtin.import_tasks: service.yml

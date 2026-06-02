@@ -34,3 +34,21 @@ pxe_ubuntu_iso_url: "https://releases.ubuntu.com/24.04/ubuntu-24.04-live-server-
 
 # cloud-init hosts — list of { hostname, ip, inventory, playbook }
 pxe_hosts: []
+
+# dnsmasq proxyDHCP — arch-aware PXE boot filename selection
+pxe_proxy_dhcp_enabled: true
+pxe_dhcp_network: "192.168.253.0/24"   # LAN CIDR dnsmasq listens on for PXE
+
+# arm64 iPXE EFI binary
+pxe_ipxe_arm64_efi_url: "https://boot.ipxe.org/arm64-efi/ipxe.efi"
+
+# Raspberry Pi 4 / CM4 native PXE (wildcard — works for any Pi 4 without per-serial config)
+pxe_pi_enabled: false   # set to true in host_vars to activate
+pxe_pi_firmware_base_url: "https://github.com/raspberrypi/firmware/raw/master/boot"
+pxe_pi_firmware_files:
+  - start4.elf
+  - fixup4.dat
+  - start4cd.elf
+  - fixup4cd.dat
+  - bcm2711-rpi-4-b.dtb
+  - bcm2711-rpi-cm4.dtb

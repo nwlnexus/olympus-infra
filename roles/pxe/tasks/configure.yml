@@ -75,3 +75,62 @@
   become: true
   loop: "{{ pxe_hosts }}"
   when: pxe_hosts | length > 0
+
+- name: Create default cloud-init directory for Pi hosts
+  ansible.builtin.file:
+    path: "{{ pxe_http_root }}/cloud-init/default"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when: pxe_pi_enabled | bool
+
+- name: Render default cloud-init user-data for Pi
+  ansible.builtin.template:
+    src: cloud-init/user-data.j2
+    dest: "{{ pxe_http_root }}/cloud-init/default/user-data"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  vars:
+    item:
+      hostname: "pi-default"
+      inventory: "inventory/styx.yml"
+      playbook: "playbooks/pull/styx.yml"
+  when: pxe_pi_enabled | bool
+
+- name: Render default cloud-init meta-data for Pi
+  ansible.builtin.template:
+    src: cloud-init/meta-data.j2
+    dest: "{{ pxe_http_root }}/cloud-init/default/meta-data"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  vars:
+    item:
+      hostname: "pi-default"
+  when: pxe_pi_enabled | bool
+
+- name: Write empty vendor-data for default Pi cloud-init
+  ansible.builtin.copy:
+    content: ""
+    dest: "{{ pxe_http_root }}/cloud-init/default/vendor-data"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when: pxe_pi_enabled | bool
+
+- name: Configure dnsmasq proxyDHCP for PXE
+  ansible.builtin.template:
+    src: dnsmasq-pxe.conf.j2
+    dest: /etc/dnsmasq.d/pxe.conf
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Restart dnsmasq
+  when: pxe_proxy_dhcp_enabled | bool

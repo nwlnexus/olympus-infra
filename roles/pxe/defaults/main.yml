@@ -28,5 +28,9 @@ pxe_ansible_pull_branch: "main"
 pxe_ansible_ssh_pubkey: "{{ vault_pxe_ansible_ssh_pubkey }}"
 pxe_default_ansible_password_hash: "{{ vault_pxe_default_ansible_password_hash }}"
 
+# Ubuntu 24.04 live-server ISO URL (for manual download + casper/ extraction)
+# mount -o loop ubuntu-24.04-live-server-amd64.iso /mnt && cp /mnt/casper/{vmlinuz,initrd} <http_root>/ubuntu/noble/
+pxe_ubuntu_iso_url: "https://releases.ubuntu.com/24.04/ubuntu-24.04-live-server-amd64.iso"
+
 # cloud-init hosts — list of { hostname, ip, inventory, playbook }
 pxe_hosts: []

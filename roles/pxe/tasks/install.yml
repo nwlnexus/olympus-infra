@@ -36,3 +36,19 @@
     dest: "{{ pxe_tftp_root }}/undionly.kpxe"
     mode: "0644"
   become: true
+
+- name: Check for Ubuntu {{ pxe_ubuntu_codename }} netboot vmlinuz
+  ansible.builtin.stat:
+    path: "{{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}/vmlinuz"
+  register: _pxe_ubuntu_vmlinuz
+
+- name: Warn if Ubuntu {{ pxe_ubuntu_codename }} netboot assets are missing
+  ansible.builtin.debug:
+    msg: |
+      Ubuntu 24.04 netboot assets not found at {{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}/vmlinuz.
+      Manually copy casper/vmlinuz and casper/initrd from the Ubuntu 24.04 live-server ISO:
+        sudo mount -o loop ubuntu-24.04-live-server-amd64.iso /mnt
+        sudo cp /mnt/casper/vmlinuz {{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}/vmlinuz
+        sudo cp /mnt/casper/initrd {{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}/initrd
+        sudo umount /mnt
+  when: not _pxe_ubuntu_vmlinuz.stat.exists

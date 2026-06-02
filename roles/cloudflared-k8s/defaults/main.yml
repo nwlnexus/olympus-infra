@@ -41,3 +41,21 @@ cloudflared_ingress_hostname: ""
 # management-hub: https://traefik.kube-system:443
 # ai-hub:         https://traefik.traefik:443
 cloudflared_catch_all_service: "https://traefik.kube-system:443"
+
+# --- GitOps mode (push credentials to 1Password Connect instead of k8s Secret) ---
+# Use with cloudflared_bootstrap_only: true to fully delegate steady-state to
+# Flux + ExternalSecret. Role still owns tunnel existence + ingress CNAME, but
+# the K8s Secret is created by ESO from the 1Password item below instead of by
+# Ansible directly. Pair with cloudflared_skip_k8s_secret: true.
+cloudflared_op_connect_enabled: false
+# 1Password Connect API endpoint reachable from the Ansible controller. The
+# tunnel item is also visible to ESO via the in-cluster ClusterSecretStore.
+cloudflared_op_connect_host: ""
+# 1Password Connect API token (from vault).
+cloudflared_op_connect_token: ""
+# 1Password vault name (must match the vault ESO is configured to read).
+cloudflared_op_vault: "Dev"
+# 1Password item title. Default: <tunnel_name>-cloudflared.
+cloudflared_op_item_title: "{{ cloudflared_tunnel_name }}-cloudflared"
+# When true, skip Ansible's direct K8s Secret write (ESO handles it).
+cloudflared_skip_k8s_secret: "{{ cloudflared_op_connect_enabled }}"

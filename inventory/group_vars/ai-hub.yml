@@ -22,6 +22,26 @@ tailscale_hostname: ai-hub
 # Cloudflared binary present (tunnel deleted — binary kept for potential future use)
 cloudflared_state: present
 
+# --- cloudflared-k8s (GitOps mode: tunnel + DNS managed by Ansible, K8s
+# Secret + Deployment + ingress config managed by Flux via ExternalSecret) ---
+cloudflared_k8s_state: present
+cloudflared_tunnel_name: ai-hub
+cloudflared_account_id: "1b15dcdab99d4e8d5babb3dc6b1adaec"
+cloudflared_domain: "nwlnexus.net"
+cloudflared_bootstrap_only: true
+cloudflared_ingress_hostname: "ing.ai-hub.nwlnexus.net"
+cloudflared_catch_all_service: "https://traefik.traefik.svc.cluster.local:443"
+cloudflared_kubeconfig_path: /var/ansible/.kube/config
+
+# GitOps mode — push creds to 1Password instead of writing the K8s Secret.
+# The repo's ExternalSecret (clusters/ai-hub/cloudflared/externalsecret.yaml)
+# hydrates `cloudflared-tunnel-credentials` from this 1Password item.
+cloudflared_op_connect_enabled: true
+cloudflared_op_connect_host: "https://connect.nwlnexus.net"
+cloudflared_op_connect_token: "{{ lookup('community.general.onepassword', '1password-connect-token', field='token', vault='Dev') }}"
+cloudflared_op_vault: "Dev"
+cloudflared_op_item_title: "ai-hub-cloudflared"
+
 # 1Password Connect — k3s via Colima; kubeconfig at non-standard path
 onepassword_connect_state: present
 onepassword_connect_kubeconfig: /var/ansible/.kube/config

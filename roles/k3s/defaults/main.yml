@@ -9,6 +9,8 @@ k3s_kubeconfig_users:
 # Extra SANs added to the k3s API server TLS cert.
 # Allows remote kubectl access via FQDN without TLS errors (k3s CA already in kubeconfig).
 k3s_tls_san: []
+# List of bundled k3s components to disable (e.g. [traefik], [traefik, servicelb]).
+k3s_disable: []
 # If set, patches kubeconfig server URL from 127.0.0.1:6443 to this FQDN.
 # Should match one of the entries in k3s_tls_san.
 k3s_external_server: ""

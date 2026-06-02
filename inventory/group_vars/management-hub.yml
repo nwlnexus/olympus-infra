@@ -6,6 +6,7 @@ ansible_user: ansible
 # k3s
 k3s_state: present
 k3s_role: server
+k3s_disable: [traefik]
 
 # Tailscale
 tailscale_state: present

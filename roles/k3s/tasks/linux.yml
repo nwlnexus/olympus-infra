@@ -130,6 +130,12 @@
       {% for san in _k3s_full_tls_san | default(k3s_tls_san | default([])) %}
         - "{{ san }}"
       {% endfor %}
+      {% if k3s_disable | default([]) | length > 0 %}
+      disable:
+      {% for item in k3s_disable %}
+        - "{{ item }}"
+      {% endfor %}
+      {% endif %}
     owner: root
     group: root
     mode: "0600"
@@ -211,6 +217,12 @@
       tls-san:
       {% for san in k3s_tls_san %}
         - "{{ san }}"
+      {% endfor %}
+      {% endif %}
+      {% if k3s_disable | default([]) | length > 0 %}
+      disable:
+      {% for item in k3s_disable %}
+        - "{{ item }}"
       {% endfor %}
       {% endif %}
   when:

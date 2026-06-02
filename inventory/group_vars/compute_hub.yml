@@ -10,6 +10,7 @@ ansible_user: ansible
 # --- k3s HA cluster ---
 k3s_state: present
 k3s_ha: true
+k3s_disable: [traefik]
 k3s_version: "v1.32.4+k3s1"
 # Virtual IP for kube-vip ARP leader election (within mgmt-hub advertised subnet)
 k3s_vip: "192.168.253.2"

@@ -72,6 +72,14 @@
         - eso_bootstrap_state is defined
         - k3s_primary | default(true)
 
+    # QNAP CSI (Trident) — cluster-wide storage provisioner. Install once per
+    # cluster on the primary. Idempotent (sentinel /opt/qnap-csi-plugin/.installed).
+    - role: qnap-csi-bootstrap
+      tags: [qnap-csi-bootstrap]
+      when:
+        - qnap_csi_state is defined
+        - k3s_primary | default(false)
+
     - role: tailscale
       tags: [tailscale]
       when: tailscale_state is defined

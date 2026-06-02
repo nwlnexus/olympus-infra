@@ -52,7 +52,22 @@
     - _cf_k8s_state == 'present'
     - cloudflared_api_token == ""
 
-- name: Create tunnel via Cloudflare API
+# Look up by name FIRST (CF returns 400 on duplicate-name POST, not 409, so
+# create-then-recover-with-GET fails the play. Reverse the order.)
+- name: Look up existing tunnel by name
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflared_account_id }}/cfd_tunnel?name={{ cloudflared_tunnel_name }}&is_deleted=false"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+    status_code: 200
+  register: tunnel_list
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_tunnel_name != ""
+
+- name: Create tunnel via Cloudflare API (only if missing)
   ansible.builtin.uri:
     url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflared_account_id }}/cfd_tunnel"
     method: POST
@@ -63,16 +78,17 @@
     body:
       name: "{{ cloudflared_tunnel_name }}"
       config_src: cloudflare
-    status_code: [200, 409]   # 409 = already exists
+    status_code: 200
   register: tunnel_create
   no_log: true
   when:
     - _cf_k8s_state == 'present'
     - cloudflared_tunnel_name != ""
+    - (tunnel_list.json.result | default([]) | length) == 0
 
-- name: Get existing tunnel if already created
+- name: Re-list tunnel after creation
   ansible.builtin.uri:
-    url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflared_account_id }}/cfd_tunnel?name={{ cloudflared_tunnel_name }}"
+    url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflared_account_id }}/cfd_tunnel?name={{ cloudflared_tunnel_name }}&is_deleted=false"
     method: GET
     headers:
       Authorization: "Bearer {{ cf_token }}"
@@ -82,6 +98,8 @@
   when:
     - _cf_k8s_state == 'present'
     - cloudflared_tunnel_name != ""
+    - tunnel_create is defined
+    - tunnel_create is not skipped
 
 - name: Fail if tunnel not found
   ansible.builtin.fail:

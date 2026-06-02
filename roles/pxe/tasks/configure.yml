@@ -75,3 +75,14 @@
   become: true
   loop: "{{ pxe_hosts }}"
   when: pxe_hosts | length > 0
+
+- name: Configure dnsmasq proxyDHCP for PXE
+  ansible.builtin.template:
+    src: dnsmasq-pxe.conf.j2
+    dest: /etc/dnsmasq.d/pxe.conf
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Restart dnsmasq
+  when: pxe_proxy_dhcp_enabled | bool

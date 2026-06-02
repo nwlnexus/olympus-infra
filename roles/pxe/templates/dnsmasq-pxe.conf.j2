@@ -1,0 +1,21 @@
+# dnsmasq — PXE proxyDHCP for {{ pxe_dhcp_network }}
+# Acts alongside UniFi DHCP; injects arch-aware PXE boot options only.
+# Does NOT allocate IP addresses.
+
+port=0                          # Disable DNS (PXE proxy only)
+log-dhcp
+
+# ProxyDHCP: respond to PXE requests on this subnet without allocating IPs
+# pxe_dhcp_network must be in CIDR notation (e.g. 192.168.253.0/24)
+dhcp-range={{ pxe_dhcp_network }},proxy
+
+# Architecture detection via DHCP option 93 (client system architecture)
+dhcp-match=set:bios,option:client-arch,0
+dhcp-match=set:efi-x86_64,option:client-arch,7
+dhcp-match=set:efi-x86_64,option:client-arch,9
+dhcp-match=set:efi-arm64,option:client-arch,11
+
+# Boot filename per architecture — TFTP served by tftpd-hpa on this host
+dhcp-boot=tag:bios,undionly.kpxe,,{{ pxe_server_ip }}
+dhcp-boot=tag:efi-x86_64,ipxe-x86_64.efi,,{{ pxe_server_ip }}
+dhcp-boot=tag:efi-arm64,ipxe-arm64.efi,,{{ pxe_server_ip }}

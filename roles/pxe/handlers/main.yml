@@ -10,3 +10,9 @@
     name: nginx
     state: reloaded
   become: true
+
+- name: Restart dnsmasq
+  ansible.builtin.service:
+    name: dnsmasq
+    state: restarted
+  become: true

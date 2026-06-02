@@ -34,3 +34,7 @@ pxe_ubuntu_iso_url: "https://releases.ubuntu.com/24.04/ubuntu-24.04-live-server-
 
 # cloud-init hosts — list of { hostname, ip, inventory, playbook }
 pxe_hosts: []
+
+# dnsmasq proxyDHCP — arch-aware PXE boot filename selection
+pxe_proxy_dhcp_enabled: true
+pxe_dhcp_network: "192.168.253.0/24"   # LAN CIDR dnsmasq listens on for PXE

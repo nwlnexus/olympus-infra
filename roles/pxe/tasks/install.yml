@@ -1,9 +1,10 @@
 ---
-- name: Install tftpd-hpa and nginx
+- name: Install tftpd-hpa, nginx, and dnsmasq
   ansible.builtin.apt:
     name:
       - tftpd-hpa
       - nginx
+      - dnsmasq
     state: present
     update_cache: true
   become: true
@@ -26,7 +27,7 @@
 - name: Fetch iPXE EFI binary
   ansible.builtin.get_url:
     url: "{{ pxe_ipxe_efi_url }}"
-    dest: "{{ pxe_tftp_root }}/ipxe.efi"
+    dest: "{{ pxe_tftp_root }}/ipxe-x86_64.efi"
     mode: "0644"
   become: true
 

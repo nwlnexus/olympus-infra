@@ -12,3 +12,11 @@
     enabled: true
     state: started
   become: true
+
+- name: Enable and start dnsmasq
+  ansible.builtin.service:
+    name: dnsmasq
+    enabled: true
+    state: started
+  become: true
+  when: pxe_proxy_dhcp_enabled | bool

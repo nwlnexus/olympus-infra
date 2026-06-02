@@ -1,0 +1,56 @@
+---
+# One-shot playbook: write k3s_disable to /etc/rancher/k3s/config.yaml and restart k3s.
+#
+# Adds the `disable:` block to the existing config using blockinfile (idempotent).
+# Run against one cluster at a time during the maintenance window:
+#
+#   # management-hub (single node):
+#   ansible-playbook -i inventory/management-hub.yml playbooks/k3s-disable-traefik.yml
+#
+#   # compute-hub (HA — run against primary first, then secondaries):
+#   ansible-playbook -i inventory/compute-hub.yml playbooks/k3s-disable-traefik.yml \
+#     --limit onode-030c31   # primary node hostname — check inventory/host_vars/
+#
+# After running: verify with `kubectl get deploy -n kube-system traefik` returning NotFound,
+# then trigger Flux reconcile from olympus-gitops.
+
+- name: Disable k3s-bundled Traefik
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure k3s config directory exists
+      ansible.builtin.file:
+        path: /etc/rancher/k3s
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Add disable traefik block to k3s config
+      ansible.builtin.blockinfile:
+        path: /etc/rancher/k3s/config.yaml
+        insertafter: EOF
+        block: |
+          disable:
+            - traefik
+        marker: "# {mark} ANSIBLE MANAGED - k3s_disable"
+      register: _k3s_config_changed
+
+    - name: Restart k3s if config changed
+      ansible.builtin.systemd:
+        name: k3s
+        state: restarted
+      when: _k3s_config_changed.changed
+
+    - name: Wait for k3s API to be available after restart
+      ansible.builtin.command: kubectl get nodes
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: _k3s_ready
+      until: _k3s_ready.rc == 0
+      retries: 18
+      delay: 10
+      changed_when: false
+      when: _k3s_config_changed.changed

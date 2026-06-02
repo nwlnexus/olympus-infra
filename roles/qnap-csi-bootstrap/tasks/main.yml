@@ -15,43 +15,36 @@
   become: true
   when: qnap_csi_state == "present"
 
-- name: Fetch QNAP management credentials from 1Password
-  ansible.builtin.command: "op read 'op://{{ qnap_csi_op_vault }}/{{ qnap_csi_op_item }}/{{ item.field }}'"
-  register: _qnap_creds_raw
-  loop:
-    - { field: username, var: _qnap_mgmt_user }
-    - { field: password, var: _qnap_mgmt_pass }
+# Read creds via the community.general.onepassword lookup (controller-side),
+# matching the repo convention (see baseline/tasks/olympus-inventory.yml).
+# The SA token is slurped from the host file and passed explicitly to the
+# lookup via service_account_token= — no `op` CLI needed on the target, no
+# OP_SERVICE_ACCOUNT_TOKEN env dependency, and reads run once on the controller.
+- name: Read OP service account token
+  ansible.builtin.slurp:
+    src: /etc/olympus/op-service-account-token
+  register: _qnap_op_token_file
+  become: true
   no_log: true
-  changed_when: false
-  environment:
-    OP_SERVICE_ACCOUNT_TOKEN: "{{ lookup('env', 'OP_SERVICE_ACCOUNT_TOKEN') }}"
   when: qnap_csi_state == "present"
 
-- name: Set QNAP management credential facts
+- name: Load QNAP management + iSCSI CHAP credentials from 1Password
   ansible.builtin.set_fact:
-    _qnap_mgmt_user: "{{ _qnap_creds_raw.results[0].stdout | trim }}"
-    _qnap_mgmt_pass: "{{ _qnap_creds_raw.results[1].stdout | trim }}"
-  no_log: true
-  when: qnap_csi_state == "present"
-
-- name: Fetch iSCSI CHAP credentials from 1Password
-  ansible.builtin.command: "op read 'op://{{ qnap_iscsi_op_vault }}/{{ qnap_iscsi_op_item }}/{{ item.field }}'"
-  register: _iscsi_creds_raw
-  loop:
-    - { field: storageAddress }
-    - { field: chapInitiatorUsername }
-    - { field: chapInitiatorPassword }
-  no_log: true
-  changed_when: false
-  environment:
-    OP_SERVICE_ACCOUNT_TOKEN: "{{ lookup('env', 'OP_SERVICE_ACCOUNT_TOKEN') }}"
-  when: qnap_csi_state == "present"
-
-- name: Set iSCSI credential facts
-  ansible.builtin.set_fact:
-    _qnap_storage_addr: "{{ _iscsi_creds_raw.results[0].stdout | trim }}"
-    _chap_user: "{{ _iscsi_creds_raw.results[1].stdout | trim }}"
-    _chap_pass: "{{ _iscsi_creds_raw.results[2].stdout | trim }}"
+    _qnap_mgmt_user: "{{ lookup('community.general.onepassword',
+        qnap_csi_op_item, field='username', vault=qnap_csi_op_vault,
+        service_account_token=_qnap_op_token_file.content | b64decode | trim) }}"
+    _qnap_mgmt_pass: "{{ lookup('community.general.onepassword',
+        qnap_csi_op_item, field='password', vault=qnap_csi_op_vault,
+        service_account_token=_qnap_op_token_file.content | b64decode | trim) }}"
+    _qnap_storage_addr: "{{ lookup('community.general.onepassword',
+        qnap_iscsi_op_item, field='storageAddress', vault=qnap_iscsi_op_vault,
+        service_account_token=_qnap_op_token_file.content | b64decode | trim) }}"
+    _chap_user: "{{ lookup('community.general.onepassword',
+        qnap_iscsi_op_item, field='chapInitiatorUsername', vault=qnap_iscsi_op_vault,
+        service_account_token=_qnap_op_token_file.content | b64decode | trim) }}"
+    _chap_pass: "{{ lookup('community.general.onepassword',
+        qnap_iscsi_op_item, field='chapInitiatorPassword', vault=qnap_iscsi_op_vault,
+        service_account_token=_qnap_op_token_file.content | b64decode | trim) }}"
   no_log: true
   when: qnap_csi_state == "present"
 

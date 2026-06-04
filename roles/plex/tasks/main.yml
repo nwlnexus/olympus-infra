@@ -61,14 +61,54 @@
   become: true
   when: plex_state == "present"
 
-- name: Allow Plex port from Tailscale range (UFW)
+- name: Check if UFW is active
+  ansible.builtin.command: ufw status
+  register: _plex_ufw_status
+  changed_when: false
+  failed_when: false
+  become: true
+  when: plex_state == "present"
+
+- name: Allow Plex 32400 from Tailscale range (UFW)
   community.general.ufw:
     rule: allow
     src: "{{ plex_ufw_tailscale_src }}"
     port: '32400'
     proto: tcp
   become: true
-  when: plex_state == "present"
+  when:
+    - plex_state == "present"
+    - "'Status: active' in _plex_ufw_status.stdout"
+
+- name: Allow Plex 32400 from LAN (UFW)
+  community.general.ufw:
+    rule: allow
+    src: "{{ plex_ufw_lan_src }}"
+    port: '32400'
+    proto: tcp
+  become: true
+  when:
+    - plex_state == "present"
+    - "'Status: active' in _plex_ufw_status.stdout"
+
+- name: Allow Plex local discovery ports from LAN (UFW)
+  community.general.ufw:
+    rule: allow
+    src: "{{ plex_ufw_lan_src }}"
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+  become: true
+  loop:
+    - { port: '32469', proto: tcp }   # DLNA TCP
+    - { port: '1900',  proto: udp }   # DLNA SSDP
+    - { port: '32410', proto: udp }   # GDM network discovery
+    - { port: '32412', proto: udp }   # GDM
+    - { port: '32413', proto: udp }   # GDM
+    - { port: '32414', proto: udp }   # GDM
+  when:
+    - plex_state == "present"
+    - plex_ufw_local_discovery | bool
+    - "'Status: active' in _plex_ufw_status.stdout"
 
 - name: Enable and start plexmediaserver
   ansible.builtin.systemd:

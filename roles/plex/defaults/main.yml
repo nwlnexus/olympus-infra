@@ -2,4 +2,11 @@
 plex_state: present
 plex_transcoding_dir: /tmp/plexmedia
 plex_tmp_dir: /tmp/plextmp
-plex_ufw_tailscale_src: "100.64.0.0/10"
+
+# Firewall
+plex_ufw_tailscale_src: "100.64.0.0/10"   # Tailscale CGNAT range
+plex_ufw_lan_src: "192.168.253.0/24"       # LAN CIDR for local clients (TVs, phones, etc.)
+
+# Set true to open local discovery ports (GDM + DLNA) to LAN
+# Required for Plex clients to find the server without manual IP entry
+plex_ufw_local_discovery: true

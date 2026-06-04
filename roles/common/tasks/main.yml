@@ -49,7 +49,7 @@
     - common_timezone
 
 - name: Configure locale
-  locale_gen:
+  community.general.locale_gen:
     name: "{{ common_locale }}"
     state: present
   when: ansible_facts['os_family'] == 'Debian'
@@ -134,7 +134,7 @@
     - network
 
 - name: Configure system limits
-  pam_limits:
+  community.general.pam_limits:
     domain: "*"
     limit_type: "{{ item.type }}"
     limit_item: "{{ item.item }}"
@@ -150,7 +150,7 @@
     - performance
 
 - name: Configure kernel parameters
-  sysctl:
+  ansible.posix.sysctl:
     name: "{{ item.name }}"
     value: "{{ item.value }}"
     state: present
@@ -185,7 +185,7 @@
     - security
 
 - name: Configure SSH authorized keys for admin users
-  authorized_key:
+  ansible.posix.authorized_key:
     user: "{{ item.0.name }}"
     key: "{{ item.1 }}"
     state: present

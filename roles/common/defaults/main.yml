@@ -93,7 +93,6 @@ common_packages:
 common_admin_users:
   - name: ansible
     groups:
-      - wheel
       - sudo
     shell: /bin/bash
     create_home: true

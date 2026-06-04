@@ -65,10 +65,17 @@
     - system
     - locale
 
-- name: Configure keyboard layout
+- name: Configure keyboard layout (non-Debian)
   ansible.builtin.command: localectl set-keymap {{ common_keyboard_layout }}
-  when: common_keyboard_layout is defined
+  when: common_keyboard_layout is defined and ansible_facts['os_family'] != 'Debian'
   changed_when: false
+
+- name: Configure keyboard layout (Debian/Ubuntu)
+  ansible.builtin.template:
+    src: keyboard.j2
+    dest: /etc/default/keyboard
+    mode: "0644"
+  when: common_keyboard_layout is defined and ansible_facts['os_family'] == 'Debian'
   tags:
     - system
     - keyboard

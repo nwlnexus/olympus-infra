@@ -16,6 +16,13 @@
   become: true
   loop: "{{ pxe_pi_firmware_files }}"
 
+- name: Symlink netboot.xyz-arm64.efi into Pi TFTP subdirectory
+  ansible.builtin.file:
+    src: "{{ pxe_tftp_root }}/netboot.xyz-arm64.efi"
+    dest: "{{ pxe_tftp_root }}/pi/netboot.xyz-arm64.efi"
+    state: link
+  become: true
+
 - name: Render Pi config.txt
   ansible.builtin.template:
     src: pi/config.txt.j2
@@ -25,27 +32,6 @@
     mode: "0644"
   become: true
 
-- name: Render Pi cmdline.txt
-  ansible.builtin.template:
-    src: pi/cmdline.txt.j2
-    dest: "{{ pxe_tftp_root }}/pi/cmdline.txt"
-    owner: root
-    group: root
-    mode: "0644"
-  become: true
-
-- name: Check for Ubuntu arm64 kernel for Pi
-  ansible.builtin.stat:
-    path: "{{ pxe_tftp_root }}/pi/vmlinuz"
-  register: _pxe_pi_vmlinuz
-
-- name: Warn if Pi Ubuntu arm64 kernel is missing
-  ansible.builtin.debug:
-    msg: >-
-      Pi Ubuntu arm64 kernel not found at {{ pxe_tftp_root }}/pi/vmlinuz.
-      Mount the Ubuntu 24.04 arm64 ISO and copy the kernel and initrd:
-        mount -o loop ubuntu-24.04-live-server-arm64.iso /mnt
-        cp /mnt/casper/vmlinuz {{ pxe_tftp_root }}/pi/vmlinuz
-        cp /mnt/casper/initrd  {{ pxe_tftp_root }}/pi/initrd
-        umount /mnt
-  when: not _pxe_pi_vmlinuz.stat.exists
+# Note: cmdline.txt is not needed — netboot.xyz-arm64.efi is an EFI application,
+# not a Linux kernel. It bootstraps iPXE which then loads our custom menu via
+# the two-stage dnsmasq chainload (option 175 detection).

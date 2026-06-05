@@ -8,9 +8,11 @@ pxe_tftp_root: /srv/pxe/tftp
 pxe_http_root: /srv/pxe/http
 pxe_http_port: 8080
 
-# iPXE binary source (upstream)
-pxe_ipxe_efi_url: "https://boot.ipxe.org/ipxe.efi"
-pxe_ipxe_kpxe_url: "https://boot.ipxe.org/undionly.kpxe"
+# netboot.xyz — modern iPXE bootstrap binaries (replaces bare ipxe apt package)
+# Two-stage boot: TFTP serves netboot.xyz binary → iPXE re-DHCPs with option 175
+# → dnsmasq detects iPXE and serves our custom menu URL instead
+pxe_netbootxyz_version: "3.0.2"
+pxe_netbootxyz_base_url: "https://github.com/netbootxyz/netboot.xyz/releases/download/{{ pxe_netbootxyz_version }}"
 
 # styx LAN IP — used in iPXE menu scripts as the HTTP server
 pxe_server_ip: "192.168.253.6"
@@ -39,10 +41,8 @@ pxe_hosts: []
 pxe_proxy_dhcp_enabled: true
 pxe_dhcp_network: "192.168.253.0/24"   # LAN CIDR dnsmasq listens on for PXE
 
-# arm64 iPXE EFI binary
-pxe_ipxe_arm64_efi_url: "https://boot.ipxe.org/arm64-efi/ipxe.efi"
-
 # Raspberry Pi 4 / CM4 native PXE (wildcard — works for any Pi 4 without per-serial config)
+# Pi firmware loads netboot.xyz-arm64.efi as kernel → enters iPXE two-stage flow
 pxe_pi_enabled: false   # set to true in host_vars to activate
 pxe_pi_firmware_base_url: "https://github.com/raspberrypi/firmware/raw/master/boot"
 pxe_pi_firmware_files:

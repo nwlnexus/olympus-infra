@@ -1,11 +1,10 @@
 ---
-- name: Install tftpd-hpa, nginx, dnsmasq, and ipxe
+- name: Install tftpd-hpa, nginx, and dnsmasq
   ansible.builtin.apt:
     name:
       - tftpd-hpa
       - nginx
       - dnsmasq
-      - ipxe
     state: present
     update_cache: true
   become: true
@@ -26,27 +25,24 @@
     - "{{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}"
     - "{{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}-arm64"
 
-- name: Copy iPXE x86_64 EFI binary from apt package
-  ansible.builtin.copy:
-    src: /usr/lib/ipxe/ipxe.efi
-    dest: "{{ pxe_tftp_root }}/ipxe-x86_64.efi"
-    remote_src: true
+- name: Download netboot.xyz x86_64 UEFI binary
+  ansible.builtin.get_url:
+    url: "{{ pxe_netbootxyz_base_url }}/netboot.xyz.efi"
+    dest: "{{ pxe_tftp_root }}/netboot.xyz.efi"
     mode: "0644"
   become: true
 
-- name: Copy iPXE legacy BIOS binary from apt package
-  ansible.builtin.copy:
-    src: /usr/lib/ipxe/undionly.kpxe
-    dest: "{{ pxe_tftp_root }}/undionly.kpxe"
-    remote_src: true
+- name: Download netboot.xyz legacy BIOS binary
+  ansible.builtin.get_url:
+    url: "{{ pxe_netbootxyz_base_url }}/netboot.xyz-undionly.kpxe"
+    dest: "{{ pxe_tftp_root }}/netboot.xyz-undionly.kpxe"
     mode: "0644"
   become: true
 
-- name: Copy iPXE arm64 EFI binary from apt package
-  ansible.builtin.copy:
-    src: /usr/lib/ipxe/arm64-efi/snp.efi
-    dest: "{{ pxe_tftp_root }}/ipxe-arm64.efi"
-    remote_src: true
+- name: Download netboot.xyz ARM64 EFI binary (UEFI hosts + Raspberry Pi)
+  ansible.builtin.get_url:
+    url: "{{ pxe_netbootxyz_base_url }}/netboot.xyz-arm64.efi"
+    dest: "{{ pxe_tftp_root }}/netboot.xyz-arm64.efi"
     mode: "0644"
   become: true
 

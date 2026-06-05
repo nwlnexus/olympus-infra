@@ -1,10 +1,11 @@
 ---
-- name: Install tftpd-hpa, nginx, and dnsmasq
+- name: Install tftpd-hpa, nginx, dnsmasq, and ipxe
   ansible.builtin.apt:
     name:
       - tftpd-hpa
       - nginx
       - dnsmasq
+      - ipxe
     state: present
     update_cache: true
   become: true
@@ -25,24 +26,27 @@
     - "{{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}"
     - "{{ pxe_http_root }}/ubuntu/{{ pxe_ubuntu_codename }}-arm64"
 
-- name: Fetch iPXE EFI binary
-  ansible.builtin.get_url:
-    url: "{{ pxe_ipxe_efi_url }}"
+- name: Copy iPXE x86_64 EFI binary from apt package
+  ansible.builtin.copy:
+    src: /usr/lib/ipxe/ipxe.efi
     dest: "{{ pxe_tftp_root }}/ipxe-x86_64.efi"
+    remote_src: true
     mode: "0644"
   become: true
 
-- name: Fetch iPXE legacy BIOS binary
-  ansible.builtin.get_url:
-    url: "{{ pxe_ipxe_kpxe_url }}"
+- name: Copy iPXE legacy BIOS binary from apt package
+  ansible.builtin.copy:
+    src: /usr/lib/ipxe/undionly.kpxe
     dest: "{{ pxe_tftp_root }}/undionly.kpxe"
+    remote_src: true
     mode: "0644"
   become: true
 
-- name: Fetch iPXE arm64 EFI binary
-  ansible.builtin.get_url:
-    url: "{{ pxe_ipxe_arm64_efi_url }}"
+- name: Copy iPXE arm64 EFI binary from apt package
+  ansible.builtin.copy:
+    src: /usr/lib/ipxe/arm64-efi/snp.efi
     dest: "{{ pxe_tftp_root }}/ipxe-arm64.efi"
+    remote_src: true
     mode: "0644"
   become: true
 

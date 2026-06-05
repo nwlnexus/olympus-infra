@@ -30,9 +30,13 @@ pxe_ansible_pull_branch: "main"
 pxe_ansible_ssh_pubkey: "{{ vault_pxe_ansible_ssh_pubkey }}"
 pxe_default_ansible_password_hash: "{{ vault_pxe_default_ansible_password_hash }}"
 
-# Ubuntu 24.04 live-server ISO URL (for manual download + casper/ extraction)
-# mount -o loop ubuntu-24.04-live-server-amd64.iso /mnt && cp /mnt/casper/{vmlinuz,initrd} <http_root>/ubuntu/noble/
-pxe_ubuntu_iso_url: "https://releases.ubuntu.com/24.04/ubuntu-24.04-live-server-amd64.iso"
+# Ubuntu 24.04 live-server ISO URLs — downloaded to pxe_ubuntu_iso_dir on the iSCSI mount,
+# loop-mounted, and casper/vmlinuz + casper/initrd extracted automatically.
+# ISOs are kept after extraction so re-runs are idempotent (stat checks vmlinuz presence).
+pxe_ubuntu_iso_dir: "{{ pxe_http_root }}/iso"
+pxe_ubuntu_amd64_iso_url: "https://releases.ubuntu.com/noble/ubuntu-24.04-live-server-amd64.iso"
+pxe_ubuntu_arm64_iso_url: "https://cdimage.ubuntu.com/releases/noble/release/ubuntu-24.04-live-server-arm64.iso"
+pxe_ubuntu_iso_mount_dir: "/tmp/pxe-iso-mount"
 
 # cloud-init hosts — list of { hostname, ip, inventory, playbook }
 pxe_hosts: []

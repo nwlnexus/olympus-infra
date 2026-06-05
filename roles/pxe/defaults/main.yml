@@ -34,8 +34,9 @@ pxe_default_ansible_password_hash: "{{ vault_pxe_default_ansible_password_hash }
 # loop-mounted, and casper/vmlinuz + casper/initrd extracted automatically.
 # ISOs are kept after extraction so re-runs are idempotent (stat checks vmlinuz presence).
 pxe_ubuntu_iso_dir: "{{ pxe_http_root }}/iso"
-pxe_ubuntu_amd64_iso_url: "https://releases.ubuntu.com/noble/ubuntu-24.04-live-server-amd64.iso"
-pxe_ubuntu_arm64_iso_url: "https://cdimage.ubuntu.com/releases/noble/release/ubuntu-24.04-live-server-arm64.iso"
+pxe_ubuntu_point_release: "24.04.3"
+pxe_ubuntu_amd64_iso_url: "https://releases.ubuntu.com/{{ pxe_ubuntu_point_release }}/ubuntu-{{ pxe_ubuntu_point_release }}-live-server-amd64.iso"
+pxe_ubuntu_arm64_iso_url: "https://cdimage.ubuntu.com/releases/{{ pxe_ubuntu_point_release }}/release/ubuntu-{{ pxe_ubuntu_point_release }}-live-server-arm64.iso"
 pxe_ubuntu_iso_mount_dir: "/tmp/pxe-iso-mount"
 
 # cloud-init hosts — list of { hostname, ip, inventory, playbook }

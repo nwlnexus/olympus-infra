@@ -7,6 +7,15 @@
   args:
     creates: /usr/share/keyrings/1password-archive-keyring.gpg
 
+- name: Remove conflicting 1Password apt source (legacy .asc signed-by)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/1password.list
+    - /etc/apt/sources.list.d/1password-cli.list
+  become: true
+
 - name: Add 1Password apt repository (arm64)
   ansible.builtin.apt_repository:
     repo: "deb [arch=arm64 signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/arm64 stable main"

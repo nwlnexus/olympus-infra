@@ -1,0 +1,12 @@
+---
+# Renders the k3s config.yaml content to stdout WITHOUT installing anything.
+# Run with --check --diff to inspect; safe (ansible_connection: local, check mode).
+- name: Render k3s config
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Include k3s role (check-mode render only)
+      ansible.builtin.include_role:
+        name: k3s
+      vars:
+        _op_env: {}

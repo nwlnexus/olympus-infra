@@ -1,0 +1,6 @@
+---
+k3s_state: present
+k3s_agent: true
+k3s_server_url: "https://192.168.253.2:6443"
+k3s_node_labels: ["olympus.io/role=management-hub"]
+k3s_node_taints: ["olympus.io/role=management-hub:NoSchedule"]

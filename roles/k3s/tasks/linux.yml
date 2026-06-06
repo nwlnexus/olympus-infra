@@ -146,6 +146,18 @@
         - "{{ item }}"
       {% endfor %}
       {% endif %}
+      {% if k3s_node_labels | default([]) | length > 0 %}
+      node-label:
+      {% for l in k3s_node_labels %}
+        - "{{ l }}"
+      {% endfor %}
+      {% endif %}
+      {% if k3s_node_taints | default([]) | length > 0 %}
+      node-taint:
+      {% for t in k3s_node_taints %}
+        - "{{ t }}"
+      {% endfor %}
+      {% endif %}
     owner: root
     group: root
     mode: "0600"
@@ -179,6 +191,18 @@
       server: "https://{{ k3s_vip }}:6443"
       token: "{{ _k3s_token }}"
       write-kubeconfig-mode: "0644"
+      {% if k3s_node_labels | default([]) | length > 0 %}
+      node-label:
+      {% for l in k3s_node_labels %}
+        - "{{ l }}"
+      {% endfor %}
+      {% endif %}
+      {% if k3s_node_taints | default([]) | length > 0 %}
+      node-taint:
+      {% for t in k3s_node_taints %}
+        - "{{ t }}"
+      {% endfor %}
+      {% endif %}
     owner: root
     group: root
     mode: "0600"
@@ -449,6 +473,7 @@
     remote_src: true
   loop: "{{ k3s_kubeconfig_users }}"
   become: true
+  failed_when: false
   when:
     - _k3s_state == 'present'
     - not (k3s_agent | default(false))

@@ -36,6 +36,7 @@
   when:
     - _k3s_state == 'present'
     - k3s_ha | default(false)
+    - not (k3s_agent | default(false))
 
 - name: Write kube-vip static pod manifest (HA)
   ansible.builtin.template:
@@ -48,6 +49,7 @@
   when:
     - _k3s_state == 'present'
     - k3s_ha | default(false)
+    - not (k3s_agent | default(false))
 
 # ── HA: Read cluster token from 1Password ────────────────────────────────────
 
@@ -146,6 +148,7 @@
     - k3s_ha | default(false)
     - k3s_primary | default(false)
     - k3s_init | default(false)
+    - not (k3s_agent | default(false))
 
 # ── HA Secondary: wait for primary API, then write config ────────────────────
 
@@ -159,6 +162,7 @@
     - _k3s_state == 'present'
     - k3s_ha | default(false)
     - not (k3s_primary | default(false))
+    - not (k3s_agent | default(false))
 
 - name: Write k3s config — secondary (join via VIP, HA)
   ansible.builtin.copy:
@@ -176,6 +180,7 @@
     - _k3s_state == 'present'
     - k3s_ha | default(false)
     - not (k3s_primary | default(false))
+    - not (k3s_agent | default(false))
 
 # ── Install k3s (HA path — reads from config.yaml) ───────────────────────────
 
@@ -194,6 +199,7 @@
   when:
     - _k3s_state == 'present'
     - k3s_ha | default(false)
+    - not (k3s_agent | default(false))
 
 # ── Install k3s (single-node legacy path) ─────────────────────────────────────
 
@@ -208,6 +214,7 @@
   when:
     - _k3s_state == 'present'
     - not (k3s_ha | default(false))
+    - not (k3s_agent | default(false))
 
 - name: Build k3s config content
   ansible.builtin.set_fact:
@@ -228,6 +235,7 @@
   when:
     - _k3s_state == 'present'
     - not (k3s_ha | default(false))
+    - not (k3s_agent | default(false))
 
 - name: Write k3s config
   ansible.builtin.copy:
@@ -241,6 +249,7 @@
   when:
     - _k3s_state == 'present'
     - not (k3s_ha | default(false))
+    - not (k3s_agent | default(false))
 
 - name: Remove k3s disable skip files (allow bundled components to redeploy)
   ansible.builtin.file:
@@ -252,7 +261,9 @@
     - /var/lib/rancher/k3s/server/manifests/servicelb.yaml.skip
   become: true
   notify: Restart k3s
-  when: _k3s_state == 'present'
+  when:
+    - _k3s_state == 'present'
+    - not (k3s_agent | default(false))
 
 - name: Remove orphaned Traefik CRDs from prior user-managed install
   ansible.builtin.shell: |
@@ -270,7 +281,9 @@
   environment:
     KUBECONFIG: "{{ k3s_kubeconfig_path }}"
   changed_when: false
-  when: _k3s_state == 'present'
+  when:
+    - _k3s_state == 'present'
+    - not (k3s_agent | default(false))
   ignore_errors: true
 
 - name: Flush handlers (apply k3s config restart if needed)

@@ -411,6 +411,20 @@
     - _k3s_state == 'present'
     - not (k3s_agent | default(false))
 
+- name: Verify local-path StorageClass is present (server)
+  ansible.builtin.command: kubectl get storageclass local-path
+  environment:
+    KUBECONFIG: "{{ k3s_kubeconfig_path }}"
+  become: true
+  changed_when: false
+  register: _localpath_sc
+  failed_when:
+    - _localpath_sc.rc != 0
+    - not ansible_check_mode
+  when:
+    - _k3s_state == 'present'
+    - not (k3s_agent | default(false))
+
 - name: Ensure kubeconfig is world-readable
   ansible.builtin.file:
     path: "{{ k3s_kubeconfig_path }}"

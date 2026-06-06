@@ -7,4 +7,5 @@ all:
       ansible_connection: local
   vars:
     ansible_python_interpreter: /usr/bin/python3
+    ansible_become: false
     _op_env: {}

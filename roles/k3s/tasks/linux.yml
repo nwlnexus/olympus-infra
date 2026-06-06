@@ -5,6 +5,12 @@
 # HA mode is enabled when k3s_ha: true in host/group vars.
 # ============================================================================
 
+# ── Shared: initialise token fact to empty (overridden by 1Password task) ────
+# Prevents 'undefined variable' errors in check/render mode when op read is skipped.
+- name: Initialise k3s token fact (default empty)
+  ansible.builtin.set_fact:
+    _k3s_token: ""
+
 # ── Shared: kube-vip static pod (HA only) ────────────────────────────────────
 # Written BEFORE k3s installs so kube-vip starts with k3s on first boot.
 # Must run on ALL server nodes (kube-vip does leader election across them).
@@ -71,7 +77,9 @@
   when:
     - _k3s_state == 'present'
     - (k3s_ha | default(false)) or (k3s_agent | default(false))
-    - _k3s_token_raw is defined and _k3s_token_raw.rc == 0
+    - _k3s_token_raw is defined
+    - _k3s_token_raw is not skipped
+    - _k3s_token_raw.rc == 0
 
 # ── HA: Dynamically resolve Tailscale FQDN for TLS SANs ─────────────────────
 # Adds the local node's Tailscale IP and MagicDNS FQDN to the SAN list.
@@ -182,6 +190,50 @@
     - not (k3s_primary | default(false))
     - not (k3s_agent | default(false))
 
+# ── Agent (worker) join ──────────────────────────────────────────────────────
+- name: Write k3s config — agent (join via server URL)
+  ansible.builtin.copy:
+    dest: /etc/rancher/k3s/config.yaml
+    content: |
+      server: "{{ k3s_server_url }}"
+      token: "{{ _k3s_token }}"
+      {% if k3s_node_labels | default([]) | length > 0 %}
+      node-label:
+      {% for l in k3s_node_labels %}
+        - "{{ l }}"
+      {% endfor %}
+      {% endif %}
+      {% if k3s_node_taints | default([]) | length > 0 %}
+      node-taint:
+      {% for t in k3s_node_taints %}
+        - "{{ t }}"
+      {% endfor %}
+      {% endif %}
+    owner: root
+    group: root
+    mode: "0600"
+  become: true
+  no_log: true
+  when:
+    - _k3s_state == 'present'
+    - k3s_agent | default(false)
+
+- name: Install k3s (agent)
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -sfL https://get.k3s.io | \
+      {% if k3s_version | default('latest') != 'latest' %}INSTALL_K3S_VERSION="{{ k3s_version }}" {% endif %}
+      INSTALL_K3S_EXEC="agent" \
+      sh -
+  args:
+    creates: /usr/local/bin/k3s
+    executable: /bin/bash
+  become: true
+  no_log: true
+  when:
+    - _k3s_state == 'present'
+    - k3s_agent | default(false)
+
 # ── Install k3s (HA path — reads from config.yaml) ───────────────────────────
 
 - name: Install k3s (HA — primary and secondary, reads config.yaml)
@@ -289,13 +341,26 @@
 - name: Flush handlers (apply k3s config restart if needed)
   ansible.builtin.meta: flush_handlers
 
-- name: Enable and start k3s service
+- name: Enable and start k3s server
   ansible.builtin.systemd:
     name: k3s
     enabled: true
     state: started
   become: true
-  when: _k3s_state == 'present'
+  when:
+    - _k3s_state == 'present'
+    - not (k3s_agent | default(false))
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Enable and start k3s-agent
+  ansible.builtin.systemd:
+    name: k3s-agent
+    enabled: true
+    state: started
+  become: true
+  when:
+    - _k3s_state == 'present'
+    - k3s_agent | default(false)
   ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Wait for k3s API to be available
@@ -308,14 +373,18 @@
   delay: 10
   become: true
   changed_when: false
-  when: _k3s_state == 'present'
+  when:
+    - _k3s_state == 'present'
+    - not (k3s_agent | default(false))
 
 - name: Ensure kubeconfig is world-readable
   ansible.builtin.file:
     path: "{{ k3s_kubeconfig_path }}"
     mode: "0644"
   become: true
-  when: _k3s_state == 'present'
+  when:
+    - _k3s_state == 'present'
+    - not (k3s_agent | default(false))
   failed_when: false
 
 # ── CNI bridge fixer (workaround for k3s embedded CNI skipping bridge attach) ─
@@ -348,6 +417,7 @@
     daemon_reload: true
   become: true
   when: _k3s_state == 'present'
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Stop and remove k3s-cni-bridge-fixer (state=absent)
   ansible.builtin.systemd:
@@ -366,7 +436,9 @@
     mode: '0700'
   loop: "{{ k3s_kubeconfig_users }}"
   become: true
-  when: _k3s_state == 'present'
+  when:
+    - _k3s_state == 'present'
+    - not (k3s_agent | default(false))
 
 - name: Copy kubeconfig for admin users
   ansible.builtin.copy:
@@ -377,7 +449,9 @@
     remote_src: true
   loop: "{{ k3s_kubeconfig_users }}"
   become: true
-  when: _k3s_state == 'present'
+  when:
+    - _k3s_state == 'present'
+    - not (k3s_agent | default(false))
 
 # Add FQDNs to /etc/hosts so the host can self-resolve its own names.
 # Needed when the local router doesn't forward nwlnexus.net queries to Cloudflare.
@@ -405,81 +479,22 @@
   failed_when: false
   when:
     - _k3s_state == 'present'
+    - not (k3s_agent | default(false))
     - k3s_external_server | default('') != ''
 
 # ── HA Primary: export kubeconfig to 1Password ───────────────────────────────
 # Enables management-hub Headlamp to display compute-hub as a secondary cluster.
 # Patches the server URL to the VIP before uploading.
+# NOTE: extracted to kubeconfig-export.yml — the heredoc in the shell task trips
+# Ansible's YAML loader when embedded in a block in this file.
 
 - name: Export kubeconfig to 1Password (HA primary)
+  ansible.builtin.include_tasks: kubeconfig-export.yml
   when:
     - _k3s_state == 'present'
     - k3s_ha | default(false)
     - k3s_primary | default(false)
     - k3s_kubeconfig_op_item | default('') != ''
-  block:
-    - name: Read system kubeconfig (primary)
-      ansible.builtin.slurp:
-        src: "{{ k3s_kubeconfig_path }}"
-      register: _k3s_kubeconfig_b64
-      become: true
-
-    - name: Patch kubeconfig server URL and rename context/cluster/user  # noqa: parser-error
-      ansible.builtin.shell: |
-        python3 - << 'PYEOF'
-        import yaml, sys
-        kc = yaml.safe_load("""{{ _k3s_kubeconfig_b64.content | b64decode | replace('"', '\\"') }}""")
-        ctx  = "{{ k3s_context_name | default(k3s_kubeconfig_op_item) }}"
-        kc['clusters'][0]['cluster']['server'] = "https://{{ k3s_external_server | default(k3s_vip) }}:6443"
-        kc['clusters'][0]['name']                     = ctx + '-cluster'
-        kc['contexts'][0]['context']['cluster']       = ctx + '-cluster'
-        kc['contexts'][0]['context']['user']          = ctx + '-user'
-        kc['contexts'][0]['name']                     = ctx
-        kc['current-context']                         = ctx
-        kc['users'][0]['name']                        = ctx + '-user'
-        print(yaml.dump(kc, default_flow_style=False))
-        PYEOF
-      register: _k3s_kubeconfig_patched_raw
-      become: true
-      changed_when: false
-
-    - name: Set patched kubeconfig fact
-      ansible.builtin.set_fact:
-        _k3s_kubeconfig_patched: "{{ _k3s_kubeconfig_patched_raw.stdout }}"
-
-    - name: Check if kubeconfig document already exists in 1Password
-      ansible.builtin.command: >
-        op document get "{{ k3s_kubeconfig_op_item }}"
-        --vault "{{ k3s_kubeconfig_op_vault }}"
-      register: _k3s_op_doc_check
-      failed_when: false
-      changed_when: false
-      environment:
-        OP_SERVICE_ACCOUNT_TOKEN: "{{ lookup('file', '/opt/ansible-pull/.op-service-account-token') }}"
-
-    - name: Create kubeconfig document in 1Password (first time)
-      ansible.builtin.shell: |
-        echo '{{ _k3s_kubeconfig_patched }}' | \
-          op document create - \
-          --title "{{ k3s_kubeconfig_op_item }}" \
-          --vault "{{ k3s_kubeconfig_op_vault }}" \
-          --file-name "{{ k3s_kubeconfig_op_item }}.yaml"
-      no_log: true
-      changed_when: true
-      environment:
-        OP_SERVICE_ACCOUNT_TOKEN: "{{ lookup('file', '/opt/ansible-pull/.op-service-account-token') }}"
-      when: _k3s_op_doc_check.rc != 0
-
-    - name: Update kubeconfig document in 1Password (subsequent runs)
-      ansible.builtin.shell: |
-        echo '{{ _k3s_kubeconfig_patched }}' | \
-          op document edit "{{ k3s_kubeconfig_op_item }}" - \
-          --vault "{{ k3s_kubeconfig_op_vault }}"
-      no_log: true
-      changed_when: true
-      environment:
-        OP_SERVICE_ACCOUNT_TOKEN: "{{ lookup('file', '/opt/ansible-pull/.op-service-account-token') }}"
-      when: _k3s_op_doc_check.rc == 0
 
 # --- ABSENT ---
 - name: Run k3s uninstall script

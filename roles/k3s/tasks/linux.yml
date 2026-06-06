@@ -61,7 +61,7 @@
   environment: "{{ _op_env }}"
   when:
     - _k3s_state == 'present'
-    - k3s_ha | default(false)
+    - (k3s_ha | default(false)) or (k3s_agent | default(false))
     - k3s_token_op_ref | default('') != ''
 
 - name: Set k3s token fact (HA)
@@ -70,7 +70,7 @@
   no_log: true
   when:
     - _k3s_state == 'present'
-    - k3s_ha | default(false)
+    - (k3s_ha | default(false)) or (k3s_agent | default(false))
     - _k3s_token_raw is defined and _k3s_token_raw.rc == 0
 
 # ── HA: Dynamically resolve Tailscale FQDN for TLS SANs ─────────────────────

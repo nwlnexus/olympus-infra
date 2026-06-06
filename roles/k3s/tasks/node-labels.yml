@@ -1,0 +1,28 @@
+---
+- name: Reconcile node labels (kubectl, server)
+  ansible.builtin.command: >
+    kubectl label node {{ ansible_facts['hostname'] }}
+    {{ item }} --overwrite
+  loop: "{{ k3s_node_labels | default([]) }}"
+  environment:
+    KUBECONFIG: "{{ k3s_kubeconfig_path }}"
+  become: true
+  register: _label_res
+  changed_when: "'labeled' in (_label_res.stdout | default(''))"
+  failed_when:
+    - _label_res.rc != 0
+    - "'not labeled' not in (_label_res.stderr | default('') + _label_res.stdout | default(''))"
+
+- name: Reconcile node taints (kubectl, server)
+  ansible.builtin.command: >
+    kubectl taint node {{ ansible_facts['hostname'] }}
+    {{ item }} --overwrite
+  loop: "{{ k3s_node_taints | default([]) }}"
+  environment:
+    KUBECONFIG: "{{ k3s_kubeconfig_path }}"
+  become: true
+  register: _taint_res
+  changed_when: "'tainted' in (_taint_res.stdout | default(''))"
+  failed_when:
+    - _taint_res.rc != 0
+    - "'already has' not in (_taint_res.stderr | default(''))"

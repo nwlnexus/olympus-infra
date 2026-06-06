@@ -36,6 +36,28 @@ k3s_token_op_ref: ""
 k3s_kubeconfig_op_item: ""
 k3s_kubeconfig_op_vault: "Dev"
 
+# --- Agent (worker) mode ---
+# Set k3s_agent: true to join this node as a worker (agent) instead of a server.
+# Mutually exclusive with k3s_ha/k3s_primary (a node is a server XOR an agent).
+k3s_agent: false
+# API endpoint an agent joins — the control-plane VIP or a server URL.
+# e.g. https://192.168.253.2:6443
+k3s_server_url: ""
+
+# --- Node labels & taints ---
+# Applied via config.yaml at first registration, and reconciled via kubectl on
+# servers (config.yaml node-label/taint only takes effect at initial join).
+# Labels: "key=value". Taints: "key=value:Effect" (Effect = NoSchedule|NoExecute|PreferNoSchedule).
+k3s_node_labels: []
+k3s_node_taints: []
+
+# --- etcd snapshots (HA servers) → off-box dir (e.g. a QNAP NFS mount) ---
+# Empty => k3s default (local /var/lib/rancher/k3s/server/db/snapshots).
+# The dir must already be mounted (handled by the nfs-mounts role / a prereq).
+k3s_etcd_snapshot_dir: ""
+k3s_etcd_snapshot_schedule: "0 */6 * * *"
+k3s_etcd_snapshot_retention: 20
+
 # Colima (macOS) settings — used by darwin.yml in Phase 3
 colima_profile: olympus
 colima_runtime: k3s

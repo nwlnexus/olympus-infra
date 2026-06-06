@@ -158,6 +158,11 @@
         - "{{ t }}"
       {% endfor %}
       {% endif %}
+      {% if k3s_etcd_snapshot_dir | default('') != '' %}
+      etcd-snapshot-dir: "{{ k3s_etcd_snapshot_dir }}"
+      etcd-snapshot-schedule-cron: "{{ k3s_etcd_snapshot_schedule }}"
+      etcd-snapshot-retention: {{ k3s_etcd_snapshot_retention }}
+      {% endif %}
     owner: root
     group: root
     mode: "0600"
@@ -202,6 +207,11 @@
       {% for t in k3s_node_taints %}
         - "{{ t }}"
       {% endfor %}
+      {% endif %}
+      {% if k3s_etcd_snapshot_dir | default('') != '' %}
+      etcd-snapshot-dir: "{{ k3s_etcd_snapshot_dir }}"
+      etcd-snapshot-schedule-cron: "{{ k3s_etcd_snapshot_schedule }}"
+      etcd-snapshot-retention: {{ k3s_etcd_snapshot_retention }}
       {% endif %}
     owner: root
     group: root

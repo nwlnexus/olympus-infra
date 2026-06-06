@@ -411,6 +411,13 @@
     - not (k3s_agent | default(false))
   failed_when: false
 
+- name: Reconcile node labels/taints (server, idempotent)
+  ansible.builtin.include_tasks: node-labels.yml
+  when:
+    - _k3s_state == 'present'
+    - not (k3s_agent | default(false))
+    - (k3s_node_labels | default([]) | length > 0) or (k3s_node_taints | default([]) | length > 0)
+
 # ── CNI bridge fixer (workaround for k3s embedded CNI skipping bridge attach) ─
 - name: Deploy k3s-cni-bridge-fixer script
   ansible.builtin.template:

@@ -28,6 +28,24 @@
     state: started
   become: true
 
+- name: Configure multipath.conf for Trident (claim single-path iSCSI LUNs)
+  # Trident's iSCSI volumes are single-path; the multipath-tools default
+  # (find_multipaths "strict"/"yes") skips single-path devices, so the LUN never
+  # gets a /dev/mapper map and the mount fails with "multipath device not found".
+  # find_multipaths "no" makes multipathd claim it. (NetApp Trident recommendation.)
+  ansible.builtin.copy:
+    dest: /etc/multipath.conf
+    content: |
+      defaults {
+          user_friendly_names yes
+          find_multipaths no
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Restart multipathd
+
 - name: Enable and start multipathd
   ansible.builtin.systemd:
     name: multipathd

@@ -5,3 +5,10 @@
     state: restarted
   become: true
   when: ansible_facts['os_family'] == "Debian"
+
+- name: Restart multipathd
+  ansible.builtin.systemd:
+    name: multipathd
+    state: restarted
+  become: true
+  when: ansible_facts['os_family'] == "Debian"

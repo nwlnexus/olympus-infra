@@ -504,7 +504,7 @@
     remote_src: true
   loop: "{{ k3s_kubeconfig_users }}"
   become: true
-  failed_when: false
+  ignore_errors: "{{ ansible_check_mode }}"
   when:
     - _k3s_state == 'present'
     - not (k3s_agent | default(false))
@@ -541,8 +541,9 @@
 # ── HA Primary: export kubeconfig to 1Password ───────────────────────────────
 # Enables management-hub Headlamp to display compute-hub as a secondary cluster.
 # Patches the server URL to the VIP before uploading.
-# NOTE: extracted to kubeconfig-export.yml — the heredoc in the shell task trips
-# Ansible's YAML loader when embedded in a block in this file.
+# NOTE: extracted to kubeconfig-export.yml for readability; included via
+# include_tasks so the four when: conditions propagate to each task and
+# caller-scope facts (e.g. k3s_vip, k3s_kubeconfig_op_item) still resolve.
 
 - name: Export kubeconfig to 1Password (HA primary)
   ansible.builtin.include_tasks: kubeconfig-export.yml

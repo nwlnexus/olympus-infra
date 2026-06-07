@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.olympus.postgres</string>
+  <key>UserName</key>
+  <string>_postgres</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{ data_services_postgres_brew_prefix }}/bin/postgres</string>
+    <string>-D</string>
+    <string>{{ data_services_nvme_root }}/data/postgres</string>
+    <string>-c</string>
+    <string>config_file={{ data_services_nvme_root }}/config/postgres/postgresql.conf</string>
+    <string>-c</string>
+    <string>hba_file={{ data_services_nvme_root }}/config/postgres/pg_hba.conf</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PGDATA</key>
+    <string>{{ data_services_nvme_root }}/data/postgres</string>
+    <key>LC_ALL</key>
+    <string>en_US.UTF-8</string>
+    <key>LANG</key>
+    <string>en_US.UTF-8</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>{{ data_services_nvme_root }}/data/postgres</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{{ data_services_nvme_root }}/logs/postgres/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{ data_services_nvme_root }}/logs/postgres/stderr.log</string>
+</dict>
+</plist>

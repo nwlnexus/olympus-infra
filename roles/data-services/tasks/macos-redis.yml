@@ -1,0 +1,41 @@
+---
+- name: Install redis
+  community.general.homebrew:
+    name: redis
+    state: present
+  become: false
+
+# ds_redis_password is pre-read by the controller-local play in data-services.yml
+
+- name: Write redis.conf
+  ansible.builtin.template:
+    src: redis.conf.j2
+    dest: "{{ data_services_nvme_root }}/config/redis/redis.conf"
+    owner: _redis
+    group: staff
+    mode: "0600"
+  vars:
+    redis_password: "{{ ds_redis_password }}"
+  become: true
+  notify: restart redis
+
+- name: Stop existing Homebrew Redis LaunchAgent (if present)
+  ansible.builtin.command:
+    cmd: launchctl unload -w ~/Library/LaunchAgents/homebrew.mxcl.redis.plist
+  ignore_errors: true
+  become: false
+
+- name: Write Redis LaunchDaemon plist
+  ansible.builtin.template:
+    src: launchdaemon-redis.plist.j2
+    dest: /Library/LaunchDaemons/com.olympus.redis.plist
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+
+- name: Bootstrap Redis LaunchDaemon
+  ansible.builtin.command:
+    cmd: launchctl bootstrap system /Library/LaunchDaemons/com.olympus.redis.plist
+  become: true
+  ignore_errors: true

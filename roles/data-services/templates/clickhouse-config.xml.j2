@@ -1,0 +1,26 @@
+<!-- Managed by Ansible — do not edit manually -->
+<clickhouse>
+  <logger>
+    <level>information</level>
+    <log>{{ data_services_nvme_root }}/logs/clickhouse/clickhouse-server.log</log>
+    <errorlog>{{ data_services_nvme_root }}/logs/clickhouse/clickhouse-server.err.log</errorlog>
+    <size>500M</size>
+    <count>10</count>
+  </logger>
+
+  <http_port>{{ data_services_clickhouse_http_port }}</http_port>
+  <tcp_port>{{ data_services_clickhouse_native_port }}</tcp_port>
+  <interserver_http_port>{{ data_services_clickhouse_replication_port }}</interserver_http_port>
+
+  <listen_host>{{ data_services_tailscale_ip }}</listen_host>
+
+  <path>{{ data_services_nvme_root }}/data/clickhouse/</path>
+  <tmp_path>{{ data_services_nvme_root }}/data/clickhouse/tmp/</tmp_path>
+  <user_files_path>{{ data_services_nvme_root }}/data/clickhouse/user_files/</user_files_path>
+  <format_schema_path>{{ data_services_nvme_root }}/data/clickhouse/format_schemas/</format_schema_path>
+
+  <users_config>{{ data_services_nvme_root }}/config/clickhouse/users.xml</users_config>
+
+  <max_connections>4096</max_connections>
+  <max_server_memory_usage_to_ram_ratio>0.20</max_server_memory_usage_to_ram_ratio>
+</clickhouse>

@@ -1,0 +1,8 @@
+---
+all:
+  hosts:
+    fake-macos:
+      ansible_connection: local
+      ansible_python_interpreter: /usr/bin/python3
+  vars:
+    _op_env: {}

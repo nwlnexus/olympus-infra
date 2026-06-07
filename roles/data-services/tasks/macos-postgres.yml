@@ -1,0 +1,69 @@
+---
+- name: Install postgresql@16
+  community.general.homebrew:
+    name: postgresql@16
+    state: present
+  become: false
+
+# ds_pg_password is pre-read by the controller-local play in data-services.yml
+
+- name: Check if PostgreSQL data directory is initialised
+  ansible.builtin.stat:
+    path: "{{ data_services_nvme_root }}/data/postgres/PG_VERSION"
+  register: _pg_data_exists
+
+- name: Initialise PostgreSQL data directory
+  ansible.builtin.command:
+    cmd: >
+      {{ data_services_postgres_brew_prefix }}/bin/initdb
+      -D {{ data_services_nvme_root }}/data/postgres
+      --username=postgres
+      --pwfile=/dev/stdin
+      --encoding=UTF8
+      --locale=C
+  args:
+    stdin: "{{ ds_pg_password }}"
+  become: true
+  become_user: _postgres
+  when: not _pg_data_exists.stat.exists
+
+- name: Write postgresql.conf
+  ansible.builtin.template:
+    src: postgresql.conf.j2
+    dest: "{{ data_services_nvme_root }}/config/postgres/postgresql.conf"
+    owner: _postgres
+    group: staff
+    mode: "0640"
+  become: true
+  notify: restart postgres
+
+- name: Write pg_hba.conf
+  ansible.builtin.template:
+    src: pg_hba.conf.j2
+    dest: "{{ data_services_nvme_root }}/config/postgres/pg_hba.conf"
+    owner: _postgres
+    group: staff
+    mode: "0640"
+  become: true
+  notify: restart postgres
+
+- name: Stop existing Homebrew PostgreSQL LaunchAgent (if present)
+  ansible.builtin.command:
+    cmd: launchctl unload -w ~/Library/LaunchAgents/homebrew.mxcl.postgresql@16.plist
+  ignore_errors: true
+  become: false
+
+- name: Write PostgreSQL LaunchDaemon plist
+  ansible.builtin.template:
+    src: launchdaemon-postgres.plist.j2
+    dest: /Library/LaunchDaemons/com.olympus.postgres.plist
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+
+- name: Bootstrap PostgreSQL LaunchDaemon
+  ansible.builtin.command:
+    cmd: launchctl bootstrap system /Library/LaunchDaemons/com.olympus.postgres.plist
+  become: true
+  ignore_errors: true

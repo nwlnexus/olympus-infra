@@ -1,0 +1,37 @@
+---
+- name: Tap redpanda-data Homebrew tap
+  community.general.homebrew_tap:
+    name: redpanda-data/tap
+    state: present
+  become: false
+
+- name: Install Redpanda (via redpanda-data tap)
+  community.general.homebrew:
+    name: redpanda-data/tap/redpanda
+    state: present
+  become: false
+
+- name: Write redpanda.yaml
+  ansible.builtin.template:
+    src: redpanda.yaml.j2
+    dest: "{{ data_services_nvme_root }}/config/redpanda/redpanda.yaml"
+    owner: _redpanda
+    group: staff
+    mode: "0640"
+  become: true
+  notify: restart redpanda
+
+- name: Write Redpanda LaunchDaemon plist
+  ansible.builtin.template:
+    src: launchdaemon-redpanda.plist.j2
+    dest: /Library/LaunchDaemons/com.olympus.redpanda.plist
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+
+- name: Bootstrap Redpanda LaunchDaemon
+  ansible.builtin.command:
+    cmd: launchctl bootstrap system /Library/LaunchDaemons/com.olympus.redpanda.plist
+  become: true
+  ignore_errors: true

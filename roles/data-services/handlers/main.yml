@@ -1,0 +1,35 @@
+---
+- name: Restart postgres
+  ansible.builtin.command:
+    cmd: launchctl kickstart -k system/com.olympus.postgres
+  become: true
+  changed_when: false
+  listen: restart postgres
+
+- name: Restart redis
+  ansible.builtin.command:
+    cmd: launchctl kickstart -k system/com.olympus.redis
+  become: true
+  changed_when: false
+  listen: restart redis
+
+- name: Restart clickhouse
+  ansible.builtin.command:
+    cmd: launchctl kickstart -k system/com.olympus.clickhouse
+  become: true
+  changed_when: false
+  listen: restart clickhouse
+
+- name: Restart redpanda
+  ansible.builtin.command:
+    cmd: launchctl kickstart -k system/com.olympus.redpanda
+  become: true
+  changed_when: false
+  listen: restart redpanda
+
+- name: Restart ollama
+  ansible.builtin.command:
+    cmd: launchctl kickstart -k system/com.olympus.ollama
+  become: true
+  changed_when: false
+  listen: restart ollama

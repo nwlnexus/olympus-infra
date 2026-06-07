@@ -1,0 +1,32 @@
+# Managed by Ansible — do not edit manually
+redpanda:
+  data_directory: {{ data_services_nvme_root }}/data/redpanda
+  seed_servers: []
+
+  kafka_api:
+    - address: 0.0.0.0
+      port: {{ data_services_redpanda_kafka_port }}
+  advertised_kafka_api:
+    - address: {{ data_services_tailscale_ip }}
+      port: {{ data_services_redpanda_kafka_port }}
+
+  rpc_server:
+    address: 0.0.0.0
+    port: 33145
+  advertised_rpc_api:
+    address: {{ data_services_tailscale_ip }}
+    port: 33145
+
+  admin:
+    - address: 0.0.0.0
+      port: {{ data_services_redpanda_admin_port }}
+
+pandaproxy:
+  pandaproxy_api:
+    - address: 0.0.0.0
+      port: {{ data_services_redpanda_proxy_port }}
+
+schema_registry:
+  schema_registry_api:
+    - address: 0.0.0.0
+      port: {{ data_services_redpanda_schema_port }}

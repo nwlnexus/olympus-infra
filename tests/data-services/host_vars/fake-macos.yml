@@ -1,0 +1,31 @@
+---
+data_services_state: present
+data_services_tailscale_ip: "100.95.232.41"
+data_services_tailscale_cidr: "100.64.0.0/10"
+data_services_nvme_root: /opt/olympus
+data_services_nfs_archive: /Volumes/ai-hub-data
+
+data_services_postgres_shared_buffers: 16GB
+data_services_postgres_effective_cache: 48GB
+data_services_postgres_max_connections: 200
+data_services_postgres_port: 5432
+data_services_postgres_uid: 201
+data_services_postgres_brew_prefix: /opt/homebrew/opt/postgresql@16
+
+data_services_redis_port: 6379
+data_services_redis_uid: 202
+
+data_services_clickhouse_http_port: 8123
+data_services_clickhouse_native_port: 9000
+data_services_clickhouse_replication_port: 9009
+data_services_clickhouse_uid: 203
+
+data_services_redpanda_kafka_port: 9092
+data_services_redpanda_admin_port: 9644
+data_services_redpanda_proxy_port: 8082
+data_services_redpanda_schema_port: 8081
+data_services_redpanda_uid: 204
+
+data_services_ollama_port: 11434
+data_services_ollama_uid: 205
+data_services_ollama_model_dir: /opt/olympus/data/ollama

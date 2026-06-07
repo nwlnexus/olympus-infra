@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.olympus.redpanda</string>
+  <key>UserName</key>
+  <string>_redpanda</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/rpk</string>
+    <string>redpanda</string>
+    <string>start</string>
+    <string>--config</string>
+    <string>{{ data_services_nvme_root }}/config/redpanda/redpanda.yaml</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>{{ data_services_nvme_root }}/data/redpanda</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{{ data_services_nvme_root }}/logs/redpanda/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{ data_services_nvme_root }}/logs/redpanda/stderr.log</string>
+</dict>
+</plist>

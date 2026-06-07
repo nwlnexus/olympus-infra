@@ -1,0 +1,49 @@
+---
+- name: Install ClickHouse
+  community.general.homebrew:
+    name: clickhouse
+    state: present
+
+- name: Read ClickHouse admin password from 1Password
+  ansible.builtin.command:
+    cmd: op read "op://Dev/ai-hub-data-services/clickhouse-admin-password"
+  register: _ch_password
+  no_log: true
+  changed_when: false
+
+- name: Write ClickHouse config.xml
+  ansible.builtin.template:
+    src: clickhouse-config.xml.j2
+    dest: "{{ data_services_nvme_root }}/config/clickhouse/config.xml"
+    owner: _clickhouse
+    group: staff
+    mode: "0640"
+  become: true
+  notify: restart clickhouse
+
+- name: Write ClickHouse users.xml
+  ansible.builtin.template:
+    src: clickhouse-users.xml.j2
+    dest: "{{ data_services_nvme_root }}/config/clickhouse/users.xml"
+    owner: _clickhouse
+    group: staff
+    mode: "0600"
+  vars:
+    clickhouse_admin_password: "{{ _ch_password.stdout }}"
+  become: true
+  notify: restart clickhouse
+
+- name: Write ClickHouse LaunchDaemon plist
+  ansible.builtin.template:
+    src: launchdaemon-clickhouse.plist.j2
+    dest: /Library/LaunchDaemons/com.olympus.clickhouse.plist
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+
+- name: Bootstrap ClickHouse LaunchDaemon
+  ansible.builtin.command:
+    cmd: launchctl bootstrap system /Library/LaunchDaemons/com.olympus.clickhouse.plist
+  become: true
+  ignore_errors: true

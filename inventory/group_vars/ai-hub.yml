@@ -1,5 +1,12 @@
 ---
-# AI Hub vars — OrbStack k8s retired; host is now Ollama-only
+# ai-hub — Mac Studio M1 Max (64 GB, 10-core, 927 GB NVMe)
+# Role: data tier (PostgreSQL/Redis/ClickHouse/Ollama as macOS LaunchDaemons)
+#       NOT a k8s node — Apple Silicon Metal cannot be passed to Linux containers.
+#
+# 2026-06-07: Zombie ansible Colima VM (memory: 48 GB, cpu: 10) killed and
+#             config zeroed out. Was a retired k3s cluster consuming 39 GB of RAM
+#             and causing Ollama-triggered system freezes.
+
 ansible_user: ansible
 
 # Ollama
@@ -22,32 +29,17 @@ tailscale_hostname: ai-hub
 # Cloudflared binary present (tunnel deleted — binary kept for potential future use)
 cloudflared_state: present
 
-# Single-node cluster: the cloudflared-k8s playbook gates on `k3s_primary`.
-k3s_primary: true
+# ── Data Services ─────────────────────────────────────────────────────────────
+data_services_state: present
+data_services_tailscale_ip: "100.95.232.41"
+data_services_tailscale_cidr: "100.64.0.0/10"
+data_services_nvme_root: /opt/olympus
+data_services_nfs_archive: /Volumes/ai-hub-data
 
-# --- cloudflared-k8s (GitOps mode: tunnel + DNS managed by Ansible, K8s
-# Secret + Deployment + ingress config managed by Flux via ExternalSecret) ---
-cloudflared_k8s_state: present
-cloudflared_tunnel_name: ai-hub
-cloudflared_account_id: "1b15dcdab99d4e8d5babb3dc6b1adaec"
-cloudflared_domain: "nwlnexus.net"
-cloudflared_bootstrap_only: true
-cloudflared_ingress_hostname: "ing.ai-hub.nwlnexus.net"
-cloudflared_catch_all_service: "https://traefik.traefik.svc.cluster.local:443"
-cloudflared_kubeconfig_path: /var/ansible/.kube/config
-
-# GitOps mode — push creds to 1Password (via op CLI + service-account token)
-# instead of writing the K8s Secret. The repo's ExternalSecret
-# (clusters/ai-hub/cloudflared/externalsecret.yaml) hydrates
-# `cloudflared-tunnel-credentials` from this 1Password item.
-cloudflared_op_enabled: true
-cloudflared_op_vault: "Dev"
-cloudflared_op_item_title: "ai-hub-cloudflared"
-
-# 1Password Connect — k3s via Colima; kubeconfig at non-standard path
-onepassword_connect_state: present
-onepassword_connect_kubeconfig: /var/ansible/.kube/config
-
-# ESO bootstrap — seeds Connect token into ESO secret
-eso_bootstrap_state: present
-eso_kubeconfig_path: /var/ansible/.kube/config
+# PostgreSQL tuning for 64 GB M1 Max — conservative to leave headroom for Ollama 70B
+# ansible Colima VM (48 GB, 10 CPU) was killing the machine; it has been stopped.
+# New baseline without Ollama: ~22 GB used, leaving 42 GB free for model loading.
+data_services_postgres_shared_buffers: "4GB"
+data_services_postgres_effective_cache: "12GB"
+data_services_postgres_max_connections: 200
+data_services_postgres_brew_prefix: /opt/homebrew/opt/postgresql@16

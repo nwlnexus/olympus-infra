@@ -2,17 +2,18 @@
 - name: Create service system users
   vars:
     service_users:
-      - { name: _postgres,    uid: "{{ data_services_postgres_uid }}",    comment: "PostgreSQL Data Service" }
-      - { name: _redis,       uid: "{{ data_services_redis_uid }}",       comment: "Redis Data Service" }
-      - { name: _clickhouse,  uid: "{{ data_services_clickhouse_uid }}",  comment: "ClickHouse Data Service" }
-      - { name: _redpanda,    uid: "{{ data_services_redpanda_uid }}",    comment: "Redpanda Data Service" }
-      - { name: _ollama,      uid: "{{ data_services_ollama_uid }}",      comment: "Ollama AI Service" }
+      - {name: _postgres, uid: "{{ data_services_postgres_uid }}", comment: "PostgreSQL Data Service"}
+      - {name: _redis, uid: "{{ data_services_redis_uid }}", comment: "Redis Data Service"}
+      - {name: _clickhouse, uid: "{{ data_services_clickhouse_uid }}", comment: "ClickHouse Data Service"}
+      - {name: _redpanda, uid: "{{ data_services_redpanda_uid }}", comment: "Redpanda Data Service"}
+      - {name: _ollama, uid: "{{ data_services_ollama_uid }}", comment: "Ollama AI Service"}
   block:
     - name: "Create system user {{ item.name }}"
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }}
       become: true
       ignore_errors: true
+      changed_when: false
       loop: "{{ service_users }}"
       loop_control:
         label: "{{ item.name }}"
@@ -21,6 +22,7 @@
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} UniqueID {{ item.uid }}
       become: true
+      changed_when: false
       loop: "{{ service_users }}"
       loop_control:
         label: "{{ item.name }}"
@@ -29,6 +31,7 @@
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} PrimaryGroupID 20
       become: true
+      changed_when: false
       loop: "{{ service_users }}"
       loop_control:
         label: "{{ item.name }}"
@@ -37,6 +40,7 @@
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} UserShell /usr/bin/false
       become: true
+      changed_when: false
       loop: "{{ service_users }}"
       loop_control:
         label: "{{ item.name }}"
@@ -45,6 +49,7 @@
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} RealName "{{ item.comment }}"
       become: true
+      changed_when: false
       loop: "{{ service_users }}"
       loop_control:
         label: "{{ item.name }}"
@@ -53,6 +58,7 @@
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} NFSHomeDirectory /var/empty
       become: true
+      changed_when: false
       loop: "{{ service_users }}"
       loop_control:
         label: "{{ item.name }}"

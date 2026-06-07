@@ -1,0 +1,60 @@
+---
+# Unified olympus cluster inventory — push-mode (SSH, not ansible-pull).
+# Used by push playbooks: playbooks/push/join-naraka-agent.yml, etc.
+# The k3s role vars come from group_vars/compute_hub.yml and group_vars/management-hub.yml.
+#
+# Control-plane: 3 onodes (NVMe, HA etcd, kube-vip VIP 192.168.253.2)
+# Agent: naraka-01 (128 GB RAM, ingress entry point)
+# Data tier: ai-hub (macOS, native LaunchDaemons — NOT a k8s node)
+# Provisioning: styx (PXE/Packer — NOT a k8s node)
+
+all:
+  children:
+
+    # ── k3s control-plane (HA, NVMe, default compute pool) ──────────────────
+    compute_hub:
+      hosts:
+        onode-030c31:
+          ansible_host: 192.168.253.7
+        onode-0312ce:
+          ansible_host: 192.168.253.8
+        onode-0314ac:
+          ansible_host: 192.168.253.9
+      vars:
+        ansible_connection: ssh
+        ansible_user: ansible
+        ansible_ssh_private_key_file: ~/.ssh/ansible
+        ansible_python_interpreter: /usr/bin/python3
+
+    # ── k3s agent (naraka-01 — management-hub label + NoSchedule taint) ─────
+    k3s_agents:
+      hosts:
+        naraka-01:
+          ansible_host: 192.168.253.14
+      vars:
+        ansible_connection: ssh
+        ansible_user: ansible
+        ansible_ssh_private_key_file: ~/.ssh/ansible
+        ansible_python_interpreter: /usr/bin/python3
+
+    # ── Data tier (ai-hub — macOS data services, NOT a k8s node) ────────────
+    data_services:
+      hosts:
+        ai-hub:
+          ansible_host: 100.95.232.41   # Tailscale IP (MagicDNS: ai-hub)
+      vars:
+        ansible_connection: ssh
+        ansible_user: nwilliams-lucas
+        ansible_ssh_private_key_file: ~/.ssh/ansible
+        ansible_python_interpreter: /usr/bin/python3
+
+    # ── Provisioning (styx — PXE/Packer, NOT a k8s node) ────────────────────
+    provisioning:
+      hosts:
+        styx:
+          ansible_host: "{{ tailscale_ip_styx | default('styx') }}"
+      vars:
+        ansible_connection: ssh
+        ansible_user: ansible
+        ansible_ssh_private_key_file: ~/.ssh/ansible
+        ansible_python_interpreter: /usr/bin/python3

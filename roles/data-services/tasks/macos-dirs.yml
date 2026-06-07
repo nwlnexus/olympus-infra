@@ -16,7 +16,6 @@
       - {path: "{{ data_services_nvme_root }}/logs/clickhouse", owner: _clickhouse}
       - {path: "{{ data_services_nvme_root }}/logs/redpanda", owner: _redpanda}
       - {path: "{{ data_services_nvme_root }}/logs/ollama", owner: _ollama}
-      - {path: "{{ data_services_nfs_archive }}/wal-archive", owner: _postgres}
   ansible.builtin.file:
     path: "{{ item.path }}"
     state: directory
@@ -27,3 +26,13 @@
   loop: "{{ olympus_dirs }}"
   loop_control:
     label: "{{ item.path }}"
+
+- name: Ensure NFS WAL archive directory exists
+  # NFS root_squash prevents chown; directory is world-writable so _postgres can write.
+  # ignore_errors handles the chown failure gracefully on subsequent runs.
+  ansible.builtin.file:
+    path: "{{ data_services_nfs_archive }}/wal-archive"
+    state: directory
+    mode: "0777"
+  become: true
+  ignore_errors: true

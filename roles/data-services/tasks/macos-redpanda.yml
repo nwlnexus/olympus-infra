@@ -1,8 +1,15 @@
 ---
+- name: Tap redpanda-data Homebrew tap
+  community.general.homebrew_tap:
+    name: redpanda-data/tap
+    state: present
+  become: false
+
 - name: Install Redpanda (via redpanda-data tap)
   community.general.homebrew:
     name: redpanda-data/tap/redpanda
     state: present
+  become: false
 
 - name: Write redpanda.yaml
   ansible.builtin.template:

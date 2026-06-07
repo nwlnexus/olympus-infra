@@ -3,13 +3,9 @@
   community.general.homebrew:
     name: redis
     state: present
+  become: false
 
-- name: Read redis password from 1Password
-  ansible.builtin.command:
-    cmd: op read "op://Dev/ai-hub-data-services/redis-password"
-  register: _redis_password
-  no_log: true
-  changed_when: false
+# ds_redis_password is pre-read by the controller-local play in data-services.yml
 
 - name: Write redis.conf
   ansible.builtin.template:
@@ -19,7 +15,7 @@
     group: staff
     mode: "0600"
   vars:
-    redis_password: "{{ _redis_password.stdout }}"
+    redis_password: "{{ ds_redis_password }}"
   become: true
   notify: restart redis
 

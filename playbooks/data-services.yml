@@ -1,12 +1,18 @@
 ---
 # Push-based data services setup for ai-hub.
 # Requires: become (sudo) for LaunchDaemon operations, dscl, Homebrew.
-# Run from a machine with SSH access to ai-hub and op CLI authenticated.
+# Secrets are passed in via -e vars (read by the wrapper before invoking ansible-playbook):
+#   ds_pg_password, ds_redis_password, ds_ch_password
 #
-# Usage:
+# Usage (via wrapper):
+#   ./tools/deploy-data-services.sh
+#
+# Or directly with explicit secrets:
 #   ansible-playbook -i inventory/ai-hub.yml \
-#     -e "ansible_connection=ssh ansible_host=ai-hub ansible_user=nwilliams-lucas" \
+#     -e "ansible_connection=ssh ansible_host=192.168.253.5 ansible_user=nwilliams-lucas" \
+#     -e "ds_pg_password=... ds_redis_password=... ds_ch_password=..." \
 #     playbooks/data-services.yml
+
 - name: Configure ai-hub data services
   hosts: ai-hub
   become: true

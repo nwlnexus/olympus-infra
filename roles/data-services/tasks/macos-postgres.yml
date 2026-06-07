@@ -3,13 +3,9 @@
   community.general.homebrew:
     name: postgresql@16
     state: present
+  become: false
 
-- name: Read postgres superuser password from 1Password
-  ansible.builtin.command:
-    cmd: op read "op://Dev/ai-hub-data-services/postgres-superuser-password"
-  register: _pg_password
-  no_log: true
-  changed_when: false
+# ds_pg_password is pre-read by the controller-local play in data-services.yml
 
 - name: Check if PostgreSQL data directory is initialised
   ansible.builtin.stat:
@@ -26,7 +22,7 @@
       --encoding=UTF8
       --locale=C
   args:
-    stdin: "{{ _pg_password.stdout }}"
+    stdin: "{{ ds_pg_password }}"
   become: true
   become_user: _postgres
   when: not _pg_data_exists.stat.exists

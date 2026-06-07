@@ -3,6 +3,7 @@
   community.general.homebrew:
     name: ollama
     state: present
+  become: false
 
 - name: Stop and disable existing Ollama LaunchAgent (if present)
   ansible.builtin.command:

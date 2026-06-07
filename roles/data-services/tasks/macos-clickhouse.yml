@@ -3,13 +3,9 @@
   community.general.homebrew:
     name: clickhouse
     state: present
+  become: false
 
-- name: Read ClickHouse admin password from 1Password
-  ansible.builtin.command:
-    cmd: op read "op://Dev/ai-hub-data-services/clickhouse-admin-password"
-  register: _ch_password
-  no_log: true
-  changed_when: false
+# ds_ch_password is pre-read by the controller-local play in data-services.yml
 
 - name: Write ClickHouse config.xml
   ansible.builtin.template:
@@ -29,7 +25,7 @@
     group: staff
     mode: "0600"
   vars:
-    clickhouse_admin_password: "{{ _ch_password.stdout }}"
+    clickhouse_admin_password: "{{ ds_ch_password }}"
   become: true
   notify: restart clickhouse
 

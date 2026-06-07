@@ -22,6 +22,7 @@
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} UniqueID {{ item.uid }}
       become: true
+      ignore_errors: true
       changed_when: false
       loop: "{{ service_users }}"
       loop_control:
@@ -31,6 +32,7 @@
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} PrimaryGroupID 20
       become: true
+      ignore_errors: true
       changed_when: false
       loop: "{{ service_users }}"
       loop_control:
@@ -40,6 +42,7 @@
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} UserShell /usr/bin/false
       become: true
+      ignore_errors: true
       changed_when: false
       loop: "{{ service_users }}"
       loop_control:
@@ -49,6 +52,7 @@
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} RealName "{{ item.comment }}"
       become: true
+      ignore_errors: true
       changed_when: false
       loop: "{{ service_users }}"
       loop_control:
@@ -58,6 +62,7 @@
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} NFSHomeDirectory /var/empty
       become: true
+      ignore_errors: true
       changed_when: false
       loop: "{{ service_users }}"
       loop_control:

@@ -3,10 +3,17 @@
 # Secrets come from 1Password Connect via External Secrets Operator
 ansible_user: ansible
 
-# k3s
+# k3s — naraka-01 joins as agent in the unified olympus cluster.
+# Control-plane is the 3 onodes (compute_hub group, kube-vip VIP 192.168.253.2).
+# Apply with: playbooks/push/join-naraka-agent.yml (Plan 4 supervised cutover).
 k3s_state: present
-k3s_role: server
-k3s_disable: [traefik]
+k3s_agent: true
+k3s_server_url: "https://192.168.253.2:6443"
+k3s_token_op_ref: "op://Dev/compute-hub-k3s-token/password"
+k3s_node_labels:
+  - "olympus.io/role=management-hub"
+k3s_node_taints:
+  - "olympus.io/role=management-hub:NoSchedule"
 
 # QNAP CSI (Trident) — cluster-wide storage provisioner for qnap-iscsi PVCs.
 # Runs on the primary only (gated in olympus.yml). iSCSI CHAP creds live in the
@@ -27,7 +34,8 @@ k3s_primary: true
 
 # --- cloudflared-k8s (GitOps mode: tunnel + DNS managed by Ansible; K8s
 # Secret + Deployment + ingress config owned by Flux via ExternalSecret) ---
-cloudflared_k8s_state: present
+# NOTE: management-hub tunnel retired after Plan 4 cutover
+cloudflared_k8s_state: absent
 cloudflared_tunnel_name: management-hub
 cloudflared_account_id: "1b15dcdab99d4e8d5babb3dc6b1adaec"
 cloudflared_domain: "nwlnexus.net"

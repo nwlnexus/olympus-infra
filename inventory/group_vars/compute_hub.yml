@@ -19,6 +19,12 @@ qnap_csi_state: present
 qnap_iscsi_op_item: compute-hub-qnap-iscsi
 qnap_csi_kubeconfig: /etc/rancher/k3s/k3s.yaml
 k3s_version: "v1.32.4+k3s1"
+# Node labels/taints for unified cluster placement
+# onodes are the default compute pool (untainted) — all workloads land here unless
+# a pod has a nodeSelector for management-hub.
+k3s_node_labels:
+  - "olympus.io/role=compute-hub"
+k3s_node_taints: []
 # Virtual IP for kube-vip ARP leader election (within mgmt-hub advertised subnet)
 k3s_vip: "192.168.253.2"
 # k3s_vip_interface is intentionally not set here — the k3s role detects it
@@ -80,7 +86,7 @@ cloudflared_op_vault: "Dev"
 cloudflared_op_item_title: "compute-hub-cloudflared"
 
 # --- Flux CD (primary node only) ---
-flux_cluster_path: "clusters/compute-hub"
+flux_cluster_path: "clusters/olympus"
 flux_kubeconfig_path: "/etc/rancher/k3s/k3s.yaml"
 
 # --- ansible-pull (all nodes) ---

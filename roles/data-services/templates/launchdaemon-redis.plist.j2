@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.olympus.redis</string>
+  <key>UserName</key>
+  <string>_redis</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/redis-server</string>
+    <string>{{ data_services_nvme_root }}/config/redis/redis.conf</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>{{ data_services_nvme_root }}/data/redis</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{{ data_services_nvme_root }}/logs/redis/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{ data_services_nvme_root }}/logs/redis/stderr.log</string>
+</dict>
+</plist>

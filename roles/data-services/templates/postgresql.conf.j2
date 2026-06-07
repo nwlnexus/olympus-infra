@@ -5,8 +5,8 @@ port = {{ data_services_postgres_port }}
 # Memory — tuned for 64 GB unified memory
 shared_buffers            = {{ data_services_postgres_shared_buffers }}
 effective_cache_size      = {{ data_services_postgres_effective_cache }}
-work_mem                  = 64MB
-maintenance_work_mem      = 2GB
+work_mem                  = 16MB
+maintenance_work_mem      = 512MB
 
 # Connections
 max_connections           = {{ data_services_postgres_max_connections }}

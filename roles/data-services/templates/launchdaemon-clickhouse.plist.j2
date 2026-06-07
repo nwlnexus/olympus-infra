@@ -13,6 +13,11 @@
     <string>server</string>
     <string>--config-file={{ data_services_nvme_root }}/config/clickhouse/config.xml</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TMPDIR</key>
+    <string>/tmp</string>
+  </dict>
   <key>WorkingDirectory</key>
   <string>{{ data_services_nvme_root }}/data/clickhouse</string>
   <key>RunAtLoad</key>

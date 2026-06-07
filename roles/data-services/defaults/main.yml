@@ -12,8 +12,8 @@ data_services_nfs_archive: /Volumes/ai-hub-data
 # PostgreSQL – macOS ships a built-in _postgres at UID 216; use it as-is.
 data_services_postgres_uid: 216
 data_services_postgres_port: 5432
-data_services_postgres_shared_buffers: "16GB"
-data_services_postgres_effective_cache: "48GB"
+data_services_postgres_shared_buffers: "4GB"
+data_services_postgres_effective_cache: "12GB"
 data_services_postgres_max_connections: 200
 data_services_postgres_brew_prefix: /opt/homebrew/opt/postgresql@16
 

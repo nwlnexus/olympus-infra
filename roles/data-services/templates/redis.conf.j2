@@ -1,5 +1,5 @@
 # Managed by Ansible — do not edit manually
-bind 0.0.0.0
+bind {{ data_services_tailscale_ip }}
 port {{ data_services_redis_port }}
 protected-mode no
 
@@ -21,5 +21,5 @@ loglevel notice
 logfile {{ data_services_nvme_root }}/logs/redis/redis.log
 
 # Memory
-maxmemory 8gb
+maxmemory 4gb
 maxmemory-policy allkeys-lru

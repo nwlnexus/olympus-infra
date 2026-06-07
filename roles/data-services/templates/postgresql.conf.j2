@@ -1,5 +1,5 @@
 # Managed by Ansible — do not edit manually
-listen_addresses = '*'
+listen_addresses = '{{ data_services_tailscale_ip }},127.0.0.1'
 port = {{ data_services_postgres_port }}
 
 # Memory — tuned for 64 GB unified memory
@@ -11,11 +11,11 @@ maintenance_work_mem      = 512MB
 # Connections
 max_connections           = {{ data_services_postgres_max_connections }}
 
-# WAL archiving
+# WAL archiving — off until QNAP NFS write perms are confirmed for _postgres
 wal_level                 = replica
-archive_mode              = on
-archive_command           = 'cp %p {{ data_services_nfs_archive }}/wal-archive/%f'
-archive_timeout           = 300
+archive_mode              = off
+# archive_command         = 'cp %p {{ data_services_nfs_archive }}/wal-archive/%f'
+# archive_timeout         = 300
 
 # Logging
 log_destination           = 'stderr'

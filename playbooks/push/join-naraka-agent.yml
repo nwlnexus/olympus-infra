@@ -1,0 +1,143 @@
+---
+# Join naraka-01 to the olympus cluster as a k3s agent.
+#
+# Prerequisites (verify before running):
+#   1. olympus cluster control-plane is healthy:
+#        kubectl get nodes  → 3 onodes with STATUS=Ready
+#   2. naraka-01 is reachable via SSH:
+#        ssh ansible@192.168.253.14 'hostname'
+#   3. k3s cluster token is in 1Password at op://Dev/compute-hub-k3s-token/password
+#   4. QNAP NFS /mnt/qnap-etcd-snapshots is writable (etcd snapshot precaution)
+#   5. Flux is reconciling clusters/olympus cleanly on the olympus cluster
+#
+# ⚠️  THIS IS A DESTRUCTIVE OPERATION on naraka-01:
+#   - Stops the management-hub k3s server and all workloads running on it
+#   - Flux on management-hub will stop reconciling clusters/management-hub
+#   - 1Password Connect on naraka-01 will be unavailable during transition
+#     (onodes already run their own 1PW Connect — no secret gap)
+#
+# Run from olympus-sdk root (push mode, NOT ansible-pull):
+#   source .envrc
+#   ANSIBLE_CONFIG=infra/management-hub-push.cfg \
+#     ansible-playbook \
+#     -i ../olympus-infra/inventory/olympus.yml \
+#     --limit k3s_agents \
+#     ../olympus-infra/playbooks/push/join-naraka-agent.yml
+#
+# Dry-run (no changes):
+#   ... --check --diff
+
+- name: Join naraka-01 as k3s agent in the olympus cluster
+  hosts: k3s_agents
+  gather_facts: true
+  become: true
+
+  pre_tasks:
+    - name: Snapshot etcd on primary onode before join (precaution)
+      ansible.builtin.command:
+        cmd: k3s etcd-snapshot save --name "pre-naraka-join-{{ ansible_date_time.iso8601_basic_short }}"
+      delegate_to: onode-030c31
+      delegate_facts: false
+      run_once: true
+      ignore_errors: true
+      changed_when: true
+      tags: [pre-check]
+
+    - name: Confirm target node and operator go-ahead
+      ansible.builtin.pause:
+        prompt: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║  PLAN 4 — naraka-01 agent join                               ║
+          ║                                                              ║
+          ║  This will:                                                  ║
+          ║    1. Stop naraka-01 k3s server (management-hub cluster)    ║
+          ║    2. Drain/delete all management-hub workloads              ║
+          ║    3. Uninstall k3s server from naraka-01                   ║
+          ║    4. Install k3s agent (join olympus cluster)              ║
+          ║    5. Apply label + taint: olympus.io/role=management-hub   ║
+          ║                                                              ║
+          ║  Type 'yes' to proceed, anything else to abort              ║
+          ╚══════════════════════════════════════════════════════════════╝
+      register: _operator_confirm
+      tags: [pre-check]
+
+    - name: Abort if operator did not confirm
+      ansible.builtin.fail:
+        msg: "Operator did not confirm. Aborting."
+      when: _operator_confirm.user_input | trim | lower != 'yes'
+      tags: [pre-check]
+
+    - name: Drain and delete all workloads from management-hub k3s cluster
+      ansible.builtin.shell: |
+        k3s kubectl drain naraka-01 \
+          --ignore-daemonsets \
+          --delete-emptydir-data \
+          --force \
+          --timeout=120s || true
+      args:
+        executable: /bin/bash
+      ignore_errors: true
+      changed_when: true
+      tags: [drain]
+
+    - name: Stop k3s server service on naraka-01
+      ansible.builtin.service:
+        name: k3s
+        state: stopped
+        enabled: false
+      ignore_errors: true
+      tags: [drain]
+
+    - name: Uninstall k3s server
+      ansible.builtin.shell: |
+        if [ -f /usr/local/bin/k3s-uninstall.sh ]; then
+          /usr/local/bin/k3s-uninstall.sh
+        fi
+      args:
+        executable: /bin/bash
+      ignore_errors: true
+      changed_when: true
+      tags: [uninstall]
+
+  roles:
+    - role: k3s
+      tags: [k3s]
+      vars:
+        k3s_state: present
+        k3s_agent: true
+        k3s_server_url: "https://192.168.253.2:6443"
+
+  post_tasks:
+    - name: Wait for naraka-01 to appear in olympus cluster
+      ansible.builtin.command:
+        cmd: kubectl get node naraka-01 -o jsonpath='{.status.conditions[-1].type}'
+      delegate_to: onode-030c31
+      delegate_facts: false
+      register: _node_ready
+      until: _node_ready.stdout == "Ready"
+      retries: 30
+      delay: 10
+      changed_when: false
+      tags: [verify]
+
+    - name: Verify node labels
+      ansible.builtin.command:
+        cmd: kubectl get node naraka-01 --show-labels
+      delegate_to: onode-030c31
+      delegate_facts: false
+      register: _node_labels
+      changed_when: false
+      tags: [verify]
+
+    - name: Print join result
+      ansible.builtin.debug:
+        msg:
+          - "naraka-01 joined olympus cluster successfully."
+          - "Node labels: {{ _node_labels.stdout }}"
+          - ""
+          - "Next steps (Plan 4 continued):"
+          - "  1. Verify Flux reconciles clusters/olympus cleanly"
+          - "  2. Verify ingress workloads (cloudflared + Traefik) land on naraka-01"
+          - "  3. Decommission management-hub cloudflared tunnel"
+          - "  4. Delete clusters/management-hub from olympus-gitops"
+      tags: [verify]

@@ -1,0 +1,21 @@
+---
+- name: Create system users
+  ansible.builtin.include_tasks: macos-users.yml
+
+- name: Create directory structure
+  ansible.builtin.include_tasks: macos-dirs.yml
+
+- name: Configure PostgreSQL
+  ansible.builtin.include_tasks: macos-postgres.yml
+
+- name: Configure Redis
+  ansible.builtin.include_tasks: macos-redis.yml
+
+- name: Configure ClickHouse
+  ansible.builtin.include_tasks: macos-clickhouse.yml
+
+- name: Configure Redpanda
+  ansible.builtin.include_tasks: macos-redpanda.yml
+
+- name: Configure Ollama
+  ansible.builtin.include_tasks: macos-ollama.yml

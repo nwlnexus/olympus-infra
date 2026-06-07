@@ -1,0 +1,4 @@
+---
+- name: Apply macOS data services
+  ansible.builtin.include_tasks: macos.yml
+  when: ansible_os_family == "Darwin"

@@ -59,12 +59,15 @@
           ║  Type 'yes' to proceed, anything else to abort              ║
           ╚══════════════════════════════════════════════════════════════╝
       register: _operator_confirm
+      when: operator_confirmed | default('') != 'yes'
       tags: [pre-check]
 
     - name: Abort if operator did not confirm
       ansible.builtin.fail:
         msg: "Operator did not confirm. Aborting."
-      when: _operator_confirm.user_input | trim | lower != 'yes'
+      when:
+        - operator_confirmed | default('') != 'yes'
+        - _operator_confirm.user_input | default('') | trim | lower != 'yes'
       tags: [pre-check]
 
     - name: Drain and delete all workloads from management-hub k3s cluster

@@ -1,0 +1,44 @@
+---
+- name: Install ollama
+  community.general.homebrew:
+    name: ollama
+    state: present
+
+- name: Stop and disable existing Ollama LaunchAgent (if present)
+  ansible.builtin.command:
+    cmd: launchctl unload -w ~/Library/LaunchAgents/homebrew.mxcl.ollama.plist
+  ignore_errors: true
+  become: false
+
+- name: Create Ollama model directory
+  ansible.builtin.file:
+    path: "{{ data_services_ollama_model_dir }}"
+    state: directory
+    owner: _ollama
+    group: staff
+    mode: "0750"
+  become: true
+
+- name: Move existing Ollama models to new location (if present and different)
+  ansible.builtin.shell: |
+    SRC="$HOME/.ollama/models"
+    DST="{{ data_services_ollama_model_dir }}"
+    if [ -d "$SRC" ] && [ "$SRC" != "$DST" ] && [ "$(ls -A $SRC 2>/dev/null)" ]; then
+      mv "$SRC"/* "$DST"/ 2>/dev/null || true
+    fi
+  changed_when: false
+
+- name: Write Ollama LaunchDaemon plist
+  ansible.builtin.template:
+    src: launchdaemon-ollama.plist.j2
+    dest: /Library/LaunchDaemons/com.olympus.ollama.plist
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+
+- name: Bootstrap Ollama LaunchDaemon
+  ansible.builtin.command:
+    cmd: launchctl bootstrap system /Library/LaunchDaemons/com.olympus.ollama.plist
+  become: true
+  ignore_errors: true

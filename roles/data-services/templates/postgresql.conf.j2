@@ -1,0 +1,28 @@
+# Managed by Ansible — do not edit manually
+listen_addresses = '*'
+port = {{ data_services_postgres_port }}
+
+# Memory — tuned for 64 GB unified memory
+shared_buffers            = {{ data_services_postgres_shared_buffers }}
+effective_cache_size      = {{ data_services_postgres_effective_cache }}
+work_mem                  = 64MB
+maintenance_work_mem      = 2GB
+
+# Connections
+max_connections           = {{ data_services_postgres_max_connections }}
+
+# WAL archiving
+wal_level                 = replica
+archive_mode              = on
+archive_command           = 'cp %p {{ data_services_nfs_archive }}/wal-archive/%f'
+archive_timeout           = 300
+
+# Logging
+log_destination           = 'stderr'
+logging_collector         = off
+log_min_duration_statement = 1000
+log_connections           = on
+log_disconnections        = on
+
+# Data directory
+data_directory            = '{{ data_services_nvme_root }}/data/postgres'

@@ -1,0 +1,7 @@
+# Managed by Ansible — do not edit manually
+# TYPE  DATABASE        USER            ADDRESS                 METHOD
+local   all             all                                     peer
+host    all             all             127.0.0.1/32            scram-sha-256
+host    all             all             ::1/128                 scram-sha-256
+# Tailscale CGNAT range — all tailnet nodes
+host    all             all             {{ data_services_tailscale_cidr }}   scram-sha-256

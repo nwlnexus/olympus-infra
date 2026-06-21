@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  role_name: claude-mem-client
+  author: nwlnexus
+  description: Configure claude-mem server-beta client settings
+  min_ansible_version: "2.14"
+dependencies: []

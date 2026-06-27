@@ -28,17 +28,33 @@
     state: started
   become: true
 
-- name: Configure multipath.conf for Trident (claim single-path iSCSI LUNs)
+- name: Configure multipath.conf for Trident + Longhorn coexistence
   # Trident's iSCSI volumes are single-path; the multipath-tools default
   # (find_multipaths "strict"/"yes") skips single-path devices, so the LUN never
   # gets a /dev/mapper map and the mount fails with "multipath device not found".
   # find_multipaths "no" makes multipathd claim it. (NetApp Trident recommendation.)
+  #
+  # Side effect of find_multipaths "no": multipathd also claims Longhorn's volume
+  # frontend, which presents as an IET (tgt) VIRTUAL-DISK iSCSI device. Once claimed
+  # as an mpath_member, Longhorn's CSI mkfs fails with "/dev/longhorn/pvc-... is
+  # apparently in use by the system" and pods hang in ContainerCreating.
+  # Blacklist the IET/VIRTUAL-DISK signature so multipathd leaves Longhorn devices
+  # alone while still claiming QNAP "iSCSI Storage" LUNs. (olympus-sdk#133)
   ansible.builtin.copy:
     dest: /etc/multipath.conf
     content: |
       defaults {
           user_friendly_names yes
           find_multipaths no
+      }
+
+      # Longhorn volume frontend (tgt) — must NOT be claimed by multipathd,
+      # otherwise mkfs on /dev/longhorn/* fails ("in use by the system").
+      blacklist {
+          device {
+              vendor "IET"
+              product "VIRTUAL-DISK"
+          }
       }
     owner: root
     group: root

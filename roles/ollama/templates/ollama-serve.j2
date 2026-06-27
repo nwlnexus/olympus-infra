@@ -1,3 +1,8 @@
 #!/bin/bash
-# Wrapper to run Ollama as {{ ansible_user }} from a root LaunchDaemon
-exec sudo -Hu {{ ansible_user }} /opt/homebrew/bin/ollama serve
+# Wrapper to run Ollama as {{ ansible_user }} from a root LaunchDaemon.
+# OLLAMA_HOST=0.0.0.0 binds all interfaces so the tailnet (and k3s pods via the
+# ai-hub tailnet route) can reach the API — required by the mem0/OpenMemory platform.
+exec sudo -Hu {{ ansible_user }} /usr/bin/env \
+  OLLAMA_HOST=0.0.0.0:{{ ollama_service_port }} \
+  OLLAMA_KEEP_ALIVE={{ ollama_keep_alive }} \
+  /opt/homebrew/bin/ollama serve

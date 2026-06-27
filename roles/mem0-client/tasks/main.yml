@@ -1,0 +1,138 @@
+---
+# mem0-client role — wire OpenMemory MCP entry + SessionStart recall hook
+# into the user's Claude Code configuration.
+#
+# MCP servers live in ~/.claude.json (confirmed on this machine; gitnexus,
+# terraform-registry, cf-docs are all registered there).
+# Settings/hooks live in ~/.claude/settings.json.
+#
+# All tasks are idempotent: safe to apply repeatedly.
+
+- name: Ensure ~/.claude/hooks directory exists
+  ansible.builtin.file:
+    path: "{{ ansible_facts['env']['HOME'] }}/.claude/hooks"
+    state: directory
+    mode: "0755"
+
+# ── MCP entry → ~/.claude.json ────────────────────────────────────────────
+
+- name: Check if ~/.claude.json exists
+  ansible.builtin.stat:
+    path: "{{ ansible_facts['env']['HOME'] }}/.claude.json"
+  register: claude_json_stat
+
+- name: Read existing ~/.claude.json
+  ansible.builtin.slurp:
+    path: "{{ ansible_facts['env']['HOME'] }}/.claude.json"
+  register: claude_json_raw
+  when: claude_json_stat.stat.exists
+
+- name: Set base claude.json (empty object when file missing)
+  ansible.builtin.set_fact:
+    claude_json_current: {}
+  when: not claude_json_stat.stat.exists
+
+- name: Parse existing ~/.claude.json
+  ansible.builtin.set_fact:
+    claude_json_current: "{{ claude_json_raw.content | b64decode | from_json }}"
+  when: claude_json_stat.stat.exists
+
+- name: Render MCP entry from template
+  ansible.builtin.set_fact:
+    mem0_mcp_entry: "{{ lookup('template', 'mcp.json.j2') | from_json }}"
+
+- name: Merge mem0 MCP entry into mcpServers (does not clobber other servers)
+  ansible.builtin.set_fact:
+    claude_json_merged: >-
+      {{
+        claude_json_current | combine({
+          'mcpServers': (claude_json_current.get('mcpServers', {}) | combine(mem0_mcp_entry['mcpServers']))
+        }, recursive=False)
+      }}
+
+- name: Write merged ~/.claude.json
+  ansible.builtin.copy:
+    content: "{{ claude_json_merged | to_nice_json }}\n"
+    dest: "{{ ansible_facts['env']['HOME'] }}/.claude.json"
+    mode: "0600"
+
+# ── Recall hook script → ~/.claude/hooks/ ─────────────────────────────────
+
+- name: Install mem0-recall-hook.sh
+  ansible.builtin.copy:
+    src: mem0-recall-hook.sh
+    dest: "{{ ansible_facts['env']['HOME'] }}/.claude/hooks/mem0-recall-hook.sh"
+    mode: "0755"
+
+# ── SessionStart hook → ~/.claude/settings.json ───────────────────────────
+
+- name: Check if ~/.claude/settings.json exists
+  ansible.builtin.stat:
+    path: "{{ ansible_facts['env']['HOME'] }}/.claude/settings.json"
+  register: claude_settings_stat
+
+- name: Read existing ~/.claude/settings.json
+  ansible.builtin.slurp:
+    path: "{{ ansible_facts['env']['HOME'] }}/.claude/settings.json"
+  register: claude_settings_raw
+  when: claude_settings_stat.stat.exists
+
+- name: Set base settings (empty object when file missing)
+  ansible.builtin.set_fact:
+    claude_settings_current: {}
+  when: not claude_settings_stat.stat.exists
+
+- name: Parse existing ~/.claude/settings.json
+  ansible.builtin.set_fact:
+    claude_settings_current: "{{ claude_settings_raw.content | b64decode | from_json }}"
+  when: claude_settings_stat.stat.exists
+
+- name: Build desired mem0 SessionStart hook entry
+  ansible.builtin.set_fact:
+    mem0_hook_entry:
+      type: command
+      command: "{{ ansible_facts['env']['HOME'] }}/.claude/hooks/mem0-recall-hook.sh"
+      timeout: 5
+
+- name: Collect existing SessionStart hook commands (for idempotency check)
+  ansible.builtin.set_fact:
+    existing_session_start_hooks: >-
+      {{
+        (claude_settings_current.get('hooks', {}).get('SessionStart', []) | map(attribute='hooks') | flatten) +
+        []
+      }}
+
+- name: Check if mem0 recall hook is already wired
+  ansible.builtin.set_fact:
+    mem0_hook_present: >-
+      {{
+        existing_session_start_hooks
+        | selectattr('command', 'defined')
+        | selectattr('command', 'search', 'mem0-recall-hook')
+        | list | length > 0
+      }}
+
+- name: Build updated SessionStart hooks list (append if not already present)
+  ansible.builtin.set_fact:
+    updated_session_start_hooks: >-
+      {{
+        claude_settings_current.get('hooks', {}).get('SessionStart', [])
+        + ([{'hooks': [mem0_hook_entry]}] if not mem0_hook_present else [])
+      }}
+
+- name: Merge updated hooks into settings
+  ansible.builtin.set_fact:
+    claude_settings_merged: >-
+      {{
+        claude_settings_current | combine({
+          'hooks': (claude_settings_current.get('hooks', {}) | combine({
+            'SessionStart': updated_session_start_hooks
+          }))
+        }, recursive=True)
+      }}
+
+- name: Write merged ~/.claude/settings.json
+  ansible.builtin.copy:
+    content: "{{ claude_settings_merged | to_nice_json }}\n"
+    dest: "{{ ansible_facts['env']['HOME'] }}/.claude/settings.json"
+    mode: "0600"

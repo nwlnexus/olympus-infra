@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  role_name: mem0-client
+  author: nwlnexus
+  description: Configure Mem0/OpenMemory MCP entry and SessionStart recall hook for Claude Code
+  min_ansible_version: "2.14"
+dependencies: []

@@ -5,8 +5,5 @@ local   all       all                               trust
 # (Homebrew creates a superuser matching the OS user, not "postgres")
 host    all       all           127.0.0.1/32        trust
 host    all       all           ::1/128             trust
-# Colima/Docker bridge — containers connect via host.docker.internal
-# /16 covers all Colima bridge subnet variants across versions
-host    all       vibe_kanban   192.168.0.0/16      md5
 # Tailscale CGNAT range — remote access requires password
 host    all       all           100.64.0.0/10       md5

@@ -13,6 +13,7 @@
     mode: "0755"
   become: true
   when: ollama_state == "present"
+  register: ollama_wrapper
 
 - name: Deploy Ollama LaunchDaemon plist
   ansible.builtin.template:
@@ -32,7 +33,7 @@
   changed_when: true
   when:
     - ollama_state == "present"
-    - ollama_plist is changed
+    - ollama_plist is changed or ollama_wrapper is changed
 
 - name: Bootstrap Ollama LaunchDaemon
   ansible.builtin.command: launchctl bootstrap system /Library/LaunchDaemons/homebrew.mxcl.ollama.plist
@@ -40,7 +41,7 @@
   changed_when: true
   when:
     - ollama_state == "present"
-    - ollama_plist is changed
+    - ollama_plist is changed or ollama_wrapper is changed
 
 - name: Ensure Ollama LaunchDaemon is running (kickstart)
   ansible.builtin.command: launchctl kickstart system/homebrew.mxcl.ollama
@@ -49,7 +50,7 @@
   changed_when: false
   when:
     - ollama_state == "present"
-    - ollama_plist is not changed
+    - ollama_plist is not changed and ollama_wrapper is not changed
 
 - name: Remove Ollama LaunchDaemon
   ansible.builtin.command: launchctl bootout system /Library/LaunchDaemons/homebrew.mxcl.ollama.plist

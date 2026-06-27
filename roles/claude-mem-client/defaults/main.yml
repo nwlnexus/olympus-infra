@@ -1,4 +1,0 @@
----
-claude_mem_server_url: "http://claude-mem.raptor-mimosa.ts.net:37878"
-claude_mem_project_id: "olympus"
-# claude_mem_api_key: set by playbook via 1Password lookup

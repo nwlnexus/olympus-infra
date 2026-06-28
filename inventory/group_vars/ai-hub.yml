@@ -13,9 +13,10 @@ ansible_user: ansible
 ollama_state: present
 ollama_service_port: 11434
 ollama_models:
-  - glm-4.7-flash:latest
-  - llama3.3:70b
-  - nomic-embed-text
+  # mem0/OpenMemory platform models (mnemosyne):
+  - qwen3:32b          # mem0 extraction LLM (used on infer=true adds)
+  - nomic-embed-text   # mem0 embedder (768-dim)
+  - llama3.2:3b        # OpenMemory per-add categorization (small/fast, ~0.5s)
 
 # LiteLLM — moved to management-hub k8s
 litellm_state: absent

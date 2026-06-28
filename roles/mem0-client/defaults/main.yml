@@ -1,0 +1,6 @@
+---
+mem0_url: "http://openmemory.raptor-mimosa.ts.net:8765"
+mem0_user_id: "mnemosyne"
+mem0_client_name: "claude"
+mem0_transport: "http"
+mem0_recall_top_k: 5

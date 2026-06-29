@@ -37,6 +37,7 @@
     group: wheel
     mode: "0644"
   become: true
+  notify: restart ollama
 
 - name: Bootstrap Ollama LaunchDaemon
   ansible.builtin.command:

@@ -44,3 +44,39 @@
     cmd: launchctl bootstrap system /Library/LaunchDaemons/com.olympus.ollama.plist
   become: true
   ignore_errors: true
+
+# Apply any pending plist/env change before warming, so warmup loads models
+# under the new keep_alive/max_loaded settings rather than the old ones.
+- name: Flush handlers so Ollama restarts before warmup
+  ansible.builtin.meta: flush_handlers
+
+- name: Warm up Ollama generation models
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ data_services_ollama_port }}/api/generate"
+    method: POST
+    body_format: json
+    body:
+      model: "{{ item }}"
+      prompt: "ok"
+      stream: false
+      keep_alive: "{{ data_services_ollama_keep_alive }}"
+    status_code: [200]
+    timeout: 300
+  loop: "{{ data_services_ollama_generate_warmup_models }}"
+  changed_when: false
+  become: false
+
+- name: Warm up Ollama embedding models
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ data_services_ollama_port }}/api/embeddings"
+    method: POST
+    body_format: json
+    body:
+      model: "{{ item }}"
+      prompt: "ok"
+      keep_alive: "{{ data_services_ollama_keep_alive }}"
+    status_code: [200]
+    timeout: 300
+  loop: "{{ data_services_ollama_embed_warmup_models }}"
+  changed_when: false
+  become: false

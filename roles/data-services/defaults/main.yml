@@ -44,3 +44,9 @@ data_services_ollama_model_dir: "{{ data_services_nvme_root }}/data/ollama"
 data_services_ollama_keep_alive: "24h"
 data_services_ollama_max_loaded_models: 3
 data_services_ollama_num_parallel: 4
+# Models warmed after an Ollama (re)start so the first real request is hot.
+data_services_ollama_generate_warmup_models:
+  - "llama3.2:3b"
+  - "qwen3:32b"
+data_services_ollama_embed_warmup_models:
+  - "nomic-embed-text"

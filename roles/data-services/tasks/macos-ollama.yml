@@ -37,57 +37,9 @@
     group: wheel
     mode: "0644"
   become: true
-  notify: restart ollama
 
 - name: Bootstrap Ollama LaunchDaemon
   ansible.builtin.command:
     cmd: launchctl bootstrap system /Library/LaunchDaemons/com.olympus.ollama.plist
   become: true
   ignore_errors: true
-
-# Apply any pending plist/env change before warming, so warmup loads models
-# under the new keep_alive/max_loaded settings rather than the old ones.
-- name: Flush handlers so Ollama restarts before warmup
-  ansible.builtin.meta: flush_handlers
-
-- name: Wait for Ollama HTTP to accept connections
-  ansible.builtin.wait_for:
-    host: 127.0.0.1
-    port: "{{ data_services_ollama_port }}"
-    delay: 2
-    timeout: 30
-  become: false
-
-# Assumes the warmup models are already pulled on the host. /api/generate
-# auto-pulls a missing model, which for qwen3:32b (~20GB) can exceed the 300s
-# timeout below and fail the play — pre-pull models before running this role.
-- name: Warm up Ollama generation models
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ data_services_ollama_port }}/api/generate"
-    method: POST
-    body_format: json
-    body:
-      model: "{{ item }}"
-      prompt: "ok"
-      stream: false
-      keep_alive: "{{ data_services_ollama_keep_alive }}"
-    status_code: [200]
-    timeout: 300
-  loop: "{{ data_services_ollama_generate_warmup_models }}"
-  changed_when: false
-  become: false
-
-- name: Warm up Ollama embedding models
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ data_services_ollama_port }}/api/embeddings"
-    method: POST
-    body_format: json
-    body:
-      model: "{{ item }}"
-      prompt: "ok"
-      keep_alive: "{{ data_services_ollama_keep_alive }}"
-    status_code: [200]
-    timeout: 300
-  loop: "{{ data_services_ollama_embed_warmup_models }}"
-  changed_when: false
-  become: false

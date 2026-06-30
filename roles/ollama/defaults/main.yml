@@ -2,4 +2,17 @@
 ollama_state: present
 ollama_models: []
 ollama_service_port: 11434
-ollama_keep_alive: "5m"
+# Residency/throughput tuning. 24h keeps nomic+llama3.2:3b effectively always
+# warm; qwen3:32b (~20G) reloads only after a full idle day. MAX_LOADED_MODELS=3
+# lets all three be co-resident instead of evicting each other.
+ollama_keep_alive: "24h"
+ollama_max_loaded_models: 3
+ollama_num_parallel: 4
+# Models warmed after a (re)start so the first real request is hot. Must be a
+# subset of ollama_models (this role pulls those first). /api/generate auto-pulls
+# a missing model, which for qwen3:32b (~20G) can exceed the warmup timeout.
+ollama_generate_warmup_models:
+  - "llama3.2:3b"
+  - "qwen3:32b"
+ollama_embed_warmup_models:
+  - "nomic-embed-text"

@@ -4,6 +4,23 @@
     name: ollama
     state: "{{ 'present' if ollama_state == 'present' else 'absent' }}"
 
+# Legacy duplicate: an earlier data-services role installed a second LaunchDaemon
+# (com.olympus.ollama) that loops failing to bind :11434 (homebrew.mxcl.ollama,
+# this role, owns it). Bootout + remove it so only this role manages Ollama.
+- name: Bootout stray com.olympus.ollama LaunchDaemon (legacy duplicate)
+  ansible.builtin.command: launchctl bootout system/com.olympus.ollama
+  become: true
+  failed_when: false
+  changed_when: false
+  when: ollama_state == "present"
+
+- name: Remove stray com.olympus.ollama plist (superseded by homebrew.mxcl.ollama)
+  ansible.builtin.file:
+    path: /Library/LaunchDaemons/com.olympus.ollama.plist
+    state: absent
+  become: true
+  when: ollama_state == "present"
+
 - name: Deploy Ollama wrapper script
   ansible.builtin.template:
     src: ollama-serve.j2
@@ -103,3 +120,36 @@
     - item not in ollama_pulled_models
   changed_when: true
   timeout: 7200
+
+# Warm models so the first interactive add doesn't pay a cold load. Runs after
+# the readiness poll and model pull above, so Ollama is up and models exist.
+- name: Warm up Ollama generation models
+  ansible.builtin.uri:
+    url: "http://localhost:{{ ollama_service_port }}/api/generate"
+    method: POST
+    body_format: json
+    body:
+      model: "{{ item }}"
+      prompt: "ok"
+      stream: false
+      keep_alive: "{{ ollama_keep_alive }}"
+    status_code: [200]
+    timeout: 300
+  loop: "{{ ollama_generate_warmup_models }}"
+  changed_when: false
+  when: ollama_state == "present"
+
+- name: Warm up Ollama embedding models
+  ansible.builtin.uri:
+    url: "http://localhost:{{ ollama_service_port }}/api/embeddings"
+    method: POST
+    body_format: json
+    body:
+      model: "{{ item }}"
+      prompt: "ok"
+      keep_alive: "{{ ollama_keep_alive }}"
+    status_code: [200]
+    timeout: 300
+  loop: "{{ ollama_embed_warmup_models }}"
+  changed_when: false
+  when: ollama_state == "present"

@@ -5,4 +5,6 @@
 exec sudo -Hu {{ ansible_user }} /usr/bin/env \
   OLLAMA_HOST=0.0.0.0:{{ ollama_service_port }} \
   OLLAMA_KEEP_ALIVE={{ ollama_keep_alive }} \
+  OLLAMA_MAX_LOADED_MODELS={{ ollama_max_loaded_models }} \
+  OLLAMA_NUM_PARALLEL={{ ollama_num_parallel }} \
   /opt/homebrew/bin/ollama serve

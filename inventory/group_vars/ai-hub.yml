@@ -17,6 +17,9 @@ ollama_models:
   - qwen3:32b          # mem0 extraction LLM (used on infer=true adds)
   - nomic-embed-text   # mem0 embedder (768-dim)
   - llama3.2:3b        # OpenMemory per-add categorization (small/fast, ~0.5s)
+  # local agentic-coding executor for olympus-sdk #197 (issue -> local-LLM -> PR):
+  - qwen3.6:27b-mlx    # vetted via aider --auto-test (43/43); 262K ctx + clean edit
+                       # format. Pull-only, on-demand load (time-shares RAM w/ qwen3:32b).
 
 # LiteLLM — moved to management-hub k8s
 litellm_state: absent

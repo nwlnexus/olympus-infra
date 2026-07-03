@@ -1,8 +1,11 @@
 ---
-- name: Install Ollama via Homebrew
+- name: Install/upgrade Ollama via Homebrew
   community.general.homebrew:
     name: ollama
-    state: "{{ 'present' if ollama_state == 'present' else 'absent' }}"
+    # ollama_pkg_state (default `latest`) drives whether present installs stay
+    # pinned or track upstream. Absent when the role is disabled.
+    state: "{{ ollama_pkg_state if ollama_state == 'present' else 'absent' }}"
+  register: ollama_pkg
 
 # Legacy duplicate: an earlier data-services role installed a second LaunchDaemon
 # (com.olympus.ollama) that loops failing to bind :11434 (homebrew.mxcl.ollama,
@@ -60,7 +63,7 @@
   until: ollama_reload.rc == 0
   when:
     - ollama_state == "present"
-    - ollama_plist is changed or ollama_wrapper is changed
+    - ollama_plist is changed or ollama_wrapper is changed or ollama_pkg is changed
 
 # Unchanged run: normally just kickstart the loaded daemon. But if a prior run left it
 # down (e.g. a bootstrap that failed the race before this fix), bootstrap it instead of
@@ -76,7 +79,7 @@
   changed_when: false
   when:
     - ollama_state == "present"
-    - ollama_plist is not changed and ollama_wrapper is not changed
+    - ollama_plist is not changed and ollama_wrapper is not changed and ollama_pkg is not changed
 
 - name: Remove Ollama LaunchDaemon
   ansible.builtin.command: launchctl bootout system /Library/LaunchDaemons/homebrew.mxcl.ollama.plist

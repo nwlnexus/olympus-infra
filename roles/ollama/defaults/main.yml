@@ -1,5 +1,10 @@
 ---
 ollama_state: present
+# Homebrew package state: `latest` keeps ollama current (upgrades on each run);
+# `present` installs-but-never-upgrades. ai-hub tracks `latest` so the MLX/GGUF
+# runners stay patched (0.20.2 shipped an MLX prefix-cache crash that broke
+# multi-turn agentic runs — fixed upstream by 0.31.x).
+ollama_pkg_state: latest
 ollama_models: []
 ollama_service_port: 11434
 # Residency/throughput tuning. 24h keeps nomic+llama3.2:3b effectively always
@@ -7,7 +12,14 @@ ollama_service_port: 11434
 # lets all three be co-resident instead of evicting each other.
 ollama_keep_alive: "24h"
 ollama_max_loaded_models: 3
-ollama_num_parallel: 4
+# NUM_PARALLEL=1 is the unified mem0+coding profile. With >1, each parallel slot
+# gets its own KV cache, so qwen3:32b at a long coding context balloons past RAM
+# and evicts everything (the mem0-vs-coding conflict in olympus-sdk epic #197).
+# At 1, mem0's occasional extraction and a long-running agentic coding session
+# share ONE loaded qwen3:32b (serialized, no extra RAM) — co-residency holds and
+# agentic coding gets the long context it needs. mem0 concurrency of 1 is ample
+# for a personal memory system.
+ollama_num_parallel: 1
 # Models warmed after a (re)start so the first real request is hot. Must be a
 # subset of ollama_models (this role pulls those first). /api/generate auto-pulls
 # a missing model, which for qwen3:32b (~20G) can exceed the warmup timeout.

@@ -14,12 +14,14 @@ ollama_state: present
 ollama_service_port: 11434
 ollama_models:
   # mem0/OpenMemory platform models (mnemosyne):
-  - qwen3:32b          # mem0 extraction LLM (used on infer=true adds)
   - nomic-embed-text   # mem0 embedder (768-dim)
   - llama3.2:3b        # OpenMemory per-add categorization (small/fast, ~0.5s)
-  # local agentic-coding executor for olympus-sdk #197 (issue -> local-LLM -> PR):
-  - qwen3.6:27b-mlx    # vetted via aider --auto-test (43/43); 262K ctx + clean edit
-                       # format. Pull-only, on-demand load (time-shares RAM w/ qwen3:32b).
+  # qwen3.6:27b-mlx = the ONE big model — serves BOTH mem0 fact-extraction
+  # (tool-calling, verified) AND agentic coding for olympus-sdk #197. Replaced
+  # qwen3:32b entirely: qwen3.6 has 262K native context + clean aider edit-format
+  # and tool-calling, so a second extraction model is unnecessary (frees ~31G,
+  # removes the mem0-vs-coding time-share). OpenMemory must set LLM_MODEL=qwen3.6:27b-mlx.
+  - qwen3.6:27b-mlx
 
 # LiteLLM — moved to management-hub k8s
 litellm_state: absent

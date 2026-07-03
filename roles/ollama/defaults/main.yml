@@ -7,25 +7,24 @@ ollama_state: present
 ollama_pkg_state: latest
 ollama_models: []
 ollama_service_port: 11434
-# Residency/throughput tuning. 24h keeps nomic + llama3.2:3b + qwen3.6:27b-mlx
-# effectively always warm. MAX_LOADED_MODELS=3 lets all three be co-resident
-# instead of evicting each other (all three fit: nomic ~0.4G, llama3.2:3b, and
-# the single big model qwen3.6:27b-mlx ~19G nvfp4).
+# Residency/throughput tuning. 24h keeps the mem0 write path warm: nomic (embed) +
+# llama3.2:3b (categorize) + qwen2.5:7b-instruct (extraction). MAX_LOADED_MODELS=3
+# holds those three co-resident (~0.4G + 2G + 5G). The coding model qwen3.6:27b-mlx
+# (~19G) is NOT warmed — it loads on demand when a coding job dispatches, evicting an
+# idle model. So at any moment either the mem0 trio or (mem0 + coding) is resident.
 ollama_keep_alive: "24h"
 ollama_max_loaded_models: 3
-# NUM_PARALLEL=1 is the unified mem0+coding profile. ONE model — qwen3.6:27b-mlx —
-# serves both mem0 fact-extraction (tool-calling) and agentic coding; there is no
-# separate big extraction model, so the mem0-vs-coding RAM time-share in epic #197
-# dissolves. At 1 there's no per-slot KV balloon and the model gets full context
-# for coding; the tradeoff is that a long coding job serializes ahead of mem0
-# writes (they queue). Bump to 2 if concurrent mem0+coding matters — now safe on
-# the ~19G model (dropping qwen3:32b freed ~31G; qwen3:32b was what ballooned at >1).
+# NUM_PARALLEL=1. Two distinct workloads on this box: (1) mem0 fact-extraction —
+# qwen2.5:7b-instruct, fast + NON-thinking (see below), and (2) agentic coding —
+# qwen3.6:27b-mlx (thinking, 262K ctx). Kept split because qwen3.6-mlx's mandatory
+# thinking makes extraction ~28s+/call, which blocks OpenMemory's single uvicorn
+# worker past its ~180s liveness probe → pod SIGKILL. qwen2.5:7b extracts in seconds.
+# At 1 there's no per-slot KV balloon; the coding model gets full context.
 ollama_num_parallel: 1
-# Models warmed after a (re)start so the first real request is hot. Must be a
-# subset of ollama_models (this role pulls those first). /api/generate auto-pulls
-# a missing model, which for a big model (~19G) can exceed the warmup timeout.
+# Models warmed after a (re)start so the first real request is hot. Must be a subset
+# of ollama_models. Warm the mem0 path only; the ~19G coding model loads on demand.
 ollama_generate_warmup_models:
   - "llama3.2:3b"
-  - "qwen3.6:27b-mlx"
+  - "qwen2.5:7b-instruct"
 ollama_embed_warmup_models:
   - "nomic-embed-text"

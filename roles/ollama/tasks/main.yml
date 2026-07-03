@@ -43,27 +43,36 @@
   when: ollama_state == "present"
   register: ollama_plist
 
-- name: Bootout existing Ollama LaunchDaemon (if running)
-  ansible.builtin.command: launchctl bootout system/homebrew.mxcl.ollama
+# `launchctl bootout` is asynchronous: it returns before teardown finishes, so a
+# bootstrap fired immediately after races the still-unloading service and fails with
+# "Bootstrap failed: 5: Input/output error". Bundle bootout+bootstrap into one block
+# and retry until the bootstrap actually takes (rc 0), which it does once teardown
+# settles. `bootout || true` tolerates the service not being loaded on the first pass.
+- name: Reload Ollama LaunchDaemon (bootout is async — retry bootstrap until it takes)
+  ansible.builtin.shell: |
+    launchctl bootout system/homebrew.mxcl.ollama 2>/dev/null || true
+    launchctl bootstrap system /Library/LaunchDaemons/homebrew.mxcl.ollama.plist
   become: true
-  failed_when: false
+  register: ollama_reload
   changed_when: true
+  retries: 5
+  delay: 3
+  until: ollama_reload.rc == 0
   when:
     - ollama_state == "present"
     - ollama_plist is changed or ollama_wrapper is changed
 
-- name: Bootstrap Ollama LaunchDaemon
-  ansible.builtin.command: launchctl bootstrap system /Library/LaunchDaemons/homebrew.mxcl.ollama.plist
+# Unchanged run: normally just kickstart the loaded daemon. But if a prior run left it
+# down (e.g. a bootstrap that failed the race before this fix), bootstrap it instead of
+# kickstarting a service that isn't loaded — otherwise the readiness poll below times out.
+- name: Ensure Ollama LaunchDaemon is running (bootstrap if absent, else kickstart)
+  ansible.builtin.shell: |
+    if launchctl print system/homebrew.mxcl.ollama >/dev/null 2>&1; then
+      launchctl kickstart system/homebrew.mxcl.ollama
+    else
+      launchctl bootstrap system /Library/LaunchDaemons/homebrew.mxcl.ollama.plist
+    fi
   become: true
-  changed_when: true
-  when:
-    - ollama_state == "present"
-    - ollama_plist is changed or ollama_wrapper is changed
-
-- name: Ensure Ollama LaunchDaemon is running (kickstart)
-  ansible.builtin.command: launchctl kickstart system/homebrew.mxcl.ollama
-  become: true
-  failed_when: false
   changed_when: false
   when:
     - ollama_state == "present"

@@ -157,6 +157,13 @@
     reload: true
   loop:
     - { name: "net.core.somaxconn", value: "65535" }
+    # UDP receive/send buffer ceilings for QUIC (cloudflared tunnel connectors).
+    # quic-go wants ~7 MiB; the default 208 KiB causes packet loss →
+    # "no recent network activity" timeouts → tunnel control-stream failures →
+    # intermittent edge 502s. These net.core.* keys are global (non-namespaced),
+    # so a host sysctl reaches all pods incl. cloudflared. See olympus-sdk#254.
+    - { name: "net.core.rmem_max", value: "7500000" }
+    - { name: "net.core.wmem_max", value: "7500000" }
     - { name: "net.ipv4.tcp_max_syn_backlog", value: "65535" }
     - { name: "net.ipv4.tcp_keepalive_time", value: "600" }
     - { name: "net.ipv4.tcp_keepalive_intvl", value: "60" }

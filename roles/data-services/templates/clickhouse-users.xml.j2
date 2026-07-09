@@ -18,6 +18,11 @@
       <max_memory_usage>10000000000</max_memory_usage>
       <use_uncompressed_cache>0</use_uncompressed_cache>
       <load_balancing>random</load_balancing>
+      <!-- Disable runtime expression JIT: this Homebrew build (v26.5.x) throws
+           CANNOT_COMPILE_CODE "Could not find symbol …" on compiled expressions,
+           breaking cluster-info / telemetry panels. See olympus-sdk#254. -->
+      <compile_expressions>0</compile_expressions>
+      <compile_aggregate_expressions>0</compile_aggregate_expressions>
     </default>
   </profiles>
   <quotas>

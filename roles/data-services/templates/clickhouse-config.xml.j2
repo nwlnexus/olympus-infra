@@ -23,4 +23,15 @@
 
   <max_connections>4096</max_connections>
   <max_server_memory_usage_to_ram_ratio>0.20</max_server_memory_usage_to_ram_ratio>
+
+  <!-- Query logging: this custom config replaces ClickHouse's default (which
+       ships <query_log> enabled), so without this block system.query_log is
+       never created and query-log-backed dashboards fail with UNKNOWN_TABLE.
+       TTL bounds disk on the Mac Studio. See olympus-sdk#254. -->
+  <query_log>
+    <database>system</database>
+    <table>query_log</table>
+    <engine>ENGINE = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 14 DAY DELETE</engine>
+    <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+  </query_log>
 </clickhouse>

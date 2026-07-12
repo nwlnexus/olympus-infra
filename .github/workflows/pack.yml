@@ -1,0 +1,10 @@
+name: pack
+on:
+  push:
+    branches: [main]
+    paths-ignore: [".llm/**"]
+  workflow_dispatch:
+jobs:
+  pack:
+    uses: nwlnexus/nix-darwin-hm/.github/workflows/repomix-pack.yml@main
+    secrets: inherit

@@ -44,7 +44,7 @@ cloudflared_bootstrap_only: false
 cloudflared_ingress_hostname: ""
 # The backend service cloudflared forwards all traffic to (catch-all rule).
 # management-hub: https://traefik.kube-system:443
-# ai-hub:         https://traefik.traefik:443
+# data-hub:       https://traefik.traefik:443
 cloudflared_catch_all_service: "https://traefik.kube-system:443"
 
 # --- GitOps mode (push credentials to 1Password instead of k8s Secret) ---

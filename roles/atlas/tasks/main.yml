@@ -74,12 +74,32 @@
   changed_when: false
   when: atlas_state == "present"
 
+- name: Locate 1Password service account token
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ atlas_op_token_files }}"
+  register: _op_token_candidates
+  become: true
+  when:
+    - atlas_state == "present"
+    - _atlas_status.rc != 0
+
+- name: Fail when atlas is unregistered and no 1Password token is present
+  ansible.builtin.fail:
+    msg: >-
+      atlas is not registered on {{ inventory_hostname }} and no 1Password
+      service-account token was found at any of {{ atlas_op_token_files | join(', ') }}.
+      Place the token (bootstrap-user role) or set atlas_state: absent.
+  when:
+    - atlas_state == "present"
+    - _atlas_status.rc != 0
+    - _op_token_candidates.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists') | list | length == 0
+
 - name: Read 1Password service account token
   ansible.builtin.slurp:
-    src: "{{ atlas_op_token_file }}"
+    src: "{{ (_op_token_candidates.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists') | first).item }}"
   register: _op_token
   no_log: true
-  failed_when: false
   become: true
   when:
     - atlas_state == "present"
@@ -99,7 +119,6 @@
   when:
     - atlas_state == "present"
     - _atlas_status.rc != 0
-    - _op_token.content is defined
 
 - name: Register atlas with Hermes
   ansible.builtin.command:

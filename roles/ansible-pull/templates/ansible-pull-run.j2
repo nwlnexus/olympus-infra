@@ -2,7 +2,7 @@
 # Managed by Ansible (ansible-pull role) — do not edit manually
 set -euo pipefail
 
-HERMES_URL="{{ hermes_url | default('https://hermes.nwlnexus.net') }}"
+HERMES_URL="{{ hermes_url | default('https://api.nwlnexus.io') }}"
 
 # Paths. Each accepts a WRAPPER_<NAME> env-var override so BATS tests can
 # point them at a temp sandbox without rendering a different template.

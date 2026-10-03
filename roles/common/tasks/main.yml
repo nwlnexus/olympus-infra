@@ -252,6 +252,30 @@
     - logging
     - maintenance
 
+# cloud-init 25.x moved its logrotate conffile from the cloud-init package to
+# cloud-init-base, but dpkg leaves the old /etc/logrotate.d/cloud-init behind
+# as an obsolete conffile. Both match /var/log/cloud-init*.log, so logrotate
+# reports "duplicate log entry" and logrotate.service fails on every run.
+- name: Check for cloud-init-base logrotate config
+  ansible.builtin.stat:
+    path: /etc/logrotate.d/cloud-init-base
+  register: _common_cloud_init_base_logrotate
+  when: ansible_facts['os_family'] == 'Debian'
+  tags:
+    - logging
+    - maintenance
+
+- name: Remove obsolete cloud-init logrotate config superseded by cloud-init-base
+  ansible.builtin.file:
+    path: /etc/logrotate.d/cloud-init
+    state: absent
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - _common_cloud_init_base_logrotate.stat.exists | default(false)
+  tags:
+    - logging
+    - maintenance
+
 - name: Create log rotation configurations for custom logs
   ansible.builtin.template:
     src: custom-logrotate.j2

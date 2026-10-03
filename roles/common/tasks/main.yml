@@ -264,6 +264,7 @@
   tags:
     - logging
     - maintenance
+    - cloud-init-logrotate
 
 - name: Remove obsolete cloud-init logrotate config superseded by cloud-init-base
   ansible.builtin.file:
@@ -275,6 +276,7 @@
   tags:
     - logging
     - maintenance
+    - cloud-init-logrotate
 
 - name: Create log rotation configurations for custom logs
   ansible.builtin.template:

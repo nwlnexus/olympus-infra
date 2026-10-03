@@ -109,3 +109,28 @@
     - /etc/systemd/system/ansible-pull.timer
   become: true
   when: ansible_pull_state == 'absent'
+
+- name: Ensure /etc/olympus exists
+  ansible.builtin.file:
+    path: /etc/olympus
+    state: directory
+  become: true
+  when: ansible_pull_state == "present"
+
+- name: Write managed-by marker for atlas inventory
+  ansible.builtin.template:
+    src: managed-by.json.j2
+    dest: /etc/olympus/managed-by
+    owner: root
+    mode: "0644"
+  become: true
+  when: ansible_pull_state == "present"
+
+# After removal, /etc/olympus/hermes-token (if present) still counts as
+# fallback evidence of Ansible management in the atlas host inventory.
+- name: Remove managed-by marker (state=absent)
+  ansible.builtin.file:
+    path: /etc/olympus/managed-by
+    state: absent
+  become: true
+  when: ansible_pull_state == "absent"

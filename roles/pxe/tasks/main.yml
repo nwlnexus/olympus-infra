@@ -1,4 +1,9 @@
 ---
+# Applied in push mode only, by olympus-sdk infra/push-playbooks/styx-setup.yml
+# (host vars: olympus-sdk infra/inventories/host_vars/styx/). From olympus-sdk:
+#   make styx-setup TAGS=pxe
+# The nightly ansible-pull playbook (playbooks/pull/styx.yml) does not include
+# this role.
 - ansible.builtin.import_tasks: install.yml
   when: pxe_state == 'present'
 

@@ -1,0 +1,16 @@
+# Managed by Ansible (pxe role) — do not edit manually
+#
+# The TFTP root ({{ pxe_tftp_root }}) may live on a network/iSCSI
+# filesystem. Start after local and remote filesystems are up, and keep
+# retrying while the root is missing (the init script exits 1 with
+# "<dir> missing, aborting"), so tftpd comes up on its own once a late
+# mount appears.
+#
+# Deliberately not RequiresMountsFor=: a failed mount at boot would then fail
+# this unit with a dependency error, which systemd never retries.
+[Unit]
+After=local-fs.target remote-fs.target
+
+[Service]
+Restart=on-failure
+RestartSec={{ pxe_tftpd_restart_sec }}

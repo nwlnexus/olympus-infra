@@ -1,0 +1,13 @@
+# Managed by Ansible (pxe role) — do not edit manually
+#
+# Start proxyDHCP only once the LAN is configured, and retry if it still
+# fails (e.g. the interface has no address yet). Together with bind-dynamic
+# in /etc/dnsmasq.d/pxe.conf this stops dnsmasq dying at boot with
+# "unknown interface".
+[Unit]
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Restart=on-failure
+RestartSec={{ pxe_dnsmasq_restart_sec }}

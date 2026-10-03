@@ -45,6 +45,16 @@ pxe_hosts: []
 # dnsmasq proxyDHCP — arch-aware PXE boot filename selection
 pxe_proxy_dhcp_enabled: true
 pxe_dhcp_network: "192.168.253.0/24"   # LAN CIDR dnsmasq listens on for PXE
+# Interface dnsmasq binds to (interface= + bind-dynamic). Empty = auto-detect
+# the interface that holds pxe_server_ip from gathered facts; if nothing
+# matches, no interface= line is written and dnsmasq listens on all of them.
+pxe_dhcp_interface: ""
+
+# systemd restart back-off for the PXE daemons. Restart=on-failure lets them
+# recover on their own when a dependency (LAN address, iSCSI-backed TFTP root)
+# shows up after their first start attempt at boot.
+pxe_dnsmasq_restart_sec: 5
+pxe_tftpd_restart_sec: 15
 
 # Raspberry Pi 4 / CM4 native PXE (wildcard — works for any Pi 4 without per-serial config)
 # Pi firmware loads netboot.xyz-arm64.efi as kernel → enters iPXE two-stage flow

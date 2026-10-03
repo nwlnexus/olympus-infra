@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Managed by Ansible (ansible-pull role) — do not edit manually -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
@@ -15,16 +16,24 @@
   <integer>{{ ansible_pull_interval_seconds }}</integer>
   <key>RunAtLoad</key>
   <false/>
+  <!-- The wrapper writes the full ansible-pull output to {{ ansible_pull_log_file }};
+       launchd.log only receives the wrapper's status/error lines. -->
   <key>StandardOutPath</key>
-  <string>{{ ansible_pull_log_file }}</string>
+  <string>{{ ansible_pull_log_dir }}/launchd.log</string>
   <key>StandardErrorPath</key>
-  <string>{{ ansible_pull_log_file }}</string>
+  <string>{{ ansible_pull_log_dir }}/launchd.log</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
     <string>/var/{{ ansible_pull_user }}</string>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- macOS has no systemd StateDirectory/RuntimeDirectory; these dirs are
+         created by the ansible-pull role, owned by {{ ansible_pull_user }}. -->
+    <key>WRAPPER_CACHE_DIR</key>
+    <string>{{ ansible_pull_state_dir }}</string>
+    <key>WRAPPER_RUNTIME_DIR</key>
+    <string>{{ ansible_pull_runtime_dir }}</string>
   </dict>
 </dict>
 </plist>

@@ -1,18 +1,67 @@
 ---
+- name: Validate ansible-pull configuration
+  ansible.builtin.assert:
+    that:
+      - ansible_pull_inventory | default('') | length > 0
+      - ansible_pull_playbook | default('') | length > 0
+    fail_msg: >-
+      ansible_pull_inventory and ansible_pull_playbook must be set for
+      {{ inventory_hostname }} (got inventory='{{ ansible_pull_inventory }}',
+      playbook='{{ ansible_pull_playbook }}'). Refusing to render a wrapper
+      that cannot run.
+    quiet: true
+  when: ansible_pull_state == "present"
+
 - name: Ensure ansible-pull log directory exists
   ansible.builtin.file:
     path: "{{ ansible_pull_log_dir }}"
     state: directory
     owner: "{{ ansible_pull_user }}"
-    group: "{{ 'sudo' if ansible_facts['os_family'] != 'Darwin' else 'admin' }}"
+    group: "{{ ansible_pull_user if ansible_facts['os_family'] != 'Darwin' else 'admin' }}"
     mode: "0755"
   become: true
   when: ansible_pull_state == "present"
+
+# State + runtime dirs for the wrapper. On Linux systemd also manages them
+# (StateDirectory=/RuntimeDirectory=); creating them here makes manual runs
+# work and is required on macOS, where nothing else creates them.
+- name: Ensure ansible-pull state and runtime directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ansible_pull_user }}"
+    group: "{{ ansible_pull_user if ansible_facts['os_family'] != 'Darwin' else 'admin' }}"
+    mode: "0750"
+  loop:
+    - "{{ ansible_pull_state_dir }}"
+    - "{{ ansible_pull_runtime_dir }}"
+  become: true
+  when: ansible_pull_state == "present"
+
+# The wrapper runs as ansible_pull_user and must read the Connect token it
+# exports (playbooks/place-connect-token.yml historically wrote it root 0600,
+# which made every run die). Only adjusts the file if it exists.
+- name: Check for 1Password Connect token
+  ansible.builtin.stat:
+    path: /etc/olympus/op-connect-token
+  register: _ansible_pull_connect_token
+  become: true
+  when: ansible_pull_state == "present"
+
+- name: Make 1Password Connect token readable by the ansible-pull user
+  ansible.builtin.file:
+    path: /etc/olympus/op-connect-token
+    owner: "{{ ansible_pull_user }}"
+    mode: "0600"
+  become: true
+  when:
+    - ansible_pull_state == "present"
+    - _ansible_pull_connect_token.stat.exists | default(false)
 
 - name: ansible-pull — macOS (LaunchDaemon)
   ansible.builtin.include_tasks: macos.yml
   when: ansible_facts['os_family'] == "Darwin"
 
-- name: ansible-pull — Linux (crontab)
+- name: ansible-pull — Linux (systemd timer)
   ansible.builtin.include_tasks: linux.yml
   when: ansible_facts['os_family'] != "Darwin"

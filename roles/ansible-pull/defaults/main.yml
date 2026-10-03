@@ -3,19 +3,34 @@ ansible_pull_state: present
 ansible_pull_repo: https://github.com/nwlnexus/olympus-infra.git
 ansible_pull_interval: "1h"           # systemd OnUnitActiveSec — keep in sync with ansible_pull_interval_seconds
 ansible_pull_interval_seconds: 3600   # macOS plist StartInterval (integer seconds) — keep in sync with ansible_pull_interval
+# systemd TimeoutStartSec for one run. A hung run is killed and reported as a
+# failure instead of silently blocking every later timer activation.
+ansible_pull_timeout: "2h"
+# Linux timer state after the role runs: started (default) or stopped. Pass
+# `-e ansible_pull_timer_state=stopped` to install/upgrade without arming it.
+ansible_pull_timer_state: started
 
-# Service identity that owns the cron job, log dir, and pull workspace.
+# Service identity that owns the scheduler job, log dir, and pull workspace.
 ansible_pull_user: ansible
 
-# Old cron owners to clean up by the one-shot migration task.
-ansible_pull_legacy_users: []
+# Owners of legacy `olympus-ansible-pull` cron entries to remove (Linux), so
+# the systemd timer is the only scheduler. Users that do not exist are a no-op.
+ansible_pull_legacy_users:
+  - "{{ ansible_pull_user }}"
+  - root
 
-# Set per-host in inventory group_vars
-ansible_pull_inventory: ""   # e.g. inventory/management.yml
+# Set per-host in inventory group_vars/host_vars. Both are required when
+# ansible_pull_state is present; the role fails if either is empty.
+ansible_pull_inventory: ""   # e.g. inventory/compute-hub.yml
 ansible_pull_playbook: ""    # e.g. playbooks/pull/olympus.yml
 
 # Optional --limit flag for ansible-pull.
 ansible_pull_limit: ""
+
+# Optional --skip-tags for scheduled runs (comma-separated role tags), used to
+# keep known-unsafe or known-broken roles out of the hourly run on a host
+# until they are fixed. The wrapper logs the full command line every run.
+ansible_pull_skip_tags: ""
 
 # macOS: path to ansible-pull binary installed via Homebrew
 ansible_pull_bin_macos: /opt/homebrew/bin/ansible-pull
@@ -24,3 +39,12 @@ ansible_pull_bin_linux: /usr/bin/ansible-pull
 
 ansible_pull_log_dir: /var/log/ansible-pull
 ansible_pull_log_file: "{{ ansible_pull_log_dir }}/run.log"
+
+# Wrapper state (classify cache, pending Hermes completions) and per-run
+# extra-vars files. The role creates both, owned by ansible_pull_user.
+# Linux: the systemd unit uses StateDirectory=olympus / RuntimeDirectory=olympus
+# (/var/lib/olympus, /run/olympus), which take precedence; these values are the
+# fallback for manual runs. macOS: passed to the wrapper by the LaunchDaemon
+# (/run is not writable there and /var/run is wiped at boot).
+ansible_pull_state_dir: /var/lib/olympus
+ansible_pull_runtime_dir: "{{ ansible_pull_state_dir }}/run"

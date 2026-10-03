@@ -8,10 +8,22 @@
     update_cache: true
   become: true
 
-# One-shot migration: remove legacy cron entries from older cron-based
-# ansible-pull deployments. Configured via `ansible_pull_legacy_users` in
-# host_vars (default: []). Idempotent — `state: absent` cron task is a no-op
-# once the legacy entry is gone.
+# The wrapper needs jq + curl for Hermes classify. Never removed on absent:
+# other tooling depends on them.
+- name: Install wrapper dependencies (Linux)
+  ansible.builtin.apt:
+    name:
+      - jq
+      - curl
+    state: present
+  become: true
+  when: ansible_pull_state == 'present'
+
+# Exactly one scheduler per host: remove legacy `olympus-ansible-pull` cron
+# entries from older cron-based deployments (e.g. styx ran the pull playbook
+# from the ansible user's crontab alongside the systemd timer). Owners come
+# from `ansible_pull_legacy_users` (default: the service user and root).
+# Idempotent; a user without a crontab, or that does not exist, is a no-op.
 - name: Remove legacy ansible-pull cron from old owners (one-shot migration)
   ansible.builtin.cron:
     name: olympus-ansible-pull
@@ -23,16 +35,14 @@
 
 # ── present path ──────────────────────────────────────────────────────────────
 
-- name: Ensure /opt/ansible-pull and log directories exist
+# The log directory is handled in main.yml.
+- name: Ensure /opt/ansible-pull exists
   ansible.builtin.file:
-    path: "{{ item.path }}"
+    path: /opt/ansible-pull
     state: directory
-    owner: "{{ item.owner }}"
-    group: "{{ item.owner }}"
-    mode: "{{ item.mode }}"
-  loop:
-    - { path: /opt/ansible-pull, owner: ansible, mode: '0750' }
-    - { path: "{{ ansible_pull_log_dir }}", owner: ansible, mode: '0755' }
+    owner: "{{ ansible_pull_user }}"
+    group: "{{ ansible_pull_user }}"
+    mode: '0750'
   become: true
   when: ansible_pull_state == 'present'
 
@@ -40,8 +50,8 @@
   ansible.builtin.copy:
     src: parse-play-recap.sh
     dest: /opt/ansible-pull/parse-play-recap.sh
-    owner: ansible
-    group: ansible
+    owner: "{{ ansible_pull_user }}"
+    group: "{{ ansible_pull_user }}"
     mode: '0750'
   become: true
   when: ansible_pull_state == 'present'
@@ -50,8 +60,8 @@
   ansible.builtin.template:
     src: ansible-pull-run.j2
     dest: /opt/ansible-pull/ansible-pull-run
-    owner: ansible
-    group: ansible
+    owner: "{{ ansible_pull_user }}"
+    group: "{{ ansible_pull_user }}"
     mode: '0750'
   become: true
   when: ansible_pull_state == 'present'
@@ -64,7 +74,6 @@
     group: root
     mode: '0644'
   become: true
-  register: _service_unit
   when: ansible_pull_state == 'present'
 
 - name: Deploy ansible-pull systemd timer unit
@@ -75,14 +84,17 @@
     group: root
     mode: '0644'
   become: true
-  register: _timer_unit
   when: ansible_pull_state == 'present'
 
-- name: Reload systemd and ensure timer is enabled + running
+# daemon_reload applies changed unit/timer files to an active timer; no
+# restart needed. ansible_pull_timer_state=stopped lets an operator install
+# or upgrade the wrapper without arming the schedule (first-run gating); the
+# next run of the service with the default re-enables it.
+- name: Reload systemd and set ansible-pull timer state
   ansible.builtin.systemd:
     name: ansible-pull.timer
-    state: "{{ 'restarted' if (_service_unit.changed or _timer_unit.changed) else 'started' }}"
-    enabled: true
+    state: "{{ ansible_pull_timer_state }}"
+    enabled: "{{ ansible_pull_timer_state == 'started' }}"
     daemon_reload: true
   become: true
   when: ansible_pull_state == 'present'

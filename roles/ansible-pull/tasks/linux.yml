@@ -125,3 +125,12 @@
     mode: "0644"
   become: true
   when: ansible_pull_state == "present"
+
+# After removal, /etc/olympus/hermes-token (if present) still counts as
+# fallback evidence of Ansible management in the atlas host inventory.
+- name: Remove managed-by marker (state=absent)
+  ansible.builtin.file:
+    path: /etc/olympus/managed-by
+    state: absent
+  become: true
+  when: ansible_pull_state == "absent"

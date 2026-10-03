@@ -20,12 +20,6 @@ data_services_clickhouse_native_port: 9000
 data_services_clickhouse_replication_port: 9009
 data_services_clickhouse_uid: 203
 
-data_services_redpanda_kafka_port: 9092
-data_services_redpanda_admin_port: 9644
-data_services_redpanda_proxy_port: 8082
-data_services_redpanda_schema_port: 8081
-data_services_redpanda_uid: 204
-
 data_services_ollama_port: 11434
 data_services_ollama_uid: 205
 data_services_ollama_model_dir: /opt/olympus/data/ollama

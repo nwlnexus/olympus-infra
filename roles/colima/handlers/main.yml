@@ -1,5 +1,0 @@
----
-- name: Restart Colima
-  ansible.builtin.command: /opt/homebrew/bin/brew services restart colima
-  become: false
-  changed_when: true

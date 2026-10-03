@@ -1,0 +1,84 @@
+---
+# Remove services that used to be managed on this host but are retired:
+#   - Redpanda (never ran on macOS; the cluster has its own in-cluster Redpanda)
+#   - Colima   (retired "k8s on the Mac" setup)
+# Every task is a no-op when the service is already gone, so this is safe to
+# run on every converge.
+
+# ── Redpanda ──────────────────────────────────────────────────────────────────
+- name: Check whether the Redpanda LaunchDaemon is loaded
+  ansible.builtin.command:
+    cmd: launchctl print system/com.olympus.redpanda
+  become: true
+  register: _ds_redpanda_loaded
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Boot out the Redpanda LaunchDaemon
+  ansible.builtin.command:
+    cmd: launchctl bootout system/com.olympus.redpanda
+  become: true
+  changed_when: true
+  when: (_ds_redpanda_loaded.rc | default(1)) == 0
+
+- name: Remove the Redpanda LaunchDaemon plist
+  ansible.builtin.file:
+    path: /Library/LaunchDaemons/com.olympus.redpanda.plist
+    state: absent
+  become: true
+
+- name: Remove Redpanda config, data and log directories
+  ansible.builtin.file:
+    path: "{{ data_services_nvme_root }}/{{ item }}/redpanda"
+    state: absent
+  become: true
+  loop:
+    - config
+    - data
+    - logs
+
+- name: Check whether the _redpanda service user exists
+  ansible.builtin.command:
+    cmd: dscl . -read /Users/_redpanda
+  become: true
+  register: _ds_redpanda_user
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: data_services_remove_redpanda_user | bool
+
+- name: Remove the _redpanda service user
+  ansible.builtin.command:
+    cmd: dscl . -delete /Users/_redpanda
+  become: true
+  changed_when: true
+  when:
+    - data_services_remove_redpanda_user | bool
+    - (_ds_redpanda_user.rc | default(1)) == 0
+
+# ── Colima ────────────────────────────────────────────────────────────────────
+- name: Check whether the Colima LaunchDaemon is loaded
+  ansible.builtin.command:
+    cmd: launchctl print system/com.olympus.colima
+  become: true
+  register: _ds_colima_loaded
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Boot out the Colima LaunchDaemon
+  ansible.builtin.command:
+    cmd: launchctl bootout system/com.olympus.colima
+  become: true
+  changed_when: true
+  when: (_ds_colima_loaded.rc | default(1)) == 0
+
+- name: Remove the Colima LaunchDaemon plist and log
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  become: true
+  loop:
+    - /Library/LaunchDaemons/com.olympus.colima.plist
+    - /var/log/colima.log

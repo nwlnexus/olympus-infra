@@ -171,6 +171,12 @@
     - { name: "vm.swappiness", value: "10" }
     - { name: "vm.dirty_ratio", value: "15" }
     - { name: "vm.dirty_background_ratio", value: "5" }
+    # inotify limits for k3s nodes. The Ubuntu default of 128 instances per
+    # user is exhausted by root alone (one per containerd-shim plus k3s), so
+    # pods that open a watcher (argo-events, config reloaders) crash with
+    # "too many open files". Matches what naraka-01 already carries.
+    - { name: "fs.inotify.max_user_instances", value: "8192" }
+    - { name: "fs.inotify.max_user_watches", value: "1048576" }
   tags:
     - system
     - kernel

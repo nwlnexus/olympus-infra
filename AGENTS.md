@@ -127,6 +127,12 @@ buffer ceiling and prevents intermittent tunnel control-stream failures and edge
 502s caused by packet loss. The unified pull playbook skips `common` on Darwin,
 so this tuning is not applied to ai-hub.
 
+`roles/common` also raises `fs.inotify.max_user_instances` to `8192` and
+`fs.inotify.max_user_watches` to `1048576`. On k3s nodes root alone holds one
+inotify instance per containerd-shim, so the Ubuntu default of 128 is exhausted
+and watcher-based pods (argo-events controller) crash-loop with "too many open
+files".
+
 ### mem0-client workstation wiring
 
 `roles/mem0-client` is a workstation role for Claude Code clients, not a cluster

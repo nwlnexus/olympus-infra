@@ -1,6 +1,9 @@
 ---
 # Pull-mode playbook for styx.
-# Runs daily at 02:00 via crontab as the `ansible` user.
+# Runs hourly as the `ansible` user via the ansible-pull systemd timer
+# (/opt/ansible-pull/ansible-pull-run). The ansible-pull role below keeps the
+# wrapper/timer current and removes the legacy 02:00 crontab entry, so the
+# timer is the only scheduler.
 
 - name: Styx — Drift Correction
   hosts: styx
@@ -14,6 +17,9 @@
   roles:
     - role: baseline
       tags: [baseline]
+
+    - role: ansible-pull
+      tags: [ansible-pull]
 
     - role: iscsi
       tags: [iscsi]

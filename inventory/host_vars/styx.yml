@@ -27,3 +27,10 @@ ddclient_extra_fqdns:
 
 # Atlas daemon
 atlas_state: present
+
+# ansible-pull — styx keeps its own pull playbook (nfs-mounts/plex are not in
+# olympus.yml). The role renders the wrapper with these values and removes the
+# legacy `olympus-ansible-pull` crontab entry owned by the ansible user.
+ansible_pull_state: present
+ansible_pull_inventory: inventory/styx.yml
+ansible_pull_playbook: playbooks/pull/styx.yml

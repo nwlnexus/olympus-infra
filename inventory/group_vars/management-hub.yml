@@ -1,6 +1,10 @@
 ---
-# Management Hub vars for ansible-pull (pull-mode, health checks only)
-# Secrets come from 1Password Connect via External Secrets Operator
+# naraka-01 vars for ansible-pull (inventory/management-hub.yml).
+# The single-node management-hub cluster is retired: naraka-01 is now a k3s
+# AGENT in the olympus cluster. Cluster-scoped roles (1password-connect,
+# eso-bootstrap, qnap-csi-bootstrap, cloudflared-k8s) run only on the olympus
+# primary (onode-030c31, group_vars/compute_hub.yml) and must stay disabled
+# here — this node has no server kubeconfig (/etc/rancher/k3s/k3s.yaml).
 ansible_user: ansible
 
 # k3s — naraka-01 joins as agent in the unified olympus cluster.
@@ -16,44 +20,17 @@ k3s_node_labels:
 k3s_node_taints:
   - "olympus.io/role=management-hub:NoSchedule"
 
-# QNAP CSI (Trident) — cluster-wide storage provisioner for qnap-iscsi PVCs.
-# Runs on the primary only (gated in olympus.yml). iSCSI CHAP creds live in the
-# cluster-named 1Password item (not <hostname>-qnap-iscsi).
-qnap_csi_state: present
-qnap_iscsi_op_item: management-hub-qnap-iscsi
-qnap_csi_kubeconfig: /etc/rancher/k3s/k3s.yaml
-
-# Tailscale
+# Tailscale (hostname is only used on first join; the node is already
+# connected as naraka-01, and `tailscale set` does not rename it)
 tailscale_state: present
-tailscale_hostname: management-hub
+tailscale_hostname: naraka-01
 
 # Cloudflared (binary only; tunnel + Deployment run in k3s via GitOps)
 cloudflared_state: present
 
-# Single-node cluster: the cloudflared-k8s playbook gates on `k3s_primary`.
-k3s_primary: true
-
-# --- cloudflared-k8s (GitOps mode: tunnel + DNS managed by Ansible; K8s
-# Secret + Deployment + ingress config owned by Flux via ExternalSecret) ---
-# NOTE: management-hub tunnel retired after Plan 4 cutover
-cloudflared_k8s_state: absent
-cloudflared_tunnel_name: management-hub
-cloudflared_account_id: "1b15dcdab99d4e8d5babb3dc6b1adaec"
-cloudflared_domain: "nwlnexus.net"
-cloudflared_bootstrap_only: true
-cloudflared_ingress_hostname: "ing.mgmt.nwlnexus.net"
-cloudflared_catch_all_service: "https://traefik.kube-system:443"
-
-# GitOps mode — push creds to 1Password via op CLI + service-account token
-# (/etc/olympus/op-service-account-token, already on every host).
-cloudflared_op_enabled: true
-cloudflared_op_vault: "Dev"
-cloudflared_op_item_title: "management-hub-cloudflared"
-
-# 1Password Connect — still managed by Ansible (prerequisite for ESO)
-onepassword_connect_state: present
-eso_bootstrap_state: present
-eso_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
+# k3s agent, not a server: keeps every `k3s_primary`-gated role in
+# playbooks/pull/olympus.yml off this node.
+k3s_primary: false
 
 # --- Flux kubeconfig export to 1Password ---
 # Uploads a patched kubeconfig (Tailscale IPv4 as server, proper context/cluster/user names)
@@ -78,6 +55,12 @@ ddclient_state: present
 ansible_pull_state: present
 ansible_pull_inventory: inventory/management-hub.yml
 ansible_pull_playbook: playbooks/pull/olympus.yml
+# Kept out of the hourly run until fixed or pinned:
+#   common      — fails (package `nc`, missing handler); see group_vars/compute_hub.yml
+#   tailscale   — would run `tailscale set --advertise-exit-node=false --ssh=false`,
+#                 dropping this node's exit-node routes and Tailscale SSH
+#   cloudflared — Linux path calls Homebrew, which is not installed here
+ansible_pull_skip_tags: common,tailscale,cloudflared
 ansible_pull_interval: "1h"
 ansible_pull_interval_seconds: 3600
 

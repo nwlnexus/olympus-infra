@@ -1,8 +1,12 @@
 ---
 atlas_state: present
-atlas_server: https://api.nwlnexus.net
-atlas_install_url: https://assets.nwlnexus.net/releases/atlas/install.sh
+atlas_server: https://api.nwlnexus.io
+atlas_install_url: https://dl.nwlnexus.io/releases/atlas/install.sh
 atlas_op_bootstrap_key_ref: "op://Dev/hermes-secrets/bootstrap-key"
-atlas_op_token_file: /etc/olympus/op-service-account-token
+# 1Password service-account token locations, checked in order. bootstrap-user
+# places it in /etc/olympus; packer/autoinstall images place it in /opt/ansible-pull.
+atlas_op_token_files:
+  - /etc/olympus/op-service-account-token
+  - /opt/ansible-pull/.op-service-account-token
 atlas_user: atlas
 atlas_home: /var/lib/atlas

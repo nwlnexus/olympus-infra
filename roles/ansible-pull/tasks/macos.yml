@@ -69,3 +69,19 @@
     state: absent
   become: true
   when: ansible_pull_state == "absent"
+
+- name: Ensure /etc/olympus exists
+  ansible.builtin.file:
+    path: /etc/olympus
+    state: directory
+    owner: root
+    mode: "0755"
+  become: true
+
+- name: Write managed-by marker for atlas inventory
+  ansible.builtin.template:
+    src: managed-by.json.j2
+    dest: /etc/olympus/managed-by
+    owner: root
+    mode: "0644"
+  become: true

@@ -5,7 +5,7 @@
 #
 # Control-plane: 3 onodes (NVMe, HA etcd, kube-vip VIP 192.168.253.2)
 # Agent: naraka-01 (128 GB RAM, ingress entry point)
-# Data tier: ai-hub (macOS, native LaunchDaemons — NOT a k8s node)
+# Data tier: data-hub (macOS, native LaunchDaemons — NOT a k8s node)
 # Provisioning: styx (PXE/Packer — NOT a k8s node)
 
 all:
@@ -37,11 +37,11 @@ all:
         ansible_ssh_private_key_file: ~/.ssh/ansible
         ansible_python_interpreter: /usr/bin/python3
 
-    # ── Data tier (ai-hub — macOS data services, NOT a k8s node) ────────────
+    # ── Data tier (data-hub — macOS data services, NOT a k8s node) ────────────
     data_services:
       hosts:
-        ai-hub:
-          ansible_host: 100.95.232.41   # Tailscale IP (MagicDNS: ai-hub)
+        data-hub:
+          ansible_host: 100.95.232.41   # Tailscale IP (MagicDNS: data-hub)
       vars:
         ansible_connection: ssh
         ansible_user: nwilliams-lucas

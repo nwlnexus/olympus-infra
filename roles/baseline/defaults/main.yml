@@ -37,6 +37,9 @@ baseline_op_ssh_pubkey_vault: "Dev"
 
 # 1Password CLI install
 baseline_op_cli_arch: amd64
+# 1Password CLI apt channel: "beta" (needed for 1Password Environments) or "stable".
+# The package is kept at the latest version in the chosen channel.
+baseline_op_cli_channel: beta
 
 # fail2ban
 baseline_fail2ban_bantime: "1h"

@@ -10,20 +10,45 @@
   become: true
   when: baseline_state == "present"
 
+# Hosts set up by the older onepassword-cli role have a source line signed by
+# the dearmored .gpg keyring. apt refuses two lines for the same repository
+# with different Signed-By values ("Conflicting values set for option
+# Signed-By") and then fails every update, so drop the old line first.
+- name: Remove legacy 1Password apt source lines (.gpg keyring)
+  ansible.builtin.lineinfile:
+    path: "{{ item }}"
+    regexp: 'signed-by=/usr/share/keyrings/1password-archive-keyring\.gpg'
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/1password.list
+    - /etc/apt/sources.list.d/1password-cli.list
+  failed_when: false
+  become: true
+  when: baseline_state == "present"
+
+- name: Remove 1Password apt source lines for the other channel
+  ansible.builtin.lineinfile:
+    path: /etc/apt/sources.list.d/1password.list
+    regexp: 'downloads\.1password\.com/linux/debian/\S+ (?!{{ baseline_op_cli_channel }} )\S+ main'
+    state: absent
+  failed_when: false
+  become: true
+  when: baseline_state == "present"
+
 - name: Add 1Password apt repository
   ansible.builtin.apt_repository:
     repo: >-
       deb [arch={{ baseline_op_cli_arch }} signed-by=/usr/share/keyrings/1password-archive-keyring.asc]
-      https://downloads.1password.com/linux/debian/{{ baseline_op_cli_arch }} stable main
+      https://downloads.1password.com/linux/debian/{{ baseline_op_cli_arch }} {{ baseline_op_cli_channel }} main
     state: present
     filename: 1password
   become: true
   when: baseline_state == "present"
 
-- name: Install 1password-cli
+- name: Install 1password-cli (latest in the configured channel)
   ansible.builtin.apt:
     name: 1password-cli
-    state: present
+    state: latest
     update_cache: true
   become: true
   when: baseline_state == "present"
@@ -32,7 +57,7 @@
   ansible.builtin.apt_repository:
     repo: >-
       deb [arch={{ baseline_op_cli_arch }} signed-by=/usr/share/keyrings/1password-archive-keyring.asc]
-      https://downloads.1password.com/linux/debian/{{ baseline_op_cli_arch }} stable main
+      https://downloads.1password.com/linux/debian/{{ baseline_op_cli_arch }} {{ baseline_op_cli_channel }} main
     state: absent
     filename: 1password
   become: true

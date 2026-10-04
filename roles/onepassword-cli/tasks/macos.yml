@@ -1,6 +1,14 @@
 ---
+# Homebrew ships the beta channel as a separate cask that conflicts with the
+# stable one, so switching channels removes the other cask first.
+- name: Remove the 1Password CLI cask for the other channel
+  community.general.homebrew_cask:
+    name: "{{ '1password-cli' if onepassword_cli_channel == 'beta' else '1password-cli@beta' }}"
+    state: absent
+  become: false
+
 - name: Install 1Password CLI via Homebrew
-  community.general.homebrew:
-    name: 1password-cli
-    state: present
+  community.general.homebrew_cask:
+    name: "{{ '1password-cli@beta' if onepassword_cli_channel == 'beta' else '1password-cli' }}"
+    state: latest
   become: false

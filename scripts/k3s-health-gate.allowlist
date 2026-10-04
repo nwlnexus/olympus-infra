@@ -10,3 +10,8 @@
 
 # Failing codebase-brain Argo workflow pods (phase Failed, owned by Workflows).
 ^codebase-brain/brain-
+
+# system-upgrade-controller upgrade jobs: the first pod is killed when k3s
+# restarts and stays Failed until the job's TTL (900 s) removes it; the retry
+# pod completes the job. Real job failures are caught by the suc.jobs check.
+^system-upgrade/apply-(server|agent)-plan-

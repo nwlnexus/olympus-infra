@@ -309,6 +309,19 @@ else
     fail "vip.lease" "could not read lease $VIP_LEASE_NAMESPACE/$VIP_LEASE_NAME: $(oneline "$lease_out")"
   fi
 
+  # system-upgrade-controller jobs. Each upgrade job's first pod is killed when
+  # k3s restarts (the retry pod completes the job), so the leftover Failed pod
+  # is allow-listed; a job that actually failed is caught here instead.
+  if kjson sucjobs get jobs -n system-upgrade; then
+    jfail=$(jq -r '.items[] | select([.status.conditions[]? | select(.type == "Failed" and .status == "True")] | length > 0)
+      | "\(.metadata.name): \([.status.conditions[]? | select(.type == "Failed") | .reason] | join(","))"' <<<"$sucjobs")
+    jrun=$(jq -r '[.items[] | select(([.status.conditions[]? | select((.type == "Complete" or .type == "Failed") and .status == "True")] | length) == 0)] | length' <<<"$sucjobs")
+    if [[ -z $jfail ]]; then pass "suc.jobs" "no failed upgrade jobs ($jrun in progress)"
+    else fail "suc.jobs" "failed upgrade job(s)"; detail "$jfail"; fi
+  else
+    fail "suc.jobs" "kubectl get jobs -n system-upgrade failed: $(oneline "$sucjobs")"
+  fi
+
   # Problem pods, diffed against the allow-list
   if kjson pods get pods -A; then
     problems=$(jq -r --argjson now "$now" --argjson recent "$((RECENT_RESTART_MINUTES * 60))" \

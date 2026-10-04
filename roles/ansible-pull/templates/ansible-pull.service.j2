@@ -1,27 +1,39 @@
 # Managed by Ansible — do not edit manually
 [Unit]
 Description=Ansible Pull — Olympus configuration management
-Documentation=https://github.com/nwlnexus/olympus-sdk
+Documentation=https://github.com/nwlnexus/olympus-infra/tree/main/roles/ansible-pull
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=ansible
-Group=ansible
+User={{ ansible_pull_user }}
+Group={{ ansible_pull_user }}
 WorkingDirectory=/opt/ansible-pull
 ExecStart=/opt/ansible-pull/ansible-pull-run
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ansible-pull
+# Oneshot units have no start timeout by default; a hung run would block
+# every later timer activation without any visible failure.
+TimeoutStartSec={{ ansible_pull_timeout }}
 
-# ansible-pull needs full system access to manage the host
+# systemd creates these owned by User= before ExecStart and exports
+# STATE_DIRECTORY / RUNTIME_DIRECTORY, which the wrapper prefers.
+#   /var/lib/olympus — classify cache + pending Hermes completions (persistent)
+#   /run/olympus     — per-run extra-vars files (removed when the run ends)
+StateDirectory=olympus
+StateDirectoryMode=0750
+RuntimeDirectory=olympus
+RuntimeDirectoryMode=0750
+
+# ansible-pull needs full system access to manage the host (it escalates
+# with sudo), so no sandboxing: HOME must stay writable for ~/.ansible.
 NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=false
 ProtectHome=false
-Environment=HOME=/home/ansible
-ReadWritePaths=/opt/ansible-pull {{ ansible_pull_log_dir }}
+Environment=HOME=/home/{{ ansible_pull_user }}
 
 [Install]
 WantedBy=multi-user.target

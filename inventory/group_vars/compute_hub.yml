@@ -57,6 +57,10 @@ tailscale_accept_dns: false
 tailscale_tags:
   - "tag:infra-server"
   - "tag:k8s"
+# Tailscale SSH is on today and is how the tailnet reaches these nodes; the
+# role runs `tailscale set --ssh=false` unless "ssh" is listed here.
+tailscale_services:
+  - ssh
 # OAuth credentials fetched from 1Password at runtime (see playbook pre_tasks)
 tailscale_oauth_client_id: "{{ lookup('community.general.onepassword', 'ansible-tailscale-oauth', field='client-id', vault='Dev') }}"
 tailscale_oauth_client_secret: "{{ lookup('community.general.onepassword', 'ansible-tailscale-oauth', field='client-secret', vault='Dev') }}"
@@ -98,6 +102,17 @@ ansible_pull_legacy_users:
 ansible_pull_inventory: inventory/compute-hub.yml
 ansible_pull_playbook: playbooks/pull/olympus.yml
 ansible_pull_limit: "$(hostname -s)"
+# Kept out of the hourly run until fixed (see PR "make ansible-pull work on
+# every host"): `common` fails on these hosts (package `nc` has no candidate;
+# missing handler) and, once it gets further, would replace resolv.conf and
+# /etc/hosts, install ntp and reset the ansible user's groups.
+ansible_pull_skip_tags: common
+
+# Etcd control plane: never let unattended-upgrades reboot nodes on its own.
+# Pending reboots (/var/run/reboot-required) on several onodes at once would
+# reboot them together at 03:00 and lose etcd quorum. Reboot by hand, one
+# node at a time.
+baseline_unattended_auto_reboot: false
 
 # iSCSI host prereqs — QNAP Trident CSI manages login/CHAP; Ansible sets initiator name only
 iscsi_state: present

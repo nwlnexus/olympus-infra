@@ -1,0 +1,13 @@
+---
+# data-hub — Mac Studio data tier (macOS, LaunchDaemon-driven ansible-pull).
+# Takes effect once the host is named data-hub in inventory/data-hub.yml
+# (ai-hub → data-hub rename). Host vars are used because the pull inventory
+# has no `data-hub` group, so group_vars/data-hub.yml does not apply to it.
+
+ansible_pull_state: present
+ansible_pull_inventory: inventory/data-hub.yml
+ansible_pull_playbook: playbooks/pull/olympus.yml
+# The pull inventory also defines `localhost`, which ansible-pull's implicit
+# limit (localhost,<fqdn>,<hostname>,127.0.0.1) matches too; limit to the real
+# host so the play does not run twice.
+ansible_pull_limit: data-hub

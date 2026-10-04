@@ -8,3 +8,14 @@ k3s_init: true   # runs --cluster-init; only one node in the cluster should have
 tailscale_hostname: onode-030c31
 ddclient_extra_fqdns:
   - onode-030c31.nwlnexus.net
+
+# First rollout: also keep the cluster-scoped roles out of the hourly run on
+# the primary until each has been run deliberately by hand:
+#   qnap-csi-bootstrap — git checkout in /opt/qnap-csi-plugin has local edits
+#   1password-connect  — `helm upgrade --install --wait` of the live release
+#   cloudflared-k8s    — rewrites the 1Password item / tunnel config each run
+#   eso-bootstrap      — one-time seed (secret already exists); re-applies the
+#                        Connect token secret and `meta: end_host`s the whole
+#                        play if the token cannot be read
+# Host value replaces the group value, so `common` is repeated here.
+ansible_pull_skip_tags: common,qnap-csi-bootstrap,1password-connect,cloudflared-k8s,eso-bootstrap

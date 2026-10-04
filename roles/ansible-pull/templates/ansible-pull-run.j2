@@ -1,20 +1,41 @@
 #!/usr/bin/env bash
 # Managed by Ansible (ansible-pull role) — do not edit manually
+#
+# Runs ansible-pull for this host. Invoked hourly by:
+#   Linux:  ansible-pull.timer → ansible-pull.service (User={{ ansible_pull_user }})
+#   macOS:  /Library/LaunchDaemons/com.olympus.ansible-pull.plist (UserName={{ ansible_pull_user }})
+# To run by hand, prefer the scheduler so the environment matches:
+#   Linux:  sudo systemctl start ansible-pull.service
+#   macOS:  sudo launchctl kickstart system/com.olympus.ansible-pull
+#
+# Exit codes (non-zero always means the run did not complete):
+#   0       ansible-pull succeeded
+#   1-99    ansible-pull's own exit code (2 = a host failed, 4 = parse error, 5 = bad options, ...)
+#   70      malformed Hermes classify response          (EX_SOFTWARE)
+#   73      a state/runtime/log directory is not writable (EX_CANTCREAT)
+#   75      Hermes unreachable and no cached classify      (EX_TEMPFAIL)
+#   77      a credential file exists but is not readable   (EX_NOPERM)
+#   78      required configuration/credential missing      (EX_CONFIG)
 set -euo pipefail
 
 HERMES_URL="{{ hermes_url | default('https://api.nwlnexus.io') }}"
 
-# Paths. Each accepts a WRAPPER_<NAME> env-var override so BATS tests can
-# point them at a temp sandbox without rendering a different template.
+# Paths. Each accepts a WRAPPER_<NAME> env-var override (BATS tests point them
+# at a sandbox; the macOS LaunchDaemon passes the state/runtime dirs).
+# Under systemd, StateDirectory=/RuntimeDirectory= export STATE_DIRECTORY and
+# RUNTIME_DIRECTORY; those win over the baked-in defaults.
 HERMES_TOKEN_FILE="${WRAPPER_HERMES_TOKEN_FILE:-/etc/olympus/hermes-token}"
 HERMES_DISABLED_FLAG="${WRAPPER_HERMES_DISABLED_FLAG:-/etc/olympus/hermes-disabled}"
+OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/etc/olympus/op-service-account-token}"
+OP_CONNECT_TOKEN_FILE="${WRAPPER_OP_CONNECT_TOKEN_FILE:-/etc/olympus/op-connect-token}"
 
-CACHE_DIR="${WRAPPER_CACHE_DIR:-/var/lib/olympus}"
+CACHE_DIR="${WRAPPER_CACHE_DIR:-${STATE_DIRECTORY:-{{ ansible_pull_state_dir }}}}"
 CACHE_FILE="$CACHE_DIR/classify.json"
 PENDING_DIR="${WRAPPER_PENDING_DIR:-$CACHE_DIR/pending-completions}"
-RUNTIME_DIR="${WRAPPER_RUNTIME_DIR:-/run/olympus}"
+RUNTIME_DIR="${WRAPPER_RUNTIME_DIR:-${RUNTIME_DIRECTORY:-{{ ansible_pull_runtime_dir }}}}"
 LOG_DIR="${WRAPPER_LOG_DIR:-{{ ansible_pull_log_dir }}}"
 LOG_FILE="${WRAPPER_LOG_FILE:-{{ ansible_pull_log_file }}}"
+RUN_LOG="$RUNTIME_DIR/last-run.log"
 
 PARSER="${WRAPPER_PARSER:-/opt/ansible-pull/parse-play-recap.sh}"
 
@@ -23,57 +44,101 @@ PARSER="${WRAPPER_PARSER:-/opt/ansible-pull/parse-play-recap.sh}"
 export HOME="/var/{{ ansible_pull_user }}"
 export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:${PATH}"
 export DOCKER_HOST="unix:///var/run/docker.sock"
-ANSIBLE_PULL_BIN="{{ ansible_pull_bin_macos }}"
-OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/etc/olympus/op-service-account-token}"
+ANSIBLE_PULL_BIN="${WRAPPER_ANSIBLE_PULL_BIN:-{{ ansible_pull_bin_macos }}}"
 {% else %}
 # ── Linux: ensure user-local bin is on PATH ───────────────────────────────────
 export HOME="/home/{{ ansible_pull_user }}"
 export PATH="${HOME}/.local/bin:${PATH}"
-ANSIBLE_PULL_BIN="{{ ansible_pull_bin_linux }}"
-OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/etc/olympus/op-service-account-token}"
+ANSIBLE_PULL_BIN="${WRAPPER_ANSIBLE_PULL_BIN:-{{ ansible_pull_bin_linux }}}"
 {% endif %}
 
-mkdir -p "$CACHE_DIR" "$PENDING_DIR" "$RUNTIME_DIR" "$LOG_DIR"
+# ── Logging ──────────────────────────────────────────────────────────────────
+# Status lines go to stderr (journal on Linux, launchd.log on macOS, the
+# terminal when run by hand) AND to $LOG_FILE once it is writable, so a
+# failure is visible whichever one you look at. ansible-pull's own output
+# goes to $LOG_FILE and to a per-run copy in $RUN_LOG.
+log() {
+  local level="$1"; shift
+  local line
+  line="$(date -u '+%Y-%m-%d %H:%M:%S') [$level] $*"
+  printf '%s\n' "$line" >&2
+  if [[ -w "$LOG_FILE" || ( ! -e "$LOG_FILE" && -w "$LOG_DIR" ) ]]; then
+    printf '%s\n' "$line" >> "$LOG_FILE" 2>/dev/null || true
+  fi
+}
+
+die() {
+  local rc="$1"; shift
+  log FATAL "$* (exit $rc)"
+  exit "$rc"
+}
+
+# Create a directory if needed and prove it is writable by the current user.
+# Never fails silently: an unwritable dir is a fatal, explained error.
+ensure_dir() {
+  local dir="$1" what="$2"
+  if ! mkdir -p "$dir" 2>/dev/null || [[ ! -w "$dir" ]]; then
+    die 73 "$what directory $dir is missing or not writable by user $(id -un);" \
+      "the ansible-pull role creates it (Linux: systemd StateDirectory/RuntimeDirectory," \
+      "macOS: owned by {{ ansible_pull_user }}). Re-run the ansible-pull role or set WRAPPER_${3}"
+  fi
+}
+
+ensure_dir "$LOG_DIR" "log" LOG_DIR
+ensure_dir "$CACHE_DIR" "state" CACHE_DIR
+ensure_dir "$PENDING_DIR" "pending-completions" PENDING_DIR
+ensure_dir "$RUNTIME_DIR" "runtime" RUNTIME_DIR
+
+log INFO "Starting Ansible Pull (state=$CACHE_DIR runtime=$RUNTIME_DIR log=$LOG_FILE)"
+
+[[ -x "$ANSIBLE_PULL_BIN" ]] || command -v "$ANSIBLE_PULL_BIN" >/dev/null 2>&1 \
+  || die 78 "ansible-pull binary not found at $ANSIBLE_PULL_BIN"
 
 # ── 1. 1Password auth ─────────────────────────────────────────────────────────
 # Prefer 1Password Connect (off the rate-limited public API); fall back to the
 # service-account token. The `op` CLI rejects having BOTH set, so export exactly
 # one. The SA token file is left in place untouched — write-ops that Connect
 # can't serve override the env at the task level to use it.
-if [[ ! -f "$OP_TOKEN_FILE" ]]; then
-  echo "$(date -u '+%Y-%m-%d %H:%M:%S') [WARN] OP token not found at $OP_TOKEN_FILE — skipping run until bootstrap places it" | tee -a "$LOG_FILE" >&2
-  exit 0
+if [[ ! -e "$OP_TOKEN_FILE" ]]; then
+  die 78 "OP service-account token not found at $OP_TOKEN_FILE; bootstrap must place it before pulls can run"
 fi
-OP_CONNECT_TOKEN_FILE="${WRAPPER_OP_CONNECT_TOKEN_FILE:-/etc/olympus/op-connect-token}"
+[[ -r "$OP_TOKEN_FILE" ]] || die 77 "OP service-account token $OP_TOKEN_FILE is not readable by user $(id -un)"
+
+if [[ -e "$OP_CONNECT_TOKEN_FILE" ]]; then
+  [[ -r "$OP_CONNECT_TOKEN_FILE" ]] || die 77 "1Password Connect token $OP_CONNECT_TOKEN_FILE exists but is not readable by" \
+    "user $(id -un); the ansible-pull role sets it to owner {{ ansible_pull_user }} mode 0600"
+fi
 if [[ -s "$OP_CONNECT_TOKEN_FILE" ]]; then
   export OP_CONNECT_HOST="{{ onepassword_connect_url | default('https://connect.nwlnexus.net') }}"
   export OP_CONNECT_TOKEN
   OP_CONNECT_TOKEN=$(cat "$OP_CONNECT_TOKEN_FILE")
+  log INFO "1Password: using Connect at $OP_CONNECT_HOST"
 else
   export OP_SERVICE_ACCOUNT_TOKEN
   OP_SERVICE_ACCOUNT_TOKEN=$(cat "$OP_TOKEN_FILE")
+  log INFO "1Password: using service-account token"
 fi
 
 # ── 2. Hermes disabled? ───────────────────────────────────────────────────────
 HERMES_ENABLED=1
 if [[ -f "$HERMES_DISABLED_FLAG" ]]; then
   HERMES_ENABLED=0
-  echo "$(date -u '+%Y-%m-%d %H:%M:%S') [INFO] Hermes integration disabled (flag file present); running baseline-only" | tee -a "$LOG_FILE"
+  log INFO "Hermes integration disabled ($HERMES_DISABLED_FLAG present); running without classify"
 fi
-
-# Redirect to log file from here on
-exec 1>>"$LOG_FILE" 2>&1
-echo "Starting Ansible Pull at $(date -u '+%Y-%m-%d %H:%M:%S')"
 
 RUN_ID=""
 LOG_UPLOAD_URL=""
+classify_json='{"extra_roles": []}'
 
 if [[ "$HERMES_ENABLED" -eq 1 ]]; then
+  command -v jq >/dev/null 2>&1 || die 78 "jq is required for Hermes classify but is not on PATH"
+  command -v curl >/dev/null 2>&1 || die 78 "curl is required for Hermes classify but is not on PATH"
+
   # ── 3. Hermes token ───────────────────────────────────────────────────────
   if [[ ! -s "$HERMES_TOKEN_FILE" ]]; then
-    echo "[FATAL] Hermes token missing at $HERMES_TOKEN_FILE; cannot proceed"
-    exit 78
+    die 78 "Hermes token missing at $HERMES_TOKEN_FILE; place it or create $HERMES_DISABLED_FLAG"
   fi
+  [[ -r "$HERMES_TOKEN_FILE" ]] || die 77 "Hermes token $HERMES_TOKEN_FILE is not readable by user $(id -un)"
   HERMES_TOKEN=$(cat "$HERMES_TOKEN_FILE")
 
   # ── 4. Drain pending completions ─────────────────────────────────────────
@@ -81,14 +146,14 @@ if [[ "$HERMES_ENABLED" -eq 1 ]]; then
     [[ -e "$pending" ]] || break
     pid=$(basename "$pending" .json)
     body=$(cat "$pending")
-    echo "[INFO] retrying pending completion for run $pid"
+    log INFO "retrying pending completion for run $pid"
     if curl -fsS --max-time 5 -X POST "$HERMES_URL/v1/pull/runs/$pid" \
          -H "Authorization: Bearer $HERMES_TOKEN" \
          -H "Content-Type: application/json" \
          -d "$body" >/dev/null; then
       rm -f "$pending"
     else
-      echo "[WARN] still failing; leaving pending"
+      log WARN "pending completion for run $pid still failing; leaving it queued"
     fi
   done
 
@@ -110,51 +175,62 @@ if [[ "$HERMES_ENABLED" -eq 1 ]]; then
     sleep $((i * 2))
   done
   if [[ -z "$RUN_ID" ]]; then
-    echo "[WARN] failed to start run with Hermes (after 3 retries); continuing without server-side record"
+    log WARN "failed to start run with Hermes (after 3 retries); continuing without server-side record"
   fi
 
   # ── 6. Fetch classify ────────────────────────────────────────────────────
-  classify_json=""
+  fetched=""
   for i in 1 2 3; do
-    if classify_json=$(curl -fsS --max-time 5 -H "Authorization: Bearer $HERMES_TOKEN" \
-                          "$HERMES_URL/v1/pull/classify"); then
+    if fetched=$(curl -fsS --max-time 5 -H "Authorization: Bearer $HERMES_TOKEN" \
+                     "$HERMES_URL/v1/pull/classify"); then
       break
     fi
+    fetched=""
     sleep $((i * 2))
   done
-  if [[ -n "$classify_json" ]]; then
-    if ! echo "$classify_json" | jq -e .extra_roles >/dev/null 2>&1; then
-      echo "[FATAL] malformed classify response (no .extra_roles)"
-      exit 70
+  if [[ -n "$fetched" ]]; then
+    if ! echo "$fetched" | jq -e '.extra_roles | type == "array"' >/dev/null 2>&1; then
+      die 70 "malformed classify response from $HERMES_URL (no .extra_roles array)"
     fi
+    classify_json="$fetched"
     echo "$classify_json" > "$CACHE_FILE.tmp" && mv "$CACHE_FILE.tmp" "$CACHE_FILE"
   elif [[ -f "$CACHE_FILE" ]]; then
 {% if ansible_facts['os_family'] == 'Darwin' %}
-    echo "[WARN] Hermes unreachable for classify; using cache from $(stat -f %Sm "$CACHE_FILE")"
+    log WARN "Hermes unreachable for classify; using cache from $(stat -f %Sm "$CACHE_FILE")"
 {% else %}
-    echo "[WARN] Hermes unreachable for classify; using cache from $(stat -c %y "$CACHE_FILE")"
+    log WARN "Hermes unreachable for classify; using cache from $(stat -c %y "$CACHE_FILE")"
 {% endif %}
     classify_json=$(cat "$CACHE_FILE")
   else
-    echo "[FATAL] Hermes unreachable AND no cached classify"
-    exit 75
+    die 75 "Hermes unreachable at $HERMES_URL and no cached classify at $CACHE_FILE"
   fi
+fi
 
-  # ── 7. Materialize layered vars files ────────────────────────────────────
-  rm -f "$RUNTIME_DIR"/*.yml
-  echo "$classify_json" | jq -r '.vars_global // {} | to_entries[] | "\(.key): \(.value | @json)"' > "$RUNTIME_DIR/00-global.yml"
-  echo "$classify_json" | jq -r '[.vars_tags // {} | to_entries[] | .value] | add // {} | to_entries[] | "\(.key): \(.value | @json)"' > "$RUNTIME_DIR/10-tags.yml"
-  echo "$classify_json" | jq -r '[.vars_roles // {} | to_entries[] | .value] | add // {} | to_entries[] | "\(.key): \(.value | @json)"' > "$RUNTIME_DIR/20-roles.yml"
-  echo "$classify_json" | jq -r '.vars_host // {} | to_entries[] | "\(.key): \(.value | @json)"' > "$RUNTIME_DIR/30-host.yml"
-  echo "hermes_extra_roles: $(echo "$classify_json" | jq -c .extra_roles)" > "$RUNTIME_DIR/99-roles.yml"
+# ── 7. Materialize layered vars files ────────────────────────────────────────
+# Always write all five files so every --extra-vars @file below exists and
+# parses. Each is a JSON object (valid YAML); an empty file would make
+# ansible reject it ("could not be made into a dictionary", exit 5). Stale
+# files from an earlier Hermes-enabled run are removed first.
+rm -f "$RUNTIME_DIR"/*.yml
+if [[ "$HERMES_ENABLED" -eq 1 ]]; then
+  echo "$classify_json" | jq -c '.vars_global // {}' > "$RUNTIME_DIR/00-global.yml"
+  echo "$classify_json" | jq -c '[.vars_tags // {} | to_entries[] | .value] | add // {}' > "$RUNTIME_DIR/10-tags.yml"
+  echo "$classify_json" | jq -c '[.vars_roles // {} | to_entries[] | .value] | add // {}' > "$RUNTIME_DIR/20-roles.yml"
+  echo "$classify_json" | jq -c '.vars_host // {}' > "$RUNTIME_DIR/30-host.yml"
+  echo "$classify_json" | jq -c '{hermes_extra_roles: .extra_roles}' > "$RUNTIME_DIR/99-roles.yml"
 else
-  echo "hermes_extra_roles: []" > "$RUNTIME_DIR/99-roles.yml"
+  for f in 00-global 10-tags 20-roles 30-host; do
+    echo '{}' > "$RUNTIME_DIR/$f.yml"
+  done
+  echo '{"hermes_extra_roles": []}' > "$RUNTIME_DIR/99-roles.yml"
 fi
 
 # ── 8. Run ansible-pull ──────────────────────────────────────────────────────
-START_MS=$(date +%s%3N)
+log INFO "Running $ANSIBLE_PULL_BIN -U {{ ansible_pull_repo }} -i {{ ansible_pull_inventory }}{% if ansible_pull_limit | default('') != '' %} --limit {{ ansible_pull_limit }}{% endif %}{% if ansible_pull_skip_tags | default('') != '' %} --skip-tags {{ ansible_pull_skip_tags }}{% endif %} {{ ansible_pull_playbook }}"
+START_S=$(date +%s)
+: > "$RUN_LOG"
 set +e
-$ANSIBLE_PULL_BIN \
+"$ANSIBLE_PULL_BIN" \
   -U {{ ansible_pull_repo }} \
   -i {{ ansible_pull_inventory }} \
   --extra-vars "@$RUNTIME_DIR/00-global.yml" \
@@ -162,30 +238,41 @@ $ANSIBLE_PULL_BIN \
   --extra-vars "@$RUNTIME_DIR/20-roles.yml" \
   --extra-vars "@$RUNTIME_DIR/30-host.yml" \
   --extra-vars "@$RUNTIME_DIR/99-roles.yml" \
-  {% if ansible_pull_limit | default('') != '' %}--limit {{ ansible_pull_limit }} \{% endif %}
-  {{ ansible_pull_playbook }}
-RC=$?
+{% if ansible_pull_limit | default('') != '' %}
+  --limit "{{ ansible_pull_limit }}" \
+{% endif %}
+{% if ansible_pull_skip_tags | default('') != '' %}
+  --skip-tags "{{ ansible_pull_skip_tags }}" \
+{% endif %}
+  {{ ansible_pull_playbook }} 2>&1 | tee -a "$LOG_FILE" >> "$RUN_LOG"
+RC=${PIPESTATUS[0]}
 set -e
-END_MS=$(date +%s%3N)
-DURATION_MS=$((END_MS - START_MS))
+DURATION_MS=$(( ($(date +%s) - START_S) * 1000 ))
+
+if [[ "$RC" -eq 0 ]]; then
+  log INFO "ansible-pull succeeded in $((DURATION_MS / 1000))s"
+else
+  log ERROR "ansible-pull FAILED with exit code $RC after $((DURATION_MS / 1000))s; last lines of output:"
+  tail -n 25 "$RUN_LOG" >&2 || true
+fi
 
 # ── 9. Parse counters + upload log + post completion ─────────────────────────
 if [[ "$HERMES_ENABLED" -eq 1 && -n "$RUN_ID" ]]; then
-  counters=$("$PARSER" "$LOG_FILE")
+  counters=$("$PARSER" "$RUN_LOG")
   FINISHED_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
   AUDIT_LOG_KEY="null"
 
   if [[ -n "$LOG_UPLOAD_URL" ]]; then
     if upload_resp=$(curl -fsS --max-time 30 -X PUT \
                           -H "Authorization: Bearer $HERMES_TOKEN" \
-                          --data-binary "@$LOG_FILE" \
+                          --data-binary "@$RUN_LOG" \
                           "$HERMES_URL$LOG_UPLOAD_URL"); then
       key=$(echo "$upload_resp" | jq -r '.audit_log_key // empty')
       if [[ -n "$key" ]]; then
         AUDIT_LOG_KEY=$(jq -nc --arg k "$key" '$k')
       fi
     else
-      echo "[WARN] log upload failed; completion will be posted without audit_log_key"
+      log WARN "log upload failed; completion will be posted without audit_log_key"
     fi
   fi
 
@@ -204,7 +291,7 @@ if [[ "$HERMES_ENABLED" -eq 1 && -n "$RUN_ID" ]]; then
          -H "Authorization: Bearer $HERMES_TOKEN" \
          -H "Content-Type: application/json" \
          -d "$complete_body" >/dev/null; then
-    echo "[WARN] completion POST failed; queueing pending"
+    log WARN "completion POST failed; queueing pending"
     echo "$complete_body" > "$PENDING_DIR/$RUN_ID.json"
   fi
 fi

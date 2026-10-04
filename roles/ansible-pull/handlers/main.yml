@@ -1,7 +1,24 @@
 ---
+# Reloading the job from inside a run started by that same job would kill the
+# run (bootout terminates the job's processes) and leave the daemon unloaded,
+# so pulls would silently stop. When the plist changes during a scheduled run
+# the reload is skipped with a warning; the wrapper's baked-in defaults match
+# the plist, so the old plist keeps working until the next manual reload.
 - name: Reload ansible-pull LaunchDaemon
   ansible.builtin.shell: |
     launchctl bootout system /Library/LaunchDaemons/com.olympus.ansible-pull.plist 2>/dev/null || true
     launchctl bootstrap system /Library/LaunchDaemons/com.olympus.ansible-pull.plist
   become: true
   changed_when: true
+  when: ansible_facts['env']['XPC_SERVICE_NAME'] | default('') != 'com.olympus.ansible-pull'
+  listen: Reload ansible-pull LaunchDaemon
+
+- name: Warn that the LaunchDaemon reload was deferred
+  ansible.builtin.debug:
+    msg: >-
+      com.olympus.ansible-pull.plist changed during a scheduled pull; not
+      reloading from inside the job. Apply it with:
+      sudo launchctl bootout system/com.olympus.ansible-pull;
+      sudo launchctl bootstrap system /Library/LaunchDaemons/com.olympus.ansible-pull.plist
+  when: ansible_facts['env']['XPC_SERVICE_NAME'] | default('') == 'com.olympus.ansible-pull'
+  listen: Reload ansible-pull LaunchDaemon

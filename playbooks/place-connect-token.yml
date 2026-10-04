@@ -1,6 +1,7 @@
 ---
 # One-time / maintenance: distribute the 1Password Connect access token to every
-# host at /etc/olympus/op-connect-token (0600). Read ONCE on the controller to
+# host at /etc/olympus/op-connect-token (0600, owned by the ansible-pull user,
+# which runs the wrapper that exports it). Read ONCE on the controller to
 # avoid a rate-limit burst, then copied to all hosts.
 #
 #   ansible-playbook -i inventory/management-hub.yml playbooks/place-connect-token.yml
@@ -37,7 +38,6 @@
       ansible.builtin.copy:
         dest: /etc/olympus/op-connect-token
         content: "{{ hostvars['localhost']._op_connect_token.stdout }}"
-        owner: root
-        group: root
+        owner: "{{ ansible_pull_user | default('ansible') }}"
         mode: "0600"
       no_log: true

@@ -24,7 +24,7 @@ olympus-infra/
 │   ├── eso-bootstrap         # ExternalSecret for cluster secrets
 │   ├── external-dns          # external-dns Helm deployment
 │   ├── cert-manager          # cert-manager Helm deployment
-│   ├── ansible-pull          # Configure ansible-pull cron/LaunchDaemon
+│   ├── ansible-pull          # ansible-pull wrapper + systemd timer / LaunchDaemon
 │   ├── data-services         # data-hub native Postgres/Redis/ClickHouse
 │   ├── hermes-classify-include # Hermes dynamic role/include support
 │   ├── iscsi                 # iSCSI prerequisites for QNAP-backed storage

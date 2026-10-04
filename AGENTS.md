@@ -73,7 +73,7 @@ accounts, directories under `/opt/olympus`, and macOS LaunchDaemons for:
 | Redis | 6379 | Tailnet-facing cache/service dependency |
 | ClickHouse | 8123 / 9000 | HTTP/native endpoints; bound to `data_services_tailscale_ip` |
 
-Redpanda and Colima are retired on ai-hub: the cluster runs its own in-cluster
+Redpanda and Colima are retired on data-hub: the cluster runs its own in-cluster
 Redpanda, and the Mac is not a k8s node. `data-services` no longer installs
 either one, and `tasks/macos-legacy-cleanup.yml` removes their LaunchDaemons,
 `/opt/olympus/{config,data,logs}/redpanda`, and the `_redpanda` user (set

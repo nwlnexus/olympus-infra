@@ -54,7 +54,7 @@ olympus-infra/
 |---|---|---|
 | olympus | Ubuntu on onode-030c31/0312ce/0314ac plus naraka-01 | Single k3s HA cluster: control-plane on the onodes, naraka-01 as agent/ingress node |
 | data-hub | macOS (Apple Silicon) | Native data tier and model host; **not** a k8s node |
-| styx | Linux | PXE/Packer provisioning host; **not** a k8s node |
+| styx | Linux (Ubuntu 26.04; bond0) | PXE provisioning host, Plex, iSCSI + NFS mounts; **not** a k8s node |
 | management-hub | Retired | Historical context only; do not add new services here |
 
 The old `compute-hub`/`management-hub` split has converged into the single

@@ -34,3 +34,18 @@ atlas_state: present
 ansible_pull_state: present
 ansible_pull_inventory: inventory/styx.yml
 ansible_pull_playbook: playbooks/pull/styx.yml
+
+# Networking (Ubuntu 26.04 since 2026-10-04). The release upgrade left styx on a
+# netplan bond (bond0 over eno2–eno8). bond0's MAC is pinned to eno2's
+# permanent MAC in the hand-managed /etc/netplan/60-styx-bond-mac.yaml so DHCP
+# keeps handing out the reserved LAN address. PXE dnsmasq binds to whichever
+# interface holds pxe_server_ip (now bond0).
+# Same host-network hardening as the k3s nodes: wait-online needs only one
+# routable IPv4 link (the unplugged NICs made it time out, so iSCSI/NFS mounts
+# started before the network at boot), and bond0 keeps its address through a
+# short carrier loss. Drop-ins take effect at the next boot; never reload
+# systemd-networkd on styx to apply them.
+baseline_k8s_node_network: true
+baseline_network_ignore_carrier_loss_networks:
+  - 10-netplan-bond0
+

@@ -1,9 +1,10 @@
 ---
 - name: Enable and start tftpd-hpa
-  ansible.builtin.service:
+  ansible.builtin.systemd:
     name: tftpd-hpa
     enabled: true
     state: started
+    daemon_reload: true   # pick up the drop-ins written in configure.yml
   become: true
 
 - name: Enable and start nginx

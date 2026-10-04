@@ -9,6 +9,27 @@
   become: true
   notify: Restart tftpd-hpa
 
+- name: Create tftpd-hpa systemd drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/tftpd-hpa.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: Install tftpd-hpa boot-ordering drop-in
+  ansible.builtin.template:
+    src: tftpd-hpa-override.conf.j2
+    dest: /etc/systemd/system/tftpd-hpa.service.d/10-pxe.conf
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify:
+    - Reload systemd
+    - Restart tftpd-hpa
+
 - name: Render iPXE boot menu
   ansible.builtin.template:
     src: ipxe-menu.ipxe.j2
@@ -124,6 +145,21 @@
   become: true
   when: pxe_pi_enabled | bool
 
+- name: Resolve proxyDHCP interface (explicit, or the one holding pxe_server_ip)
+  ansible.builtin.set_fact:
+    _pxe_dhcp_interface: >-
+      {{ pxe_dhcp_interface if (pxe_dhcp_interface | length > 0) else
+         (ansible_facts['interfaces']
+          | map('replace', '-', '_')
+          | select('in', ansible_facts)
+          | map('extract', ansible_facts)
+          | selectattr('ipv4', 'defined')
+          | selectattr('ipv4.address', 'equalto', pxe_server_ip)
+          | map(attribute='device')
+          | first
+          | default('')) }}
+  when: pxe_proxy_dhcp_enabled | bool
+
 - name: Configure dnsmasq proxyDHCP for PXE
   ansible.builtin.template:
     src: dnsmasq-pxe.conf.j2
@@ -133,4 +169,27 @@
     mode: "0644"
   become: true
   notify: Restart dnsmasq
+  when: pxe_proxy_dhcp_enabled | bool
+
+- name: Create dnsmasq systemd drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/dnsmasq.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when: pxe_proxy_dhcp_enabled | bool
+
+- name: Install dnsmasq boot-ordering drop-in
+  ansible.builtin.template:
+    src: dnsmasq-override.conf.j2
+    dest: /etc/systemd/system/dnsmasq.service.d/10-pxe.conf
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify:
+    - Reload systemd
+    - Restart dnsmasq
   when: pxe_proxy_dhcp_enabled | bool

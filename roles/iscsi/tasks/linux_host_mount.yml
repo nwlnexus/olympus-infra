@@ -135,6 +135,27 @@
   changed_when: true
   no_log: true
 
+# Without this the node records keep iscsid.conf's default (node.startup =
+# manual), so open-iscsi.service logs in to nothing at boot, the _netdev fstab
+# mount times out waiting for the device, and everything on the LUN stays down
+# until this role runs again. Set after discovery, which can reset node records
+# to iscsid.conf defaults.
+- name: Read iSCSI node records for the target
+  ansible.builtin.command: >
+    iscsiadm -m node -T {{ iscsi_target_iqn }}
+  become: true
+  register: _iscsi_node_records
+  changed_when: false
+  no_log: true   # records include the CHAP secret
+
+- name: Log in to the iSCSI target automatically at boot
+  ansible.builtin.command: >
+    iscsiadm -m node -T {{ iscsi_target_iqn }}
+    --op update -n node.startup -v automatic
+  become: true
+  changed_when: true
+  when: _iscsi_node_records.stdout_lines | select('match', '^node\.startup = (?!automatic$)') | list | length > 0
+
 - name: Login to iSCSI target
   ansible.builtin.command: >
     iscsiadm -m node -T {{ iscsi_target_iqn }} --login

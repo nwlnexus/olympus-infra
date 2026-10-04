@@ -1,4 +1,11 @@
 ---
+# Must stay first: handlers run in definition order, so unit drop-in changes
+# are loaded before any service restart below.
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+
 - name: Restart tftpd-hpa
   ansible.builtin.service:
     name: tftpd-hpa

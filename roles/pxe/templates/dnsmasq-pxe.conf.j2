@@ -11,6 +11,14 @@
 
 port=0                          # Disable DNS (PXE proxy only)
 log-dhcp
+{% if _pxe_dhcp_interface | default('') | length > 0 %}
+
+# Serve only the LAN interface. bind-dynamic (not bind-interfaces) lets
+# dnsmasq start before the interface has its address and pick it up when it
+# appears; bind-interfaces aborts with "unknown interface" at early boot.
+interface={{ _pxe_dhcp_interface }}
+bind-dynamic
+{% endif %}
 
 # ProxyDHCP: respond to PXE requests on this subnet without allocating IPs
 dhcp-range={{ pxe_dhcp_network.split('/')[0] }},proxy

@@ -228,11 +228,25 @@
     - _k3s_state == 'present'
     - k3s_agent | default(false)
 
+# Every install must pin an exact version. An unpinned install takes `latest`,
+# which is how naraka-01 ended up three minors ahead of the control plane.
+# Upgrades go through system-upgrade-controller Plans in olympus-gitops, never
+# through this role (the install tasks are guarded by `creates:`).
+- name: Require a pinned k3s version before installing
+  ansible.builtin.assert:
+    that:
+      - k3s_version is defined
+      - k3s_version is match('^v[0-9]+\\.[0-9]+\\.[0-9]+\\+k3s[0-9]+$')
+    fail_msg: >-
+      k3s_version must be an exact release such as v1.35.9+k3s1 (got
+      '{{ k3s_version | default('') }}'). Set it in inventory/group_vars/all.yml.
+  when: _k3s_state == 'present'
+
 - name: Install k3s (agent)
   ansible.builtin.shell: |
     set -o pipefail
     curl -sfL https://get.k3s.io | \
-      {% if k3s_version | default('latest') != 'latest' %}INSTALL_K3S_VERSION="{{ k3s_version }}" {% endif %}
+      INSTALL_K3S_VERSION="{{ k3s_version }}" \
       INSTALL_K3S_EXEC="agent" \
       sh -
   args:
@@ -250,7 +264,7 @@
   ansible.builtin.shell: |
     set -o pipefail
     curl -sfL https://get.k3s.io | \
-      {% if k3s_version | default('latest') != 'latest' %}INSTALL_K3S_VERSION="{{ k3s_version }}" {% endif %}
+      INSTALL_K3S_VERSION="{{ k3s_version }}" \
       INSTALL_K3S_EXEC="server" \
       sh -
   args:
@@ -268,7 +282,7 @@
 - name: Install k3s
   ansible.builtin.shell: |
     set -o pipefail
-    curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode=0644" sh -
+    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="{{ k3s_version }}" INSTALL_K3S_EXEC="--write-kubeconfig-mode=0644" sh -
   args:
     creates: /usr/local/bin/k3s
     executable: /bin/bash

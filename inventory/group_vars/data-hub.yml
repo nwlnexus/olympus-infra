@@ -1,5 +1,5 @@
 ---
-# ai-hub — Mac Studio M1 Max (64 GB, 10-core, 927 GB NVMe)
+# data-hub — Mac Studio M1 Max (64 GB, 10-core, 927 GB NVMe)
 # Role: data tier (PostgreSQL/Redis/ClickHouse/Ollama as macOS LaunchDaemons)
 #       NOT a k8s node — Apple Silicon Metal cannot be passed to Linux containers.
 #
@@ -31,7 +31,7 @@ litellm_config_dest: /opt/litellm/config.yaml
 
 # Tailscale
 tailscale_state: present
-tailscale_hostname: ai-hub
+tailscale_hostname: data-hub
 
 # Cloudflared binary present (tunnel deleted — binary kept for potential future use)
 cloudflared_state: present

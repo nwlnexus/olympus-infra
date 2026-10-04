@@ -27,7 +27,6 @@ HERMES_URL="{{ hermes_url | default('https://api.nwlnexus.io') }}"
 HERMES_TOKEN_FILE="${WRAPPER_HERMES_TOKEN_FILE:-/etc/olympus/hermes-token}"
 HERMES_DISABLED_FLAG="${WRAPPER_HERMES_DISABLED_FLAG:-/etc/olympus/hermes-disabled}"
 OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/etc/olympus/op-service-account-token}"
-OP_CONNECT_TOKEN_FILE="${WRAPPER_OP_CONNECT_TOKEN_FILE:-/etc/olympus/op-connect-token}"
 
 CACHE_DIR="${WRAPPER_CACHE_DIR:-${STATE_DIRECTORY:-{{ ansible_pull_state_dir }}}}"
 CACHE_FILE="$CACHE_DIR/classify.json"
@@ -95,29 +94,20 @@ log INFO "Starting Ansible Pull (state=$CACHE_DIR runtime=$RUNTIME_DIR log=$LOG_
   || die 78 "ansible-pull binary not found at $ANSIBLE_PULL_BIN"
 
 # ── 1. 1Password auth ─────────────────────────────────────────────────────────
-# Prefer 1Password Connect (off the rate-limited public API); fall back to the
-# service-account token. The `op` CLI rejects having BOTH set, so export exactly
-# one. The SA token file is left in place untouched — write-ops that Connect
-# can't serve override the env at the task level to use it.
+# Export the service-account token only. Roles call `op` with plain (non-JSON)
+# output, which 1Password Connect rejects ("Connect can only be used in
+# combination with the JSON output format"), and `op` prefers Connect whenever
+# OP_CONNECT_* is set, so exporting Connect here breaks every role that reads a
+# secret. Roles that want Connect set OP_CONNECT_* at the task level.
 if [[ ! -e "$OP_TOKEN_FILE" ]]; then
   die 78 "OP service-account token not found at $OP_TOKEN_FILE; bootstrap must place it before pulls can run"
 fi
 [[ -r "$OP_TOKEN_FILE" ]] || die 77 "OP service-account token $OP_TOKEN_FILE is not readable by user $(id -un)"
 
-if [[ -e "$OP_CONNECT_TOKEN_FILE" ]]; then
-  [[ -r "$OP_CONNECT_TOKEN_FILE" ]] || die 77 "1Password Connect token $OP_CONNECT_TOKEN_FILE exists but is not readable by" \
-    "user $(id -un); the ansible-pull role sets it to owner {{ ansible_pull_user }} mode 0600"
-fi
-if [[ -s "$OP_CONNECT_TOKEN_FILE" ]]; then
-  export OP_CONNECT_HOST="{{ onepassword_connect_url | default('https://connect.nwlnexus.net') }}"
-  export OP_CONNECT_TOKEN
-  OP_CONNECT_TOKEN=$(cat "$OP_CONNECT_TOKEN_FILE")
-  log INFO "1Password: using Connect at $OP_CONNECT_HOST"
-else
-  export OP_SERVICE_ACCOUNT_TOKEN
-  OP_SERVICE_ACCOUNT_TOKEN=$(cat "$OP_TOKEN_FILE")
-  log INFO "1Password: using service-account token"
-fi
+unset OP_CONNECT_HOST OP_CONNECT_TOKEN
+export OP_SERVICE_ACCOUNT_TOKEN
+OP_SERVICE_ACCOUNT_TOKEN=$(cat "$OP_TOKEN_FILE")
+log INFO "1Password: using service-account token"
 
 # ── 2. Hermes disabled? ───────────────────────────────────────────────────────
 HERMES_ENABLED=1

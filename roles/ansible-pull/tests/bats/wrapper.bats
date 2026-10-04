@@ -157,21 +157,15 @@ pull_arg_after() {
   [ ! -f "$MOCK_PULL_ARGS" ]
 }
 
-@test "unreadable Connect token fails with EX_NOPERM (77)" {
-  skip_if_root
-  echo "connect-token" > "$WRAPPER_OP_CONNECT_TOKEN_FILE"
-  chmod 000 "$WRAPPER_OP_CONNECT_TOKEN_FILE"
-  run bash "$WRAPPER"
-  [ "$status" -eq 77 ]
-  [[ "$output" == *"not readable"* ]]
-}
-
-@test "readable Connect token is preferred over the service account" {
+@test "only the service-account token reaches ansible-pull, even with Connect configured" {
   touch "$WRAPPER_HERMES_DISABLED_FLAG"
   echo "connect-token" > "$WRAPPER_OP_CONNECT_TOKEN_FILE"
-  run bash "$WRAPPER"
+  export MOCK_PULL_ENV="$TMPDIR/pull-env"
+  OP_CONNECT_HOST=https://connect.example OP_CONNECT_TOKEN=x run bash "$WRAPPER"
   [ "$status" -eq 0 ]
-  grep -q 'using Connect' "$WRAPPER_LOG_FILE"
+  grep -q 'using service-account token' "$WRAPPER_LOG_FILE"
+  grep -qx 'OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_PULL_ENV"
+  ! grep -q '^OP_CONNECT' "$MOCK_PULL_ENV"
 }
 
 @test "unwritable state directory fails with EX_CANTCREAT (73)" {

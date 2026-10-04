@@ -24,9 +24,9 @@ k3s_ha: false
 k3s_primary: false
 k3s_init: false   # only one node in the cluster should have this true
 # Virtual IP managed by kube-vip (ARP mode). Must be within an L2-reachable subnet.
+# kube-vip runs as a DaemonSet on the servers and binds to each node's
+# default-route interface, so there is no interface setting.
 k3s_vip: ""
-# Network interface kube-vip should bind to for ARP announcements.
-k3s_vip_interface: "eth0"
 # 1Password reference for the shared cluster token.
 # Created with: openssl rand -hex 32, stored in 1Password, referenced as:
 #   op://Dev/compute-hub-k3s-token/password

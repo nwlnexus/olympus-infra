@@ -1,0 +1,36 @@
+---
+# Write the k3s role's kube-vip manifest (ServiceAccount + RBAC + DaemonSet) to
+# every k3s server in ONE run.
+#
+# k3s does not sync add-on content between servers: each server applies its
+# own copy of /var/lib/rancher/k3s/server/manifests/kube-vip.yaml to the same
+# Addon, and differing copies fight. So the file must change on all servers
+# together, never one server at a time.
+#
+# This play only writes that file (and its directory). It never installs,
+# restarts or reconfigures k3s, and needs no secrets. Run from olympus-infra:
+#
+#   ansible-playbook -i inventory/olympus.yml playbooks/push/kube-vip.yml \
+#     --tags kube-vip --check --diff
+#   ansible-playbook -i inventory/olympus.yml playbooks/push/kube-vip.yml \
+#     --tags kube-vip
+#
+# k3s applies the new file within ~15 s. Then check:
+#   kubectl -n kube-system get ds kube-vip-ds        # one pod per server
+#   kubectl -n kube-system get lease plndr-cp-lock   # one holder
+#   curl -sk -o /dev/null -w '%{http_code}' https://192.168.253.2:6443/readyz  # 401
+#
+# Migrating from the old bare kube-vip Pod: k3s prunes it when the new file is
+# applied (it is the Addon's only previous object). If it is still there,
+# `kubectl -n kube-system delete pod kube-vip`.
+
+- name: kube-vip manifest on all k3s servers
+  hosts: compute_hub
+  gather_facts: false
+
+  tasks:
+    - name: Write kube-vip manifest
+      ansible.builtin.import_role:
+        name: k3s
+        tasks_from: kube-vip.yml
+      tags: [kube-vip]

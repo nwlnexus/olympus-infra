@@ -16,10 +16,9 @@
   when: qnap_csi_state == "present"
 
 # Read creds via the community.general.onepassword lookup (controller-side).
-# Auth comes from the environment: the pull/push wrapper exports OP_CONNECT_HOST
-# + OP_CONNECT_TOKEN (Connect, off the rate-limited public API), or falls back to
-# OP_SERVICE_ACCOUNT_TOKEN. We pass no explicit token arg so `op` picks up whichever
-# auth env is present (it rejects more than one being set at once).
+# Auth comes from the environment: the pull wrapper exports OP_SERVICE_ACCOUNT_TOKEN
+# (push runs may export OP_CONNECT_* instead; the lookup works with either). We pass
+# no explicit token arg so `op` picks up whichever auth env is present.
 - name: Load QNAP management + iSCSI CHAP credentials from 1Password
   ansible.builtin.set_fact:
     _qnap_mgmt_user: "{{ lookup('community.general.onepassword',

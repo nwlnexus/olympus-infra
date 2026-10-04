@@ -9,6 +9,10 @@
 # - Prints a PLAY RECAP and exits with $MOCK_PULL_RC (default 0).
 set -euo pipefail
 
+# - Records the names of OP_* variables it received in $MOCK_PULL_ENV when set.
+if [[ -n "${MOCK_PULL_ENV:-}" ]]; then
+  env | grep -o '^OP_[A-Z_]*' | sort >> "$MOCK_PULL_ENV" || true
+fi
 if [[ -n "${MOCK_PULL_ARGS:-}" ]]; then
   printf '%s\n' "$@" -- >> "$MOCK_PULL_ARGS"
 fi

@@ -1,8 +1,9 @@
 # roles/iscsi/tasks/linux_initiator_only.yml
 ---
 # Sets up iSCSI initiator and logs into the target but does NOT
-# format or mount the block device. Intended for compute-hub nodes
-# where Longhorn manages the block device as additional disk capacity.
+# format or mount the block device. For hosts where something else
+# (not Ansible) formats and manages the block device. Not used by the
+# olympus cluster nodes, which use csi_node (Trident).
 
 - name: Set deterministic iSCSI initiator name
   ansible.builtin.copy:
@@ -80,6 +81,6 @@
   changed_when: false
   become: true
 
-- name: Show iSCSI block device (for Longhorn configuration)
+- name: Show iSCSI block device
   ansible.builtin.debug:
-    msg: "iSCSI block device available at: {{ _iscsi_dev.stdout | trim }} — add this path to Longhorn disk configuration"
+    msg: "iSCSI block device available at: {{ _iscsi_dev.stdout | trim }}"

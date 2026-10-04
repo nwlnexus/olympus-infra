@@ -1,6 +1,6 @@
 ---
 # node-prereqs role — installs packages, kernel modules, and basic hardening
-# required for k3s HA nodes with Longhorn + democratic-csi (iSCSI) storage.
+# required for k3s HA nodes with QNAP iSCSI (Trident) and NFS storage.
 
 - name: Install prerequisite packages
   ansible.builtin.apt:
@@ -10,11 +10,11 @@
   become: true
   vars:
     _node_prereqs_packages:
-      # iSCSI — required by Longhorn (thin provisioning) and democratic-csi (QNAP SAN)
+      # iSCSI — required by the QNAP CSI driver (Trident)
       - open-iscsi
-      # NFS client — required by Longhorn RWX (NFS-backed ReadWriteMany volumes)
+      # NFS client — required for NFS-backed volumes (qnap-nfs StorageClass)
       - nfs-common
-      # LVM — required for device management by Longhorn / Rook
+      # LVM — block device management
       - lvm2
       # iSCSI multipath — for QNAP iSCSI multi-path I/O
       - multipath-tools

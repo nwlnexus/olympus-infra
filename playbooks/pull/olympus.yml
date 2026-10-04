@@ -86,7 +86,11 @@
 
     - role: cloudflared
       tags: [cloudflared]
-      when: cloudflared_state is defined
+      # macOS-only role (Homebrew + LaunchDaemon). Every role defines its own
+      # <role>_state default, so "is defined" alone is always true.
+      when:
+        - cloudflared_state is defined
+        - ansible_facts['os_family'] == 'Darwin'
 
     - role: cloudflared-k8s
       tags: [cloudflared-k8s]
@@ -96,7 +100,11 @@
 
     - role: ollama
       tags: [ollama]
-      when: ollama_state is defined
+      # macOS-only role (Homebrew + LaunchDaemon). Every role defines its own
+      # <role>_state default, so "is defined" alone is always true.
+      when:
+        - ollama_state is defined
+        - ansible_facts['os_family'] == 'Darwin'
 
     # ddclient last in opt-in block: role uses meta:end_host when CF token unavailable;
     # placing it last ensures ansible-pull and other critical roles always complete.

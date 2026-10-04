@@ -14,6 +14,16 @@ baseline_firewall_extra_ports: []         # list of "{port}/{tcp|udp}"
 baseline_firewall_lan_cidr: "192.168.253.0/24"
 baseline_firewall_lan_extra_ports: []   # list of "{port}/{tcp|udp}"
 
+# k3s node networking (tasks/k8s-network.yml) — opt-in, Linux k3s nodes only:
+# cloud-init network config off, CNI links unmanaged by networkd, carrier-loss
+# drop-ins, and a wait-online override. Never reloads networkd (see the task
+# file): the networkd changes take effect at the next reboot.
+baseline_k8s_node_network: false
+# Netplan-generated .network names (without the suffix) that get an
+# IgnoreCarrierLoss drop-in, e.g. ["10-netplan-id0"].
+baseline_network_ignore_carrier_loss_networks: []
+baseline_network_ignore_carrier_loss: "10min"
+
 # Hostname enforcement — opt-in. Most hosts let the cloud-init/OS keep
 # the hostname; this is here for fresh-from-PXE provisioning later.
 baseline_set_hostname: false

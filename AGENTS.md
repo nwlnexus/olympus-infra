@@ -138,6 +138,40 @@ inotify instance per containerd-shim, so the Ubuntu default of 128 is exhausted
 and watcher-based pods (argo-events controller) crash-loop with "too many open
 files".
 
+### k3s node networking
+
+Each k3s node pins its IPv4 address as `node-ip` (`k3s_node_ip` in
+`inventory/host_vars/<node>.yml`, a marked block in
+`/etc/rancher/k3s/config.yaml` written by `roles/k3s/tasks/node-ip.yml`).
+Without it, k3s picks the node IP at start from the default route, and after a
+link outage it could pick the public IPv6 address and fail the etcd membership
+check. The addresses must match the router's DHCP reservations.
+
+`roles/baseline/tasks/k8s-network.yml` (`baseline_k8s_node_network: true` on
+the onodes and naraka-01) codifies the host networking:
+
+- `/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg`: cloud-init no longer
+  rewrites netplan. The netplan files themselves are hand-maintained (onodes:
+  one `id0` ethernet matching `en*`; naraka-01: `bond0`).
+- `/etc/systemd/network/05-k8s-unmanaged.network`: networkd never manages
+  `veth*`, `cni0` or `flannel.*` (this replaced `k3s-cni-bridge-fixer`, which
+  the k3s role now removes).
+- `/etc/systemd/network/10-netplan-id0.network.d/50-carrier.conf`
+  (`IgnoreCarrierLoss=10min`, onodes): a short link outage no longer drops
+  the DHCP address and default route. naraka-01's `bond0` already has
+  `ConfigureWithoutCarrier=yes`, which implies `IgnoreCarrierLoss=yes`.
+- `systemd-networkd-wait-online.service.d/50-any-ipv4.conf`: boot waits for
+  any link with a routable IPv4 address, instead of every NIC in the netplan
+  file (an unplugged NIC timed it out on every boot).
+
+**Never `networkctl reload` (or `systemctl reload systemd-networkd`) a live
+node.** On systemd 255 a reload re-configures every link whose `.network`
+file or drop-ins changed: it releases the DHCP lease, removes the address and
+default route, and drops foreign addresses and routing rules (the kube-vip
+VIP, Tailscale's rules). The networkd files take effect at the next reboot;
+reboot one node at a time. Apply or check by hand with
+`playbooks/push/k3s-node-network.yml`, which never restarts k3s or networkd.
+
 ### mem0-client workstation wiring
 
 `roles/mem0-client` is a workstation role for Claude Code clients, not a cluster

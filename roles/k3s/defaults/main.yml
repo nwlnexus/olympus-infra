@@ -11,6 +11,11 @@ k3s_kubeconfig_users:
 k3s_tls_san: []
 # List of bundled k3s components to disable (e.g. [traefik], [traefik, servicelb]).
 k3s_disable: []
+# Node IPv4 address, pinned as `node-ip` in /etc/rancher/k3s/config.yaml (a
+# marked block; see tasks/node-ip.yml). Set per host in host_vars. Empty =
+# k3s picks the address from the default route at each start, which can pick
+# IPv6 if DHCPv4 is late. Changing it needs a k3s restart, one server at a time.
+k3s_node_ip: ""
 # If set, patches kubeconfig server URL from 127.0.0.1:6443 to this FQDN.
 # Should match one of the entries in k3s_tls_san.
 k3s_external_server: ""

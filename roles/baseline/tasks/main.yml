@@ -49,6 +49,14 @@
   ansible.builtin.include_tasks: hostname.yml
   tags: [baseline, baseline-hostname]
 
+# k3s nodes only. import_tasks (not include) so the tags reach every task.
+- name: baseline — k3s node networking
+  ansible.builtin.import_tasks: k8s-network.yml
+  when:
+    - baseline_state == "present"
+    - baseline_k8s_node_network | bool
+  tags: [baseline, baseline-k8s-network]
+
 - name: baseline — firewall (UFW)
   ansible.builtin.include_tasks: firewall.yml
   tags: [baseline, baseline-firewall]

@@ -8,3 +8,8 @@
 
 Labels apply at first join (config.yaml) and are reconciled on servers via kubectl.
 etcd snapshots go to `k3s_etcd_snapshot_dir` (mount it first, e.g. QNAP NFS).
+`k3s_node_ip` (per host) pins `node-ip` as a marked block in config.yaml
+(`tasks/node-ip.yml`); k3s reads it only at start, so restart one server at a
+time. `tasks/cni-bridge-fixer-retire.yml` removes the retired
+k3s-cni-bridge-fixer. `playbooks/push/k3s-node-network.yml` runs both (and the
+baseline node-network tasks) on their own, without restarting anything.

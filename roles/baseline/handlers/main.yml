@@ -16,3 +16,8 @@
     name: systemd-timesyncd
     state: restarted
   become: true
+
+- name: reload systemd units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true

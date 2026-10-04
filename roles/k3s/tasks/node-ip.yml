@@ -1,0 +1,46 @@
+---
+# Pin the node's IPv4 address in /etc/rancher/k3s/config.yaml (servers and
+# agents both read that file).
+#
+# Without `node-ip`, k3s picks the node IP from the default route each time it
+# starts. If it starts before DHCPv4 is back (e.g. after a link outage), it
+# picks the public IPv6 address instead, and an etcd server then fails the
+# membership check because its peer URL no longer matches. Pinning the IPv4
+# address makes k3s wait for that address instead.
+#
+# Managed as a marked block, like the k3s_disable block, so the rest of the
+# file (token, server, tls-san, ...) is never rewritten. The full-config
+# templates in linux.yml render the same block, so a fresh install gets it and
+# this task is then a no-op.
+#
+# This never restarts k3s: k3s reads the file only at start. Restart one
+# server at a time, by hand, and check etcd membership before the next.
+# An empty k3s_node_ip leaves the file alone (it does not remove a block), so
+# a run that misses the host var cannot silently unpin a node.
+
+- name: Check k3s_node_ip is an IPv4 address on this host
+  ansible.builtin.assert:
+    that:
+      - k3s_node_ip is match('^(\d{1,3}\.){3}\d{1,3}$')
+      - k3s_node_ip in (ansible_facts['all_ipv4_addresses'] | default([k3s_node_ip]))
+    fail_msg: >-
+      k3s_node_ip={{ k3s_node_ip }} is not an IPv4 address on {{ inventory_hostname }}
+      ({{ ansible_facts['all_ipv4_addresses'] | default([]) | join(', ') }}).
+      k3s would not start with it.
+    quiet: true
+  when: k3s_node_ip | default('') != ''
+
+- name: Pin node-ip in k3s config
+  ansible.builtin.blockinfile:
+    path: /etc/rancher/k3s/config.yaml
+    marker: "# {mark} ANSIBLE MANAGED - k3s_node_ip"
+    block: |
+      node-ip: "{{ k3s_node_ip }}"
+    insertafter: EOF
+    # The file must already exist (written by the templates in linux.yml or
+    # by hand); its owner and mode (0600, it holds the token) are kept.
+    create: false
+  become: true
+  # The diff would print the whole file, cluster token included.
+  diff: false
+  when: k3s_node_ip | default('') != ''

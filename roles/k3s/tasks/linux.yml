@@ -97,6 +97,11 @@
       cluster-init: true
       token: "{{ _k3s_token }}"
       write-kubeconfig-mode: "0644"
+      {% if k3s_node_ip | default('') != '' %}
+      # BEGIN ANSIBLE MANAGED - k3s_node_ip
+      node-ip: "{{ k3s_node_ip }}"
+      # END ANSIBLE MANAGED - k3s_node_ip
+      {% endif %}
       tls-san:
       {% for san in _k3s_full_tls_san | default(k3s_tls_san | default([])) %}
         - "{{ san }}"
@@ -157,6 +162,11 @@
       server: "https://{{ k3s_vip }}:6443"
       token: "{{ _k3s_token }}"
       write-kubeconfig-mode: "0644"
+      {% if k3s_node_ip | default('') != '' %}
+      # BEGIN ANSIBLE MANAGED - k3s_node_ip
+      node-ip: "{{ k3s_node_ip }}"
+      # END ANSIBLE MANAGED - k3s_node_ip
+      {% endif %}
       {% if k3s_node_labels | default([]) | length > 0 %}
       node-label:
       {% for l in k3s_node_labels %}
@@ -192,6 +202,11 @@
     content: |
       server: "{{ k3s_server_url }}"
       token: "{{ _k3s_token }}"
+      {% if k3s_node_ip | default('') != '' %}
+      # BEGIN ANSIBLE MANAGED - k3s_node_ip
+      node-ip: "{{ k3s_node_ip }}"
+      # END ANSIBLE MANAGED - k3s_node_ip
+      {% endif %}
       {% if k3s_node_labels | default([]) | length > 0 %}
       node-label:
       {% for l in k3s_node_labels %}
@@ -267,6 +282,11 @@
   ansible.builtin.set_fact:
     _k3s_config: |
       write-kubeconfig-mode: "0644"
+      {% if k3s_node_ip | default('') != '' %}
+      # BEGIN ANSIBLE MANAGED - k3s_node_ip
+      node-ip: "{{ k3s_node_ip }}"
+      # END ANSIBLE MANAGED - k3s_node_ip
+      {% endif %}
       {% if k3s_tls_san | default([]) | length > 0 %}
       tls-san:
       {% for san in k3s_tls_san %}
@@ -297,6 +317,15 @@
     - _k3s_state == 'present'
     - not (k3s_ha | default(false))
     - not (k3s_agent | default(false))
+
+# ── node-ip block (all modes) ────────────────────────────────────────────────
+# The templates above already render it; this keeps it in place on nodes whose
+# config.yaml was written by hand or by an older role version.
+- name: Pin node-ip in k3s config
+  ansible.builtin.include_tasks: node-ip.yml
+  when:
+    - _k3s_state == 'present'
+    - k3s_node_ip | default('') != ''
 
 - name: Remove k3s disable skip files (allow bundled components to redeploy)
   ansible.builtin.file:
@@ -403,46 +432,10 @@
     - not (k3s_agent | default(false))
     - (k3s_node_labels | default([]) | length > 0) or (k3s_node_taints | default([]) | length > 0)
 
-# ── CNI bridge fixer (workaround for k3s embedded CNI skipping bridge attach) ─
-- name: Deploy k3s-cni-bridge-fixer script
-  ansible.builtin.template:
-    src: k3s-cni-bridge-fixer.sh.j2
-    dest: /usr/local/bin/k3s-cni-bridge-fixer.sh
-    owner: root
-    group: root
-    mode: '0755'
-  become: true
-  when: _k3s_state == 'present'
-
-- name: Deploy k3s-cni-bridge-fixer systemd service
-  ansible.builtin.template:
-    src: k3s-cni-bridge-fixer.service.j2
-    dest: /etc/systemd/system/k3s-cni-bridge-fixer.service
-    owner: root
-    group: root
-    mode: '0644'
-  become: true
-  register: _cni_fixer_unit
-  when: _k3s_state == 'present'
-
-- name: Enable and start k3s-cni-bridge-fixer
-  ansible.builtin.systemd:
-    name: k3s-cni-bridge-fixer.service
-    state: "{{ 'restarted' if _cni_fixer_unit.changed else 'started' }}"
-    enabled: true
-    daemon_reload: true
-  become: true
-  when: _k3s_state == 'present'
-  ignore_errors: "{{ ansible_check_mode }}"
-
-- name: Stop and remove k3s-cni-bridge-fixer (state=absent)
-  ansible.builtin.systemd:
-    name: k3s-cni-bridge-fixer.service
-    state: stopped
-    enabled: false
-  become: true
-  failed_when: false
-  when: _k3s_state == 'absent'
+# ── Retired: k3s-cni-bridge-fixer (removed on every run, any state) ─────────
+- name: Retire k3s-cni-bridge-fixer
+  ansible.builtin.import_tasks: cni-bridge-fixer-retire.yml
+  tags: [cni-fixer]
 
 - name: Create .kube directories for users
   ansible.builtin.file:

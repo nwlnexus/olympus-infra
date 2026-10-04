@@ -1,0 +1,39 @@
+---
+# Retire k3s-cni-bridge-fixer.
+#
+# The fixer attached pod veths to cni0 when systemd-networkd, through a
+# wildcard netplan match, grabbed veth/cni0 links and broke the bridge. That
+# was fixed at the source on 2026-04-09 (netplan narrowed to `en*`, cloud-init
+# network config disabled; both now codified in the baseline role, along with
+# 05-k8s-unmanaged.network). The fixer has done nothing since, and with
+# BindsTo=k3s.service it stayed stopped after every k3s restart.
+
+- name: Check for the k3s-cni-bridge-fixer unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/k3s-cni-bridge-fixer.service
+  register: _cni_fixer_unit_file
+
+# Stopping it does not touch k3s: BindsTo= only binds the fixer to k3s.
+- name: Stop and disable k3s-cni-bridge-fixer
+  ansible.builtin.systemd:
+    name: k3s-cni-bridge-fixer.service
+    state: stopped
+    enabled: false
+  become: true
+  when: _cni_fixer_unit_file.stat.exists
+
+- name: Remove k3s-cni-bridge-fixer unit and script
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/k3s-cni-bridge-fixer.service
+    - /usr/local/bin/k3s-cni-bridge-fixer.sh
+  become: true
+  register: _cni_fixer_removed
+
+- name: Reload systemd after removing k3s-cni-bridge-fixer
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+  when: _cni_fixer_removed is changed

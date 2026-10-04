@@ -1,0 +1,55 @@
+---
+# Network resilience for the k3s nodes, one node at a time (serial: 1):
+#
+#   k8s-network  baseline role, tasks/k8s-network.yml: cloud-init network
+#                config off, 05-k8s-unmanaged.network, carrier-loss drop-ins,
+#                systemd-networkd-wait-online override (+ daemon-reload).
+#   cni-fixer    k3s role, tasks/cni-bridge-fixer-retire.yml: stop, disable
+#                and delete the retired k3s-cni-bridge-fixer.
+#   node-ip      k3s role, tasks/node-ip.yml: the `node-ip` block in
+#                /etc/rancher/k3s/config.yaml.
+#
+# The baseline part also runs hourly through ansible-pull; this play is for
+# applying it deliberately, with --check --diff first. It needs no secrets.
+#
+# This play NEVER restarts k3s and NEVER reloads systemd-networkd:
+#   - node-ip takes effect when k3s restarts. Restart one server at a time
+#     (`systemctl restart k3s`, or `k3s-agent` on naraka-01), wait for Ready,
+#     check etcd member IDs and peer URLs, and run scripts/k3s-health-gate.sh
+#     before the next server.
+#   - the networkd files take effect at the next reboot (see the comment at
+#     the top of roles/baseline/tasks/k8s-network.yml for why not a reload).
+#
+# Run from olympus-infra:
+#
+#   ansible-playbook -i inventory/olympus.yml playbooks/push/k3s-node-network.yml \
+#     --limit onode-0312ce --tags k8s-network,cni-fixer --check --diff
+#   ansible-playbook -i inventory/olympus.yml playbooks/push/k3s-node-network.yml \
+#     --limit onode-0312ce --tags node-ip
+#
+# The node-ip task hides its diff (it would print the cluster token).
+
+- name: k3s node network resilience
+  hosts: compute_hub:k3s_agents
+  gather_facts: true
+  serial: 1
+
+  tasks:
+    - name: Host networking (baseline)
+      ansible.builtin.import_role:
+        name: baseline
+        tasks_from: k8s-network.yml
+      when: baseline_k8s_node_network | bool
+      tags: [k8s-network]
+
+    - name: Retire k3s-cni-bridge-fixer
+      ansible.builtin.import_role:
+        name: k3s
+        tasks_from: cni-bridge-fixer-retire.yml
+      tags: [cni-fixer]
+
+    - name: Pin node-ip in k3s config
+      ansible.builtin.import_role:
+        name: k3s
+        tasks_from: node-ip.yml
+      tags: [node-ip]

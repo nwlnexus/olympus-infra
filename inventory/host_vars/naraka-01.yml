@@ -1,0 +1,16 @@
+---
+# naraka-01 — k3s agent (most of its vars: group_vars/management-hub.yml).
+# LAN IP: 192.168.253.14 (bond0)
+#
+# These live in host_vars so that both the pull inventory
+# (inventory/management-hub.yml) and the push inventory (inventory/olympus.yml,
+# where naraka-01 is in k3s_agents, not management-hub) see them.
+
+# Pinned as node-ip in /etc/rancher/k3s/config.yaml (k3s role, tasks/node-ip.yml).
+# Must match the DHCP reservation for this node on the router.
+k3s_node_ip: "192.168.253.14"
+
+# baseline role, tasks/k8s-network.yml. No carrier-loss drop-in: netplan
+# renders bond0 with ConfigureWithoutCarrier=yes, which already implies
+# IgnoreCarrierLoss=yes (no time limit) on systemd 257.
+baseline_k8s_node_network: true

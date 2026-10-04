@@ -15,3 +15,8 @@
 # restarts and stays Failed until the job's TTL (900 s) removes it; the retry
 # pod completes the job. Real job failures are caught by the suc.jobs check.
 ^system-upgrade/apply-(server|agent)-plan-
+
+# kube-vip DaemonSet pods restart by design when their node loses the
+# plndr-cp-lock leadership (local apiserver restarting). Whether the VIP
+# works is covered by the vip.lease and vip.readyz checks.
+^kube-system/kube-vip-ds-

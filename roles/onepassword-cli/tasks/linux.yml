@@ -1,37 +1,38 @@
 ---
-- name: Add 1Password apt signing key
-  ansible.builtin.shell: |
-    curl -sS https://downloads.1password.com/linux/keys/1password.asc \
-      | gpg --dearmor \
-      | tee /usr/share/keyrings/1password-archive-keyring.gpg > /dev/null
-  args:
-    creates: /usr/share/keyrings/1password-archive-keyring.gpg
+# Same apt source as the baseline role (roles/baseline/tasks/op-cli.yml), which
+# runs on every pull. Both must write the identical line: apt refuses two
+# lines for one repository with different Signed-By values.
+- name: Download 1Password apt signing key
+  ansible.builtin.get_url:
+    url: https://downloads.1password.com/linux/keys/1password.asc
+    dest: /usr/share/keyrings/1password-archive-keyring.asc
+    mode: '0644'
+  become: true
 
-- name: Remove conflicting 1Password apt source (legacy .asc signed-by)
-  ansible.builtin.file:
+- name: Remove legacy 1Password apt source lines (.gpg keyring)
+  ansible.builtin.lineinfile:
     path: "{{ item }}"
+    regexp: 'downloads\.1password\.com.*1password-archive-keyring\.gpg'
     state: absent
   loop:
     - /etc/apt/sources.list.d/1password.list
     - /etc/apt/sources.list.d/1password-cli.list
+  failed_when: false
   become: true
 
-- name: Add 1Password apt repository (arm64)
+- name: Add 1Password apt repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch=arm64 signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/arm64 stable main"
+    repo: >-
+      deb [arch={{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}
+      signed-by=/usr/share/keyrings/1password-archive-keyring.asc]
+      https://downloads.1password.com/linux/debian/{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }} stable main
     state: present
     filename: 1password
-  when: ansible_facts['architecture'] == "aarch64"
-
-- name: Add 1Password apt repository (amd64)
-  ansible.builtin.apt_repository:
-    repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main"
-    state: present
-    filename: 1password
-  when: ansible_facts['architecture'] == "x86_64"
+  become: true
 
 - name: Install 1Password CLI
   ansible.builtin.apt:
     name: 1password-cli
     state: present
     update_cache: true
+  become: true

@@ -4,13 +4,6 @@
 # Matching problem pods are reported as INFO instead of failing the gate.
 # Keep this to known, pre-existing noise; anything new should fail the gate.
 
-# argo-events controller restarts constantly (6,663 restarts at the 2026-10-04
-# baseline); pre-existing and unrelated to the control plane.
-^argo-events/argo-events-controller-manager-
-
-# Failing codebase-brain Argo workflow pods (phase Failed, owned by Workflows).
-^codebase-brain/brain-
-
 # system-upgrade-controller upgrade jobs: the first pod is killed when k3s
 # restarts and stays Failed until the job's TTL (900 s) removes it; the retry
 # pod completes the job. Real job failures are caught by the suc.jobs check.

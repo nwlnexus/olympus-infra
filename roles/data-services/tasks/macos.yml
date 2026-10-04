@@ -1,4 +1,7 @@
 ---
+- name: Remove retired services (Redpanda, Colima)
+  ansible.builtin.include_tasks: macos-legacy-cleanup.yml
+
 - name: Create system users
   ansible.builtin.include_tasks: macos-users.yml
 
@@ -13,9 +16,6 @@
 
 - name: Configure ClickHouse
   ansible.builtin.include_tasks: macos-clickhouse.yml
-
-- name: Configure Redpanda
-  ansible.builtin.include_tasks: macos-redpanda.yml
 
 - name: Configure Ollama
   ansible.builtin.include_tasks: macos-ollama.yml

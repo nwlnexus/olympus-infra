@@ -57,9 +57,3 @@ k3s_node_taints: []
 k3s_etcd_snapshot_dir: ""
 k3s_etcd_snapshot_schedule: "0 */6 * * *"
 k3s_etcd_snapshot_retention: 20
-
-# Colima (macOS) settings — used by darwin.yml in Phase 3
-colima_profile: olympus
-colima_runtime: k3s
-colima_cpus: 4
-colima_memory: 12

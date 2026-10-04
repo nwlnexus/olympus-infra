@@ -8,17 +8,23 @@
 # This file MUST render byte-identical on every server. k3s does not sync
 # add-on content between servers: each server applies its own copy to the same
 # Addon, and differing copies fight. So nothing host-specific belongs here:
-#   - vip_interface is deliberately unset. kube-vip v0.8.9 then binds to the
-#     interface of the default route, and exits (the pod restarts) if that
-#     route is deleted.
+#   - vip_interface is deliberately unset. kube-vip then binds, at start, to
+#     the interface of the first IPv4 default route. Since v0.8.10 it only logs
+#     an error if that route is later deleted (it no longer exits); the leader
+#     re-adds the VIP every 3 s if it goes missing.
 #   - Each pod talks to its own node's apiserver: k3s's local kubeconfig is
 #     mounted as admin.conf and "kubernetes" resolves to 127.0.0.1. A leader
 #     whose apiserver dies cannot renew the lease, so the VIP moves.
 #
-# Based on `kube-vip manifest daemonset` (v0.8.9) and
+# Based on `kube-vip manifest daemonset` (v1.2.4) and
 # https://kube-vip.io/manifests/rbac.yaml. The ServiceAccount and RBAC are
 # unused while admin.conf is mounted (kube-vip prefers it); they are kept so the
 # DaemonSet matches upstream.
+#
+# updateStrategy is OnDelete: a template change rolls no pod by itself. Delete
+# the pods one at a time, the plndr-cp-lock holder last, so the VIP moves once
+# (see playbooks/push/kube-vip.yml). Never use maxSurge: hostNetwork, :2112 and
+# the lease identity (the node name) are per node.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -71,8 +77,10 @@ metadata:
   namespace: kube-system
   labels:
     app.kubernetes.io/name: kube-vip-ds
-    app.kubernetes.io/version: v0.8.9
+    app.kubernetes.io/version: v1.2.4
 spec:
+  updateStrategy:
+    type: OnDelete
   selector:
     matchLabels:
       app.kubernetes.io/name: kube-vip-ds
@@ -80,7 +88,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: kube-vip-ds
-        app.kubernetes.io/version: v0.8.9
+        app.kubernetes.io/version: v1.2.4
     spec:
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
@@ -100,7 +108,7 @@ spec:
           ip: 127.0.0.1
       containers:
         - name: kube-vip
-          image: ghcr.io/kube-vip/kube-vip:v0.8.9
+          image: ghcr.io/kube-vip/kube-vip:v1.2.4
           imagePullPolicy: IfNotPresent
           args:
             - manager
@@ -113,7 +121,7 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-            - name: vip_cidr
+            - name: vip_subnet
               value: "32"
             - name: cp_enable
               value: "true"
@@ -145,7 +153,8 @@ spec:
               add:
                 - NET_ADMIN
                 - NET_RAW
-                - SYS_TIME
+              drop:
+                - ALL
       volumes:
         - name: kubeconfig
           hostPath:

@@ -142,6 +142,7 @@ files".
 
 - One pin for every k3s install: `k3s_version` in `inventory/group_vars/all.yml` (an exact release, e.g. `v1.35.9+k3s1`). The `k3s` role refuses to install without one; it never upgrades an installed node (`creates:` guard).
 - Upgrades go only through the system-upgrade-controller Plans in olympus-gitops (`clusters/olympus/system-upgrade/`), one minor at a time, per `docs/superpowers/plans/2026-10-04-k3s-upgrade-1.35.md`. Bump the pin here after an upgrade completes.
+- Plans pin an exact `version:` (a patch release is a one-line bump). Never add `drain` or `channel` to a Plan.
 
 ### k3s node networking
 

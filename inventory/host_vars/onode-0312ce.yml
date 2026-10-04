@@ -5,6 +5,10 @@
 k3s_primary: false
 k3s_init: false
 
+# Pinned as node-ip in /etc/rancher/k3s/config.yaml (k3s role, tasks/node-ip.yml).
+# Must match the DHCP reservation for this node on the router.
+k3s_node_ip: "192.168.253.8"
+
 tailscale_hostname: onode-0312ce
 ddclient_extra_fqdns:
   - onode-0312ce.nwlnexus.net

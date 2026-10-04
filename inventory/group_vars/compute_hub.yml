@@ -114,6 +114,16 @@ ansible_pull_skip_tags: common
 # node at a time.
 baseline_unattended_auto_reboot: false
 
+# Host networking (baseline role, tasks/k8s-network.yml): cloud-init network
+# config off, CNI links unmanaged, wait-online override, and keep the DHCP
+# address through carrier loss of up to 10 minutes. 10-netplan-id0 is what
+# netplan generates for the `id0` (match `en*`) ethernet on every onode.
+# These files take effect at the next reboot; never `networkctl reload` a
+# server to apply them (see the task file).
+baseline_k8s_node_network: true
+baseline_network_ignore_carrier_loss_networks:
+  - 10-netplan-id0
+
 # iSCSI host prereqs — QNAP Trident CSI manages login/CHAP; Ansible sets initiator name only
 iscsi_state: present
 iscsi_mode: csi_node

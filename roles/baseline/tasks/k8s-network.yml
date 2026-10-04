@@ -1,0 +1,99 @@
+---
+# Host networking for k3s nodes (baseline_k8s_node_network: true).
+#
+# Codifies what keeps systemd-networkd away from the CNI links and keeps a
+# node's address through short link outages. See the 2026-09-10 default-route
+# incident in docs/superpowers/plans/2026-10-04-k3s-upgrade-1.35.md.
+#
+# Netplan files are left alone; overrides are drop-ins next to what netplan
+# generates in /run.
+#
+# NOTHING HERE RELOADS systemd-networkd, on purpose. On systemd 255 (Ubuntu
+# 24.04), `networkctl reload` (or `systemctl reload systemd-networkd`)
+# re-configures every link whose .network file or drop-ins changed: it stops
+# the DHCP client (sending a RELEASE), removes the DHCP address and default
+# route, and drops foreign addresses and routing rules (the kube-vip VIP,
+# Tailscale's rules) before configuring the link again. The networkd files
+# below take effect at the next networkd start, i.e. the next reboot.
+# Activate them by rebooting one node at a time, never by a reload.
+
+- name: Disable cloud-init network config (netplan is managed by hand)
+  ansible.builtin.copy:
+    dest: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+    content: |
+      network: {config: disabled}
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+
+# Without it, a wildcard netplan match would let networkd manage pod veths,
+# cni0 and flannel.1 (run DHCP on them, detach veths from the bridge).
+- name: Keep CNI links unmanaged by systemd-networkd
+  ansible.builtin.copy:
+    dest: /etc/systemd/network/05-k8s-unmanaged.network
+    content: |
+      # Managed by Ansible (baseline role, k8s-network.yml).
+      [Match]
+      Name=veth* cni0 flannel.*
+
+      [Link]
+      Unmanaged=yes
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+
+# Keep the DHCP address and routes through a carrier loss of up to
+# baseline_network_ignore_carrier_loss (a switch reboot, a cable reseat)
+# instead of dropping them at once. Applies to the netplan-generated
+# /run/systemd/network/<name>.network files listed per host or group.
+- name: Create carrier-loss drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/network/{{ item }}.network.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ baseline_network_ignore_carrier_loss_networks }}"
+  become: true
+
+- name: Keep addresses through short carrier loss
+  ansible.builtin.copy:
+    dest: "/etc/systemd/network/{{ item }}.network.d/50-carrier.conf"
+    content: |
+      # Managed by Ansible (baseline role, k8s-network.yml).
+      [Network]
+      IgnoreCarrierLoss={{ baseline_network_ignore_carrier_loss }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ baseline_network_ignore_carrier_loss_networks }}"
+  become: true
+
+# netplan's generated 10-netplan.conf makes wait-online wait for every NIC in
+# the netplan file, so an unplugged NIC times it out on every boot. Replace
+# it: wait until any link has a routable IPv4 address (k3s needs IPv4).
+- name: Create systemd-networkd-wait-online drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/systemd-networkd-wait-online.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: Wait for any link with a routable IPv4 address at boot
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/systemd-networkd-wait-online.service.d/50-any-ipv4.conf
+    content: |
+      # Managed by Ansible (baseline role, k8s-network.yml).
+      # Sorts after netplan's 10-netplan.conf and replaces its ExecStart lines.
+      [Service]
+      ExecStart=
+      ExecStart=/usr/lib/systemd/systemd-networkd-wait-online --any --ipv4 --operational-state=routable
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: reload systemd units

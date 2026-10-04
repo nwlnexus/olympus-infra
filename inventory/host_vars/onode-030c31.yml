@@ -5,6 +5,10 @@
 k3s_primary: true
 k3s_init: true   # runs --cluster-init; only one node in the cluster should have this
 
+# Pinned as node-ip in /etc/rancher/k3s/config.yaml (k3s role, tasks/node-ip.yml).
+# Must match the DHCP reservation for this node on the router.
+k3s_node_ip: "192.168.253.7"
+
 tailscale_hostname: onode-030c31
 ddclient_extra_fqdns:
   - onode-030c31.nwlnexus.net

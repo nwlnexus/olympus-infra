@@ -1,36 +1,57 @@
 ---
-- name: Ensure /etc/systemd/timesyncd.conf.d exists
-  ansible.builtin.file:
-    path: /etc/systemd/timesyncd.conf.d
-    state: directory
-    owner: root
-    group: root
-    mode: '0755'
-  become: true
+# Only manage systemd-timesyncd where it is the installed time service. Hosts
+# that run chrony (the k3s control-plane nodes) are left alone: on Ubuntu the
+# two packages conflict, so starting timesyncd there fails and installing it
+# would remove chrony.
+- name: Check whether systemd-timesyncd is installed
+  ansible.builtin.command: dpkg-query -W -f=${Status} systemd-timesyncd
+  register: _baseline_timesyncd_pkg
+  changed_when: false
+  failed_when: false
+  check_mode: false
   when: baseline_state == "present"
 
-- name: Configure systemd-timesyncd NTP servers
-  ansible.builtin.copy:
-    dest: /etc/systemd/timesyncd.conf.d/99-baseline.conf
-    owner: root
-    group: root
-    mode: '0644'
-    content: |
-      # Managed by Ansible (baseline role)
-      [Time]
-      NTP={{ baseline_ntp_servers | join(' ') }}
-      FallbackNTP=pool.ntp.org
-  become: true
-  notify: restart timesyncd
-  when: baseline_state == "present"
+- name: Note that time sync is left to the existing service
+  ansible.builtin.debug:
+    msg: "systemd-timesyncd is not installed; leaving the host's existing time service (e.g. chrony) unmanaged"
+  when:
+    - baseline_state == "present"
+    - "'install ok installed' not in (_baseline_timesyncd_pkg.stdout | default(''))"
 
-- name: Enable and start systemd-timesyncd
-  ansible.builtin.service:
-    name: systemd-timesyncd
-    enabled: true
-    state: started
-  become: true
-  when: baseline_state == "present"
+- name: Manage systemd-timesyncd
+  when:
+    - baseline_state == "present"
+    - "'install ok installed' in (_baseline_timesyncd_pkg.stdout | default(''))"
+  block:
+    - name: Ensure /etc/systemd/timesyncd.conf.d exists
+      ansible.builtin.file:
+        path: /etc/systemd/timesyncd.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      become: true
+
+    - name: Configure systemd-timesyncd NTP servers
+      ansible.builtin.copy:
+        dest: /etc/systemd/timesyncd.conf.d/99-baseline.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Managed by Ansible (baseline role)
+          [Time]
+          NTP={{ baseline_ntp_servers | join(' ') }}
+          FallbackNTP=pool.ntp.org
+      become: true
+      notify: restart timesyncd
+
+    - name: Enable and start systemd-timesyncd
+      ansible.builtin.service:
+        name: systemd-timesyncd
+        enabled: true
+        state: started
+      become: true
 
 - name: Remove time sync override (state=absent)
   ansible.builtin.file:

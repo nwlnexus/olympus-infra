@@ -27,9 +27,9 @@ k3s_node_labels:
 k3s_node_taints: []
 # Virtual IP for kube-vip ARP leader election (within mgmt-hub advertised subnet)
 k3s_vip: "192.168.253.2"
-# k3s_vip_interface is intentionally not set here — the k3s role detects it
-# automatically by finding the interface whose IP is in the same /24 as k3s_vip
-# (using ansible_facts['interfaces'] at run time). Override here only if needed.
+# kube-vip (a DaemonSet on the servers) binds to each node's default-route
+# interface, so its manifest is identical on every server. Change it on all
+# servers at once: playbooks/push/kube-vip.yml.
 # 1Password reference for the shared cluster token (create with: openssl rand -hex 32)
 k3s_token_op_ref: "op://Dev/compute-hub-k3s-token/password"
 # TLS SANs added to k3s API server cert — applied on primary at cluster-init.

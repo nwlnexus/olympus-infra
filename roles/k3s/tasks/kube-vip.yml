@@ -1,0 +1,38 @@
+---
+# kube-vip (HA servers only): ServiceAccount + RBAC + DaemonSet in k3s's
+# auto-deploy manifests directory. Written before k3s installs so the VIP comes
+# up on first boot, and on every server (the pods elect a leader among them).
+#
+# The rendered file has no host-specific content and must stay byte-identical
+# on every server: k3s does not sync add-on content between servers, so
+# differing copies fight over the same Addon. To change it on a running cluster,
+# write all servers in one run with playbooks/push/kube-vip.yml.
+#
+# Uses k3s_state directly (not _k3s_state) so that playbook can import this file
+# on its own with `tasks_from`.
+
+- name: Ensure k3s static manifests directory exists (HA)
+  ansible.builtin.file:
+    path: /var/lib/rancher/k3s/server/manifests
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when:
+    - k3s_state | default('present') == 'present'
+    - k3s_ha | default(false)
+    - not (k3s_agent | default(false))
+
+- name: Write kube-vip manifest (HA)
+  ansible.builtin.template:
+    src: kube-vip.yaml.j2
+    dest: /var/lib/rancher/k3s/server/manifests/kube-vip.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when:
+    - k3s_state | default('present') == 'present'
+    - k3s_ha | default(false)
+    - not (k3s_agent | default(false))

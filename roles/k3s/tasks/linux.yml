@@ -11,51 +11,12 @@
   ansible.builtin.set_fact:
     _k3s_token: ""
 
-# ── Shared: kube-vip static pod (HA only) ────────────────────────────────────
+# ── Shared: kube-vip DaemonSet manifest (HA servers only) ────────────────────
 # Written BEFORE k3s installs so kube-vip starts with k3s on first boot.
-# Must run on ALL server nodes (kube-vip does leader election across them).
-
-# Detect which interface holds an IP in the same /24 as the VIP.
-# Sets _k3s_vip_interface; falls back to k3s_vip_interface if none found.
-# Requires network facts — playbook pre_tasks must include gather_subset: network.
-- name: Detect LAN interface for kube-vip (matches VIP subnet)
-  ansible.builtin.set_fact:
-    _k3s_vip_interface: "{{ item }}"
-  loop: "{{ ansible_facts['interfaces'] }}"
-  when:
-    - _k3s_state == 'present'
-    - k3s_ha | default(false)
-    - item != 'lo'
-    - (ansible_facts[item].ipv4.address | default(''))
-      is match('^' + (k3s_vip | split('.'))[:3] | join('\\.') + '\\.')
-  loop_control:
-    label: "{{ item }}"
-
-- name: Ensure k3s static manifests directory exists (HA)
-  ansible.builtin.file:
-    path: /var/lib/rancher/k3s/server/manifests
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-  become: true
-  when:
-    - _k3s_state == 'present'
-    - k3s_ha | default(false)
-    - not (k3s_agent | default(false))
-
-- name: Write kube-vip static pod manifest (HA)
-  ansible.builtin.template:
-    src: kube-vip.yaml.j2
-    dest: /var/lib/rancher/k3s/server/manifests/kube-vip.yaml
-    owner: root
-    group: root
-    mode: "0644"
-  become: true
-  when:
-    - _k3s_state == 'present'
-    - k3s_ha | default(false)
-    - not (k3s_agent | default(false))
+# Must run on ALL server nodes, with identical content (see kube-vip.yml).
+- name: Write kube-vip manifest (HA)
+  ansible.builtin.import_tasks: kube-vip.yml
+  tags: [kube-vip]
 
 # ── HA: Read cluster token from 1Password ────────────────────────────────────
 

@@ -20,13 +20,6 @@
   changed_when: false
   listen: restart clickhouse
 
-- name: Restart redpanda
-  ansible.builtin.command:
-    cmd: launchctl kickstart -k system/com.olympus.redpanda
-  become: true
-  changed_when: false
-  listen: restart redpanda
-
 - name: Restart ollama
   ansible.builtin.command:
     cmd: launchctl kickstart -k system/com.olympus.ollama

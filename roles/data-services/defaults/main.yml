@@ -27,12 +27,9 @@ data_services_clickhouse_http_port: 8123
 data_services_clickhouse_native_port: 9000
 data_services_clickhouse_replication_port: 9009
 
-# Redpanda – _redpanda already exists at UID 204 on ai-hub (created prior to this role)
-data_services_redpanda_uid: 204
-data_services_redpanda_kafka_port: 9092
-data_services_redpanda_admin_port: 9644
-data_services_redpanda_proxy_port: 8082
-data_services_redpanda_schema_port: 8081
+# Retired services – Redpanda and Colima are removed from hosts that still have them.
+# Set to false to leave the _redpanda macOS user account in place.
+data_services_remove_redpanda_user: true
 
 # Ollama
 data_services_ollama_uid: 405

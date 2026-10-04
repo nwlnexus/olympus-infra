@@ -5,7 +5,7 @@
 # before any push-playbook run, so a fresh mise/ansible-core install self-provisions.
 collections:
   # community.general.homebrew (+ homebrew_* modules) — used across the macOS
-  # homebrew, ollama, and other ai-hub roles.
+  # homebrew, ollama, and other data-hub roles.
   - name: community.general
     version: ">=9.0.0"
   # ansible.posix.* helpers used by the baseline/system roles.

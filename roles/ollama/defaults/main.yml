@@ -1,9 +1,9 @@
 ---
 ollama_state: present
 # Homebrew package state: `latest` keeps ollama current (upgrades on each run);
-# `present` installs-but-never-upgrades. ai-hub tracks `latest` so the MLX/GGUF
+# `present` installs-but-never-upgrades. data-hub tracks `latest` so the MLX/GGUF
 # runners stay patched (0.20.2 shipped an MLX prefix-cache crash that broke
-# multi-turn agentic runs — verified fixed on 0.30.11, the version ai-hub now runs).
+# multi-turn agentic runs — verified fixed on 0.30.11, the version data-hub now runs).
 ollama_pkg_state: latest
 ollama_models: []
 ollama_service_port: 11434

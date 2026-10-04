@@ -19,5 +19,5 @@ qnap_csi_op_vault: Dev
 qnap_iscsi_op_item: "{{ inventory_hostname }}-qnap-iscsi"
 qnap_iscsi_op_vault: Dev
 # k3s kubeconfig path. Default = bare-metal k3s (world-readable, mode 0644).
-# Override for macOS/Colima hosts if ever needed.
+# Override for non-standard k3s hosts if ever needed.
 qnap_csi_kubeconfig: "/etc/rancher/k3s/k3s.yaml"

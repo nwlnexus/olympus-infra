@@ -25,7 +25,7 @@ olympus-infra/
 │   ├── external-dns          # external-dns Helm deployment
 │   ├── cert-manager          # cert-manager Helm deployment
 │   ├── ansible-pull          # Configure ansible-pull cron/LaunchDaemon
-│   ├── data-services         # ai-hub native Postgres/Redis/ClickHouse/Redpanda
+│   ├── data-services         # data-hub native Postgres/Redis/ClickHouse
 │   ├── hermes-classify-include # Hermes dynamic role/include support
 │   ├── iscsi                 # iSCSI prerequisites for QNAP-backed storage
 │   ├── mem0-client           # Workstation OpenMemory MCP + Claude recall hook
@@ -36,16 +36,15 @@ olympus-infra/
 │   ├── common                # Common OS setup (packages, sysctl, etc.)
 │   └── node-prereqs          # k3s node prerequisites
 ├── playbooks/
-│   ├── data-services.yml     # Push playbook for ai-hub data tier
+│   ├── data-services.yml     # Push playbook for data-hub data tier
 │   └── pull/                 # ansible-pull playbooks (run daily on hosts)
-│       ├── ai-hub.yml
 │       ├── compute-hub.yml
 │       ├── management-hub.yml # Retired context, kept for history
 │       └── olympus.yml        # Unified pull playbook for live hosts
 └── inventory/
-    ├── group_vars/           # Variables per group (all.yml, ai-hub.yml, etc.)
+    ├── group_vars/           # Variables per group (all.yml, data-hub.yml, etc.)
     ├── host_vars/            # Variables per host
-    ├── ai-hub.yml            # Pull inventory for ai-hub
+    ├── data-hub.yml          # Pull inventory for data-hub
     └── olympus.yml           # Unified push inventory: k3s, data tier, provisioning
 ```
 
@@ -54,7 +53,7 @@ olympus-infra/
 | Host | OS | Role |
 |---|---|---|
 | olympus | Ubuntu on onode-030c31/0312ce/0314ac plus naraka-01 | Single k3s HA cluster: control-plane on the onodes, naraka-01 as agent/ingress node |
-| ai-hub | macOS (Apple Silicon) | Native data tier and model host; **not** a k8s node |
+| data-hub | macOS (Apple Silicon) | Native data tier and model host; **not** a k8s node |
 | styx | Linux | PXE/Packer provisioning host; **not** a k8s node |
 | management-hub | Retired | Historical context only; do not add new services here |
 
@@ -62,9 +61,9 @@ The old `compute-hub`/`management-hub` split has converged into the single
 `olympus` cluster. Ansible changes should target the live `olympus` inventory
 unless a legacy playbook explicitly says otherwise.
 
-### ai-hub data tier
+### data-hub data tier
 
-`ai-hub` runs host-native services because Apple Silicon GPU/Metal acceleration
+`data-hub` runs host-native services because Apple Silicon GPU/Metal acceleration
 is not available to Linux containers. The `data-services` role manages service
 accounts, directories under `/opt/olympus`, and macOS LaunchDaemons for:
 
@@ -73,7 +72,13 @@ accounts, directories under `/opt/olympus`, and macOS LaunchDaemons for:
 | PostgreSQL | 5432 | Tuned conservatively for a 64 GB Mac Studio so Ollama can load large models |
 | Redis | 6379 | Tailnet-facing cache/service dependency |
 | ClickHouse | 8123 / 9000 | HTTP/native endpoints; bound to `data_services_tailscale_ip` |
-| Redpanda | 9092 | Kafka-compatible broker for platform event streams |
+
+Redpanda and Colima are retired on data-hub: the cluster runs its own in-cluster
+Redpanda, and the Mac is not a k8s node. `data-services` no longer installs
+either one, and `tasks/macos-legacy-cleanup.yml` removes their LaunchDaemons,
+`/opt/olympus/{config,data,logs}/redpanda`, and the `_redpanda` user (set
+`data_services_remove_redpanda_user: false` to keep the user) from hosts that
+still have them.
 
 Operational constraints:
 
@@ -83,7 +88,7 @@ Operational constraints:
   `olympus-sdk` repo passes `ds_pg_password`, `ds_redis_password`, and
   `ds_ch_password` as extra vars to `playbooks/data-services.yml`.
 - `roles/data-services` still contains an older `macos-ollama.yml` include.
-  Treat `roles/ollama` as the canonical Ollama owner; rerun the ai-hub
+  Treat `roles/ollama` as the canonical Ollama owner; rerun the data-hub
   maintenance playbook after data-service changes if the legacy daemon appears.
 
 ### Ollama ownership and model residency
@@ -92,7 +97,7 @@ Use `roles/ollama` for Ollama. It installs/updates the Homebrew `ollama` package
 owns `/Library/LaunchDaemons/homebrew.mxcl.ollama.plist`, and removes the legacy
 `com.olympus.ollama` LaunchDaemon that previously failed to bind `:11434`.
 
-Current ai-hub model split:
+Current data-hub model split:
 
 | Workload | Models | Residency |
 |---|---|---|
@@ -114,7 +119,7 @@ config creates `system.query_log` with a 14-day TTL; without it, dashboards or
 telemetry queries backed by `system.query_log` fail with `UNKNOWN_TABLE`.
 
 The Homebrew ClickHouse v26.5.x build has runtime expression JIT failures on
-ai-hub. `clickhouse-users.xml.j2` disables `compile_expressions` and
+data-hub. `clickhouse-users.xml.j2` disables `compile_expressions` and
 `compile_aggregate_expressions`; do not re-enable them until the Homebrew build
 is verified fixed.
 
@@ -125,7 +130,7 @@ Linux hosts. These kernel parameters are global, so setting them on k3s nodes
 also affects the cloudflared pods. The value matches quic-go's expected UDP
 buffer ceiling and prevents intermittent tunnel control-stream failures and edge
 502s caused by packet loss. The unified pull playbook skips `common` on Darwin,
-so this tuning is not applied to ai-hub.
+so this tuning is not applied to data-hub.
 
 `roles/common` also raises `fs.inotify.max_user_instances` to `8192` and
 `fs.inotify.max_user_watches` to `1048576`. On k3s nodes root alone holds one

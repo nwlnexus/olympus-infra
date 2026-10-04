@@ -84,10 +84,6 @@
       tags: [tailscale]
       when: tailscale_state is defined
 
-    - role: colima
-      tags: [colima]
-      when: colima_state is defined
-
     - role: cloudflared
       tags: [cloudflared]
       when: cloudflared_state is defined

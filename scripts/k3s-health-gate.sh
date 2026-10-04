@@ -118,7 +118,8 @@ if ((${#etcd_ok[@]} > 0)); then
     srv=$(jq -r '.etcdserver // "?"' <<<"${e_version[$name]}")
     cl=$(jq -r '.etcdcluster // "?"' <<<"${e_version[$name]}")
     txt+="$name=$srv/$cl "
-    [[ $srv == "$EXPECTED_ETCDSERVER" ]] || bad=1
+    # EXPECTED_ETCDSERVER may list several versions (space-separated) while a hop is in progress.
+    [[ " $EXPECTED_ETCDSERVER " == *" $srv "* ]] || bad=1
     [[ -z $EXPECTED_ETCDCLUSTER || $cl == "$EXPECTED_ETCDCLUSTER" ]] || bad=1
   done
   want="etcdserver=$EXPECTED_ETCDSERVER${EXPECTED_ETCDCLUSTER:+ etcdcluster=$EXPECTED_ETCDCLUSTER}"
@@ -230,8 +231,10 @@ else
       if [[ $role == server ]]; then want=$EXPECTED_SERVER_K3S_VERSION sel='== "true"'
       else want=$EXPECTED_AGENT_K3S_VERSION sel='!= "true"'; fi
       [[ -n $want ]] || continue
+      # want may list several versions (space-separated) while a hop is in progress.
       off=$(jq -r --arg v "$want" ".items[] | select(.metadata.labels[\"node-role.kubernetes.io/control-plane\"] $sel)
-        | select(.status.nodeInfo.kubeletVersion != \$v) | \"\(.metadata.name)=\(.status.nodeInfo.kubeletVersion)\"" <<<"$nodes")
+        | select(.status.nodeInfo.kubeletVersion as \$k | (\$v | split(\" \") | index(\$k)) | not)
+        | \"\(.metadata.name)=\(.status.nodeInfo.kubeletVersion)\"" <<<"$nodes")
       if [[ -z $off ]]; then pass "nodes.${role}Version" "all ${role}s on $want"
       else fail "nodes.${role}Version" "want $want; off-version: $(paste -sd' ' <<<"$off")"; fi
     done

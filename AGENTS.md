@@ -138,6 +138,11 @@ inotify instance per containerd-shim, so the Ubuntu default of 128 is exhausted
 and watcher-based pods (argo-events controller) crash-loop with "too many open
 files".
 
+### k3s versions
+
+- One pin for every k3s install: `k3s_version` in `inventory/group_vars/all.yml` (an exact release, e.g. `v1.35.9+k3s1`). The `k3s` role refuses to install without one; it never upgrades an installed node (`creates:` guard).
+- Upgrades go only through the system-upgrade-controller Plans in olympus-gitops (`clusters/olympus/system-upgrade/`), one minor at a time, per `docs/superpowers/plans/2026-10-04-k3s-upgrade-1.35.md`. Bump the pin here after an upgrade completes.
+
 ### k3s node networking
 
 Each k3s node pins its IPv4 address as `node-ip` (`k3s_node_ip` in

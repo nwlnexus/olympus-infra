@@ -1,6 +1,6 @@
 ---
 k3s_state: present
-k3s_version: "latest"
+k3s_version: ""  # must be set to an exact release (see inventory/group_vars/all.yml); install asserts it
 k3s_config_dir: /etc/rancher/k3s
 k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
 k3s_kubeconfig_users:

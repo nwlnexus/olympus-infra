@@ -6,3 +6,9 @@
 # lookup passes it via `op item get --fields label=<field>` which handles spaces
 # natively — no URL encoding required.
 baseline_op_ssh_pubkey_item: "6hssesmhbntdyu3ris7ou44nzi"
+
+# k3s release for EVERY install path (pull and push inventories, servers and
+# agents). One pin so no group can fall back to `latest`. Changing this does
+# not upgrade running nodes: upgrades go through the system-upgrade-controller
+# Plans in olympus-gitops (clusters/olympus/system-upgrade/).
+k3s_version: "v1.35.9+k3s1"

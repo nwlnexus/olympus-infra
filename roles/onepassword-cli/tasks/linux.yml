@@ -12,11 +12,19 @@
 - name: Remove legacy 1Password apt source lines (.gpg keyring)
   ansible.builtin.lineinfile:
     path: "{{ item }}"
-    regexp: 'downloads\.1password\.com.*1password-archive-keyring\.gpg'
+    regexp: 'signed-by=/usr/share/keyrings/1password-archive-keyring\.gpg'
     state: absent
   loop:
     - /etc/apt/sources.list.d/1password.list
     - /etc/apt/sources.list.d/1password-cli.list
+  failed_when: false
+  become: true
+
+- name: Remove 1Password apt source lines for the other channel
+  ansible.builtin.lineinfile:
+    path: /etc/apt/sources.list.d/1password.list
+    regexp: 'downloads\.1password\.com/linux/debian/\S+ (?!{{ onepassword_cli_channel }} )\S+ main'
+    state: absent
   failed_when: false
   become: true
 
@@ -25,7 +33,7 @@
     repo: >-
       deb [arch={{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}
       signed-by=/usr/share/keyrings/1password-archive-keyring.asc]
-      https://downloads.1password.com/linux/debian/{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }} stable main
+      https://downloads.1password.com/linux/debian/{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }} {{ onepassword_cli_channel }} main
     state: present
     filename: 1password
   become: true
@@ -33,6 +41,6 @@
 - name: Install 1Password CLI
   ansible.builtin.apt:
     name: 1password-cli
-    state: present
+    state: latest
     update_cache: true
   become: true

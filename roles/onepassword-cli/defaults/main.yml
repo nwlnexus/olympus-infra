@@ -1,0 +1,3 @@
+---
+# 1Password CLI channel: "beta" (needed for 1Password Environments) or "stable".
+onepassword_cli_channel: beta

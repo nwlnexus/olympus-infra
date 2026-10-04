@@ -25,7 +25,7 @@ olympus-infra/
 │   ├── external-dns          # external-dns Helm deployment
 │   ├── cert-manager          # cert-manager Helm deployment
 │   ├── ansible-pull          # Configure ansible-pull cron/LaunchDaemon
-│   ├── data-services         # data-hub native Postgres/Redis/ClickHouse/Redpanda
+│   ├── data-services         # data-hub native Postgres/Redis/ClickHouse
 │   ├── hermes-classify-include # Hermes dynamic role/include support
 │   ├── iscsi                 # iSCSI prerequisites for QNAP-backed storage
 │   ├── mem0-client           # Workstation OpenMemory MCP + Claude recall hook
@@ -72,7 +72,13 @@ accounts, directories under `/opt/olympus`, and macOS LaunchDaemons for:
 | PostgreSQL | 5432 | Tuned conservatively for a 64 GB Mac Studio so Ollama can load large models |
 | Redis | 6379 | Tailnet-facing cache/service dependency |
 | ClickHouse | 8123 / 9000 | HTTP/native endpoints; bound to `data_services_tailscale_ip` |
-| Redpanda | 9092 | Kafka-compatible broker for platform event streams |
+
+Redpanda and Colima are retired on data-hub: the cluster runs its own in-cluster
+Redpanda, and the Mac is not a k8s node. `data-services` no longer installs
+either one, and `tasks/macos-legacy-cleanup.yml` removes their LaunchDaemons,
+`/opt/olympus/{config,data,logs}/redpanda`, and the `_redpanda` user (set
+`data_services_remove_redpanda_user: false` to keep the user) from hosts that
+still have them.
 
 Operational constraints:
 

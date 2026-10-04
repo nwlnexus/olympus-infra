@@ -280,10 +280,12 @@ else
     att=$(jq '[.items[] | select(.status.attached == true)] | length' <<<"$va")
     notatt=$(jq -r '.items[] | select(.status.attached != true)
       | "\(.metadata.name) pv=\(.spec.source.persistentVolumeName) node=\(.spec.nodeName) \(.status.attachError.message // "")"' <<<"$va")
-    if [[ $att -eq $EXPECTED_VA_ATTACHED && -z $notatt ]]; then
-      pass "volumeAttachments" "$att/$EXPECTED_VA_ATTACHED attached"
+    # EXPECTED_VA_ATTACHED is a minimum: a lost attachment fails, while
+    # transient extra ones (e.g. a codebase-brain run's work volume) are fine.
+    if [[ $att -ge $EXPECTED_VA_ATTACHED && -z $notatt ]]; then
+      pass "volumeAttachments" "$att attached (minimum $EXPECTED_VA_ATTACHED)"
     else
-      fail "volumeAttachments" "$att attached (expected $EXPECTED_VA_ATTACHED)"; detail "$notatt"
+      fail "volumeAttachments" "$att attached (minimum $EXPECTED_VA_ATTACHED)"; detail "$notatt"
     fi
   else
     fail "volumeAttachments" "kubectl get volumeattachments failed: $(oneline "$va")"

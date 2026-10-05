@@ -10,7 +10,13 @@
 # Must match the DHCP reservation for this node on the router.
 k3s_node_ip: "192.168.253.14"
 
+# Networking (Ubuntu 26.04 since 2026-10-04). bond0's MAC is pinned to the MAC
+# it already had (the one the router hands this address to) in the
+# hand-managed /etc/netplan/60-naraka-bond-mac.yaml, so a release upgrade or a
+# systemd MAC-policy change can't give bond0 a new MAC and a new address (what
+# happened to styx). The same file turns off DHCP on the unplugged eno1.
+#
 # baseline role, tasks/k8s-network.yml. No carrier-loss drop-in: netplan
 # renders bond0 with ConfigureWithoutCarrier=yes, which already implies
-# IgnoreCarrierLoss=yes (no time limit) on systemd 257.
+# IgnoreCarrierLoss=yes (no time limit).
 baseline_k8s_node_network: true

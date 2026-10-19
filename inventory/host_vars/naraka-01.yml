@@ -20,3 +20,9 @@ k3s_node_ip: "192.168.253.14"
 # renders bond0 with ConfigureWithoutCarrier=yes, which already implies
 # IgnoreCarrierLoss=yes (no time limit).
 baseline_k8s_node_network: true
+
+# Node hardening (baseline role, tasks/node-hardening.yml): sshd drop-in read before
+# cloud-init's, key-only ansible account, pod-bridge IPv6 isolation. Rolled out one
+# node at a time: naraka-01 first (2026-10-19), then onode-0314ac, onode-0312ce,
+# onode-030c31, verifying after each.
+baseline_node_hardening: true

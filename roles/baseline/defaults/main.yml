@@ -74,4 +74,10 @@ baseline_ntp_servers:
 #     and same-node pods over fe80:: with no NetworkPolicy, because kube-router only
 #     programs IPv4).
 baseline_node_hardening: false
+
+# Opt-in per host: turn off nested virtualization in kvm_amd. The KVM CI node
+# (node-restriction.kubernetes.io/kvm-ci) runs untrusted VM jobs; nested guests widen the
+# hypervisor attack surface (security review #394 m6). Applied at module load; a loaded
+# module is reloaded by hand while no VM is running (see the task comment).
+baseline_kvm_amd_nested_off: false
 baseline_node_hardening_ssh_dropin: 00-olympus-baseline.conf

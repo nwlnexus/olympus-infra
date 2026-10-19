@@ -5,5 +5,4 @@ After=network.target
 [Service]
 Type=oneshot
 User=root
-ExecStart=/usr/local/bin/atlas self update
-ExecStartPost=/bin/systemctl restart atlas.service
+ExecStart=/usr/local/bin/atlas self update --restart-service

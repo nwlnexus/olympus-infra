@@ -1,0 +1,43 @@
+name: Pipeline Improvement
+description: Propose a CI/CD or pipeline improvement
+labels: ["ci"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for CI/CD pipeline changes, build optimizations, or workflow improvements.
+
+  - type: textarea
+    id: current-behavior
+    attributes:
+      label: Current Behavior
+      description: How does the pipeline currently work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired-behavior
+    attributes:
+      label: Desired Behavior
+      description: How should it work instead?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: affected-workflows
+    attributes:
+      label: Affected Workflows
+      description: Which workflows are affected?
+      options:
+        - label: k3s health gate (scripts/k3s-health-gate.sh)
+        - label: k3s snapshot (scripts/k3s-snapshot.sh)
+        - label: playbook / role validation (syntax check, lint)
+        - label: other
+
+  - type: textarea
+    id: performance-impact
+    attributes:
+      label: Performance Impact
+      description: Expected impact on build times, costs, or reliability
+    validations:
+      required: false

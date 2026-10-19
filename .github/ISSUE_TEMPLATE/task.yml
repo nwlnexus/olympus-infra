@@ -1,0 +1,48 @@
+name: Task
+description: Track a chore, refactor, or maintenance task
+labels: ["task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for refactoring, dependency updates, infrastructure work, or documentation tasks.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What needs to be done?
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this task needed?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      description: What kind of task is this?
+      options:
+        - refactoring
+        - dependency update
+        - infrastructure
+        - documentation
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Files Involved
+      description: List key files or directories affected by this task
+      placeholder: |
+        - workers/api/src/...
+        - apps/web/src/...
+    validations:
+      required: false

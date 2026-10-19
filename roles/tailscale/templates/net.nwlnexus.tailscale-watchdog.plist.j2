@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Managed by Ansible (tailscale role) — do not edit manually -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>net.nwlnexus.tailscale-watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/sbin/tailscale-watchdog</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TS_WATCHDOG_THRESHOLD</key>
+    <string>{{ tailscale_watchdog_threshold }}</string>
+    <key>TS_WATCHDOG_COOLDOWN</key>
+    <string>{{ tailscale_watchdog_cooldown_seconds }}</string>
+    <key>PATH</key>
+    <string>/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>{{ tailscale_watchdog_interval_seconds }}</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/var/log/tailscale-watchdog.log</string>
+</dict>
+</plist>

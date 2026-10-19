@@ -255,6 +255,87 @@
     - tailscale_state == "present"
     - tailscale_is_running
 
+# ── Watchdog (restarts a wedged tailscaled) ──────────────────────────────────
+# `brew services` keeps the process alive, but cannot see that it is running
+# without a control-plane connection. The watchdog checks `tailscale status`
+# every few minutes and kickstarts the LaunchDaemon after sustained
+# BackendState=Running + Self.Online=false. See files/tailscale-watchdog.sh.
+
+- name: Install tailscale watchdog script (macOS)
+  ansible.builtin.copy:
+    src: tailscale-watchdog.sh
+    dest: /usr/local/sbin/tailscale-watchdog
+    owner: root
+    group: wheel
+    mode: "0755"
+  become: true
+  when:
+    - tailscale_state == "present"
+    - tailscale_watchdog_enabled | bool
+
+- name: Install tailscale watchdog LaunchDaemon (macOS)
+  ansible.builtin.template:
+    src: net.nwlnexus.tailscale-watchdog.plist.j2
+    dest: /Library/LaunchDaemons/net.nwlnexus.tailscale-watchdog.plist
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+  register: ts_watchdog_plist
+  when:
+    - tailscale_state == "present"
+    - tailscale_watchdog_enabled | bool
+
+# A changed plist must be unloaded and bootstrapped again; bootstrap on a loaded
+# label fails, so check first.
+- name: Check whether the tailscale watchdog is loaded (macOS)
+  ansible.builtin.command: launchctl print system/net.nwlnexus.tailscale-watchdog
+  become: true
+  register: ts_watchdog_loaded
+  failed_when: false
+  changed_when: false
+  when:
+    - tailscale_state == "present"
+    - tailscale_watchdog_enabled | bool
+
+- name: Unload changed tailscale watchdog LaunchDaemon (macOS)
+  ansible.builtin.command: launchctl bootout system/net.nwlnexus.tailscale-watchdog
+  become: true
+  failed_when: false
+  changed_when: true
+  when:
+    - tailscale_state == "present"
+    - tailscale_watchdog_enabled | bool
+    - ts_watchdog_plist is changed
+    - ts_watchdog_loaded.rc == 0
+
+- name: Load tailscale watchdog LaunchDaemon (macOS)
+  ansible.builtin.command: >-
+    launchctl bootstrap system /Library/LaunchDaemons/net.nwlnexus.tailscale-watchdog.plist
+  become: true
+  changed_when: true
+  when:
+    - tailscale_state == "present"
+    - tailscale_watchdog_enabled | bool
+    - ts_watchdog_plist is changed or ts_watchdog_loaded.rc != 0
+
+- name: Remove tailscale watchdog (macOS, disabled or absent)
+  become: true
+  when: tailscale_state == "absent" or not (tailscale_watchdog_enabled | bool)
+  block:
+    - name: Unload tailscale watchdog LaunchDaemon
+      ansible.builtin.command: launchctl bootout system/net.nwlnexus.tailscale-watchdog
+      failed_when: false
+      changed_when: false
+
+    - name: Remove tailscale watchdog files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /Library/LaunchDaemons/net.nwlnexus.tailscale-watchdog.plist
+        - /usr/local/sbin/tailscale-watchdog
+
 - name: Tailscale disconnect (absent)
   ansible.builtin.command: tailscale down
   failed_when: false

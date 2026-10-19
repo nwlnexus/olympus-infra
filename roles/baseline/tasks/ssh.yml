@@ -1,5 +1,10 @@
 ---
-- name: SSH hardening drop-in
+# The drop-in name matters: sshd keeps the FIRST value it reads for a keyword, and
+# files in sshd_config.d are read in lexical order. 99-baseline.conf therefore lost
+# to cloud-init's 50-cloud-init.conf (`PasswordAuthentication yes`) on hosts that have
+# it. With baseline_node_hardening the drop-in is 00-olympus-baseline.conf (read
+# first) and the old 99 file is removed.
+- name: SSH hardening drop-in (legacy name)
   ansible.builtin.template:
     src: sshd_hardening.conf.j2
     dest: /etc/ssh/sshd_config.d/99-baseline.conf
@@ -8,12 +13,40 @@
     mode: '0644'
   become: true
   notify: restart sshd
-  when: baseline_state == "present"
+  when:
+    - baseline_state == "present"
+    - not (baseline_node_hardening | bool)
 
-- name: Remove SSH hardening drop-in (state=absent)
+- name: SSH hardening drop-in (read before cloud-init's)
+  ansible.builtin.template:
+    src: sshd_hardening.conf.j2
+    dest: "/etc/ssh/sshd_config.d/{{ baseline_node_hardening_ssh_dropin }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: restart sshd
+  when:
+    - baseline_state == "present"
+    - baseline_node_hardening | bool
+
+- name: Remove the legacy 99-baseline.conf drop-in (superseded)
   ansible.builtin.file:
     path: /etc/ssh/sshd_config.d/99-baseline.conf
     state: absent
+  become: true
+  notify: restart sshd
+  when:
+    - baseline_state == "present"
+    - baseline_node_hardening | bool
+
+- name: Remove SSH hardening drop-ins (state=absent)
+  ansible.builtin.file:
+    path: "/etc/ssh/sshd_config.d/{{ item }}"
+    state: absent
+  loop:
+    - 99-baseline.conf
+    - "{{ baseline_node_hardening_ssh_dropin }}"
   become: true
   notify: restart sshd
   when: baseline_state == "absent"
@@ -39,6 +72,30 @@
   changed_when: false
   become: true
   when: baseline_state == "present"
+
+# `sshd -T` computes the effective config from the files on disk, so this proves
+# the drop-in actually wins (the old one did not) before the restart handler runs.
+- name: Read effective sshd settings
+  ansible.builtin.command: sshd -T
+  register: _baseline_sshd_effective
+  changed_when: false
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_node_hardening | bool
+
+- name: Assert the effective sshd settings match the baseline
+  ansible.builtin.assert:
+    that:
+      - "('passwordauthentication ' ~ baseline_ssh_password_auth) in _baseline_sshd_effective.stdout_lines"
+      - "('permitrootlogin ' ~ baseline_ssh_permit_root_login) in _baseline_sshd_effective.stdout_lines"
+    fail_msg: >-
+      sshd would still run with a different PasswordAuthentication/PermitRootLogin than the
+      baseline ({{ baseline_ssh_password_auth }}/{{ baseline_ssh_permit_root_login }}): another
+      drop-in or sshd_config line is read before {{ baseline_node_hardening_ssh_dropin }}.
+  when:
+    - baseline_state == "present"
+    - baseline_node_hardening | bool
 
 - name: Ensure ansible user .local/bin exists
   ansible.builtin.file:

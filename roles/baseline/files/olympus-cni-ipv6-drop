@@ -1,0 +1,52 @@
+#!/bin/sh
+# Managed by Ansible (baseline role, node-hardening.yml) — do not edit manually.
+#
+# Pods get an fe80:: address and the node's cni0 bridge has one too, but
+# kube-router only programs IPv4 rules, so a pod could reach the node's own
+# services (sshd, kubelet, apiserver, node-exporter...) and other pods on the same
+# node over IPv6 link-local with no NetworkPolicy involved (found by the 2026-10-19
+# review of the CI runner platform). The cluster is IPv4-only, so drop every IPv6
+# packet that arrives from the pod bridge, both to the host (INPUT) and between
+# bridged pods (FORWARD; bridge-nf-call-ip6tables=1 makes bridged frames traverse
+# it).
+#
+# Usage: olympus-cni-ipv6-drop apply|remove|status
+# Idempotent: `apply` prints "added <chain>" only when it inserted a rule.
+set -eu
+
+IFACE="${OLYMPUS_CNI_IFACE:-cni0}"
+IP6T="${OLYMPUS_IP6TABLES:-ip6tables}"
+COMMENT="olympus-cni-ipv6-drop"
+
+rule() { "$IP6T" -w 5 "$@"; }
+has() { rule -C "$1" -i "$IFACE" -m comment --comment "$COMMENT" -j DROP 2>/dev/null; }
+
+case "${1:-}" in
+  apply)
+    for chain in INPUT FORWARD; do
+      if ! has "$chain"; then
+        rule -I "$chain" 1 -i "$IFACE" -m comment --comment "$COMMENT" -j DROP
+        echo "added $chain"
+      fi
+    done
+    ;;
+  remove)
+    for chain in INPUT FORWARD; do
+      while has "$chain"; do
+        rule -D "$chain" -i "$IFACE" -m comment --comment "$COMMENT" -j DROP
+        echo "removed $chain"
+      done
+    done
+    ;;
+  status)
+    rc=0
+    for chain in INPUT FORWARD; do
+      if has "$chain"; then echo "present $chain"; else echo "missing $chain"; rc=1; fi
+    done
+    exit "$rc"
+    ;;
+  *)
+    echo "usage: $0 apply|remove|status" >&2
+    exit 2
+    ;;
+esac

@@ -27,3 +27,6 @@ ansible_pull_skip_tags: common,qnap-csi-bootstrap,1password-connect,cloudflared-
 # Node hardening (baseline role, tasks/node-hardening.yml); rolled out one node at a
 # time: naraka-01, onode-0314ac, onode-0312ce, then this node (last: cluster-init/primary).
 baseline_node_hardening: true
+
+# KVM CI node: nested virtualization off (security review #394 m6).
+baseline_kvm_amd_nested_off: true

@@ -64,6 +64,21 @@
   when: baseline_node_hardening | bool
   tags: [baseline, baseline-node-hardening]
 
+- name: baseline — disable nested virtualization (kvm_amd)
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/olympus-kvm-nested.conf
+    content: "options kvm_amd nested=0\n"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  # Takes effect when kvm_amd next loads. Never reloaded from here: reload by hand
+  # (modprobe -r kvm_amd && modprobe kvm_amd) when no VM is running.
+  when:
+    - baseline_state == "present"
+    - baseline_kvm_amd_nested_off | bool
+  tags: [baseline, baseline-kvm-nested]
+
 - name: baseline — firewall (UFW)
   ansible.builtin.include_tasks: firewall.yml
   tags: [baseline, baseline-firewall]

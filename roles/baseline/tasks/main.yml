@@ -57,6 +57,13 @@
     - baseline_k8s_node_network | bool
   tags: [baseline, baseline-k8s-network]
 
+# Opt-in per host (baseline_node_hardening): key-only ansible account and IPv6
+# isolation of the pod bridge. The sshd drop-in ordering fix is in ssh.yml.
+- name: baseline — node hardening
+  ansible.builtin.include_tasks: node-hardening.yml
+  when: baseline_node_hardening | bool
+  tags: [baseline, baseline-node-hardening]
+
 - name: baseline — firewall (UFW)
   ansible.builtin.include_tasks: firewall.yml
   tags: [baseline, baseline-firewall]

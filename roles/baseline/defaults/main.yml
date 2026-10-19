@@ -60,3 +60,18 @@ baseline_fail2ban_maxretry: 5
 baseline_ntp_servers:
   - time.cloudflare.com
   - time.google.com
+
+# Node hardening (tasks/node-hardening.yml) — opt-in PER HOST so it can be rolled
+# out one node at a time and verified before the next. Enabling it:
+#   - writes the sshd hardening drop-in as 00-olympus-baseline.conf so it sorts
+#     BEFORE cloud-init's 50-cloud-init.conf (sshd uses the first value it reads;
+#     the old 99-baseline.conf lost to `PasswordAuthentication yes`), removes the
+#     old 99 file, and asserts the EFFECTIVE `sshd -T` values match;
+#   - sets the `ansible` account's password to `*` (key-only; unlike `passwd -l`
+#     it does not lock the account for sshd, so key and tailnet logins keep working);
+#   - on k3s nodes (baseline_k8s_node_network): drops IPv6 from the pod bridge, see
+#     files/olympus-cni-ipv6-drop (pods otherwise reach the node's sshd/kubelet/apiserver
+#     and same-node pods over fe80:: with no NetworkPolicy, because kube-router only
+#     programs IPv4).
+baseline_node_hardening: false
+baseline_node_hardening_ssh_dropin: 00-olympus-baseline.conf

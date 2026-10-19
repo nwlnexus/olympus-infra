@@ -1,0 +1,68 @@
+---
+# Node hardening, opt-in per host (baseline_node_hardening). See defaults/main.yml.
+# The sshd part lives in ssh.yml (drop-in order + effective-value assertion).
+
+# Key-only account. `*` is not an unlock-able hash, and unlike `passwd -l` (`!`) it is not
+# treated as a LOCKED account by sshd, so public-key and tailnet logins are unaffected.
+# sudo is passwordless (NOPASSWD), so nothing needs the password.
+- name: Make the ansible account key-only (no usable password)
+  ansible.builtin.user:
+    name: ansible
+    password: "*"
+    update_password: always
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_node_hardening | bool
+
+- name: Install the pod-bridge IPv6 isolation script (k3s nodes)
+  ansible.builtin.copy:
+    src: olympus-cni-ipv6-drop
+    dest: /usr/local/sbin/olympus-cni-ipv6-drop
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_node_hardening | bool
+    - baseline_k8s_node_network | bool
+
+- name: Install the IPv6 isolation unit (applies at boot, before k3s)
+  ansible.builtin.copy:
+    src: olympus-cni-ipv6-drop.service
+    dest: /etc/systemd/system/olympus-cni-ipv6-drop.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  register: _baseline_cni_unit
+  when:
+    - baseline_state == "present"
+    - baseline_node_hardening | bool
+    - baseline_k8s_node_network | bool
+
+- name: Enable the IPv6 isolation unit
+  ansible.builtin.systemd:
+    name: olympus-cni-ipv6-drop.service
+    enabled: true
+    state: started
+    daemon_reload: "{{ _baseline_cni_unit is changed }}"
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_node_hardening | bool
+    - baseline_k8s_node_network | bool
+
+# The unit stays "active" after boot, so something that flushes ip6tables later would
+# not be noticed by systemd: re-assert the rules on every pull (idempotent, prints
+# "added <chain>" only when it had to insert one).
+- name: Re-assert the IPv6 isolation rules
+  ansible.builtin.command: /usr/local/sbin/olympus-cni-ipv6-drop apply
+  register: _baseline_cni_rules
+  changed_when: "'added' in _baseline_cni_rules.stdout"
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_node_hardening | bool
+    - baseline_k8s_node_network | bool

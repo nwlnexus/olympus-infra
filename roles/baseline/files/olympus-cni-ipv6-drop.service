@@ -1,0 +1,14 @@
+# Managed by Ansible (baseline role, node-hardening.yml) — do not edit manually
+[Unit]
+Description=Drop IPv6 from the pod bridge (kube-router enforces IPv4 policy only)
+Documentation=file:///usr/local/sbin/olympus-cni-ipv6-drop
+Before=k3s.service k3s-agent.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/olympus-cni-ipv6-drop apply
+ExecStop=/usr/local/sbin/olympus-cni-ipv6-drop remove
+
+[Install]
+WantedBy=multi-user.target

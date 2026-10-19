@@ -32,3 +32,12 @@ tailscale_oauth_client_secret: ""
 # Must include at least one tag if tailnet policy enforces "tailnet-owned auth key must have tags set".
 tailscale_tags:
   - "tag:server"
+
+# macOS watchdog: restarts tailscaled when it is logged in (BackendState Running)
+# but has lost its control-plane connection (Self.Online false) — seen on
+# data-hub, where it stayed that way for days. Installed as a LaunchDaemon by
+# tasks/macos.yml. A stopped or logged-out node is never restarted.
+tailscale_watchdog_enabled: true
+tailscale_watchdog_interval_seconds: 300   # how often it checks
+tailscale_watchdog_threshold: 3            # consecutive bad checks before a restart (15 min)
+tailscale_watchdog_cooldown_seconds: 3600  # at most one restart per hour

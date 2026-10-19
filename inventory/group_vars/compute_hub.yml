@@ -146,3 +146,6 @@ k3s_kubelet_args:
   - "system-reserved=cpu=1,memory=2Gi"
   - "kube-reserved=memory=1Gi"
   - "eviction-hard=memory.available<1Gi,nodefs.available<10%,imagefs.available<10%"
+  # Per-pod PID cap so a fork bomb in a CI runner pod cannot exhaust the node's PIDs
+  # (security review #394 M1).
+  - "pod-max-pids=4096"

@@ -141,13 +141,19 @@
     - _atlas_bootstrap_key.stdout is defined
 
 # ── Systemd units ─────────────────────────────────────────────────────────────
-- name: Deploy atlas.service unit
+# atlas owns this unit after the first install: it rewrites it at update time (hardened
+# versions carry an "# atlas-managed vN" header and are never downgraded). Seed it only
+# when absent so an Ansible run cannot revert atlas's version (dueling writers).
+# atlas-updater.service/.timer below are byte-identical to what atlas renders, so those
+# stay plain copies.
+- name: Deploy atlas.service unit (seed only)
   ansible.builtin.copy:
     src: atlas.service
     dest: /etc/systemd/system/atlas.service
     owner: root
     group: root
     mode: "0644"
+    force: false
   become: true
   when: atlas_state == "present"
 

@@ -12,3 +12,7 @@ k3s_node_ip: "192.168.253.9"
 tailscale_hostname: onode-0314ac
 ddclient_extra_fqdns:
   - onode-0314ac.nwlnexus.net
+
+# Node hardening (baseline role, tasks/node-hardening.yml); rolled out one node at a
+# time: naraka-01, then this node, then onode-0312ce, then onode-030c31.
+baseline_node_hardening: true

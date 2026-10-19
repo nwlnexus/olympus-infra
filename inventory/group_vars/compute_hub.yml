@@ -138,3 +138,11 @@ onepassword_connect_state: present
 
 # ESO bootstrap
 eso_bootstrap_state: present
+
+# kubelet reserve and memory eviction for the k3s servers (control plane + etcd + CI
+# runner pods share these nodes). Applied by hand, one server at a time, on 2026-10-19;
+# the k3s role writes the same marked block so a later push is a no-op.
+k3s_kubelet_args:
+  - "system-reserved=cpu=1,memory=2Gi"
+  - "kube-reserved=memory=1Gi"
+  - "eviction-hard=memory.available<1Gi,nodefs.available<10%,imagefs.available<10%"

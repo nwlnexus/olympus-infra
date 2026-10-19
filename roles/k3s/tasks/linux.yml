@@ -341,6 +341,13 @@
     - _k3s_state == 'present'
     - k3s_node_ip | default('') != ''
 
+# ── kubelet-arg block (all modes) ────────────────────────────────────────────
+- name: Set kubelet arguments in k3s config
+  ansible.builtin.include_tasks: kubelet-args.yml
+  when:
+    - _k3s_state == 'present'
+    - k3s_kubelet_args | default([]) | length > 0
+
 - name: Remove k3s disable skip files (allow bundled components to redeploy)
   ansible.builtin.file:
     path: "{{ item }}"

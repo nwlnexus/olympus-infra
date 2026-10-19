@@ -1,0 +1,25 @@
+---
+# kubelet arguments in /etc/rancher/k3s/config.yaml, as a marked block like node-ip
+# (the rest of the file, token included, is never rewritten). See k3s_kubelet_args in
+# defaults/main.yml for why.
+#
+# This never restarts k3s: it reads the file only at start. Restart one server at a
+# time, by hand, secondaries first and the cluster-init node last, and run
+# scripts/k3s-health-gate.sh before and after each. An empty list leaves the file
+# alone (it does not remove a block).
+
+- name: Set kubelet arguments in k3s config
+  ansible.builtin.blockinfile:
+    path: /etc/rancher/k3s/config.yaml
+    marker: "# {mark} ANSIBLE MANAGED - k3s_kubelet_args"
+    block: |
+      kubelet-arg:
+      {% for arg in k3s_kubelet_args %}
+        - "{{ arg }}"
+      {% endfor %}
+    insertafter: EOF
+    # The file must already exist; its owner and mode (0600, it holds the token) are kept.
+    create: false
+  become: true
+  # The diff would print the whole file, cluster token included.
+  diff: false

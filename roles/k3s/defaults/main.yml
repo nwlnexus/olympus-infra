@@ -16,6 +16,15 @@ k3s_disable: []
 # k3s picks the address from the default route at each start, which can pick
 # IPv6 if DHCPv4 is late. Changing it needs a k3s restart, one server at a time.
 k3s_node_ip: ""
+# kubelet arguments, written as a marked `kubelet-arg:` block in
+# /etc/rancher/k3s/config.yaml (tasks/kubelet-args.yml). Used to reserve memory/CPU
+# for the kubelet and system daemons (etcd, containerd) and to evict workload pods
+# BEFORE the node runs out of memory: without them allocatable equals capacity, there
+# is no memory eviction threshold, and CI runner pods (olympus-gitops arc) could
+# push a control-plane node into a kernel OOM. Empty = leave the file alone.
+# Changing it needs a k3s restart, one server at a time, checking
+# scripts/k3s-health-gate.sh before the next.
+k3s_kubelet_args: []
 # If set, patches kubeconfig server URL from 127.0.0.1:6443 to this FQDN.
 # Should match one of the entries in k3s_tls_san.
 k3s_external_server: ""

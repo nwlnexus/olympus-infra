@@ -23,3 +23,7 @@ ddclient_extra_fqdns:
 #                        play if the token cannot be read
 # Host value replaces the group value, so `common` is repeated here.
 ansible_pull_skip_tags: common,qnap-csi-bootstrap,1password-connect,cloudflared-k8s,eso-bootstrap
+
+# Node hardening (baseline role, tasks/node-hardening.yml); rolled out one node at a
+# time: naraka-01, onode-0314ac, onode-0312ce, then this node (last: cluster-init/primary).
+baseline_node_hardening: true

@@ -145,7 +145,14 @@
 # versions carry an "# atlas-managed vN" header and are never downgraded). Seed it only
 # when absent so an Ansible run cannot revert atlas's version (dueling writers).
 # atlas-updater.service/.timer below are byte-identical to what atlas renders, so those
-# stay plain copies.
+# stay plain copies. atlas-updater.service is the SANDBOXED v2 unit ("# atlas-managed v2",
+# olympus-sdk#478): ProtectSystem=strict, NoNewPrivileges, a capability bound, a syscall
+# filter. files/atlas-updater.service must equal GOLDEN_UPDATER_V2 in atlas
+# (packages/atlas-rs/atlas/src/cli/units.rs) byte for byte, and any change there needs a
+# header bump and a matching change here, or the two writers rewrite each other. This copy
+# is deliberately NOT seed-only: if a sandbox ever stops a host's updater from updating,
+# the next ansible-pull is what puts a working unit back (it cannot be repaired by the
+# updater itself, which is the thing that is broken).
 - name: Deploy atlas.service unit (seed only)
   ansible.builtin.copy:
     src: atlas.service

@@ -47,11 +47,47 @@
   become: true
   notify: restart postgres
 
-- name: Stop existing Homebrew PostgreSQL LaunchAgent (if present)
-  ansible.builtin.command:
-    cmd: launchctl unload -w ~/Library/LaunchAgents/homebrew.mxcl.postgresql@16.plist
-  ignore_errors: true
+# Drift cleanup: Homebrew's own postgresql@16 LaunchAgent (homebrew.mxcl.postgresql@16)
+# ran a second postgres against the Homebrew data dir. It was removed by hand on
+# 2026-10-20; keep it from coming back. No-op once the plist is gone.
+- name: Check for the Homebrew PostgreSQL LaunchAgent
+  ansible.builtin.stat:
+    path: "/Users/{{ data_services_login_user }}/Library/LaunchAgents/homebrew.mxcl.postgresql@16.plist"
+  register: _ds_brew_pg_agent
   become: false
+
+- name: Look up the uid of the login user
+  ansible.builtin.command: "id -u {{ data_services_login_user }}"
+  become: false
+  register: _ds_login_uid
+  changed_when: false
+  check_mode: false
+  when: _ds_brew_pg_agent.stat.exists
+
+- name: Boot out the Homebrew PostgreSQL LaunchAgent
+  ansible.builtin.command:
+    cmd: "launchctl bootout gui/{{ _ds_login_uid.stdout | trim }}/homebrew.mxcl.postgresql@16"
+  become: true
+  failed_when: false
+  changed_when: true
+  when: _ds_brew_pg_agent.stat.exists
+
+- name: Remove the Homebrew PostgreSQL LaunchAgent plist
+  ansible.builtin.file:
+    path: "/Users/{{ data_services_login_user }}/Library/LaunchAgents/homebrew.mxcl.postgresql@16.plist"
+    state: absent
+  become: false
+  when: _ds_brew_pg_agent.stat.exists
+
+- name: Write PostgreSQL wrapper (waits for the tailnet address)
+  ansible.builtin.template:
+    src: postgres-serve.j2
+    dest: /usr/local/bin/postgres-serve
+    owner: root
+    group: wheel
+    mode: "0755"
+  become: true
+  register: _ds_pg_wrapper
 
 - name: Write PostgreSQL LaunchDaemon plist
   ansible.builtin.template:
@@ -61,9 +97,30 @@
     group: wheel
     mode: "0644"
   become: true
+  register: _ds_pg_plist
 
-- name: Bootstrap PostgreSQL LaunchDaemon
-  ansible.builtin.command:
-    cmd: launchctl bootstrap system /Library/LaunchDaemons/com.olympus.postgres.plist
+# `launchctl bootout` is asynchronous, so bundle bootout+bootstrap and retry the
+# bootstrap until teardown has settled (same approach as roles/ollama).
+- name: Reload PostgreSQL LaunchDaemon (new plist or wrapper)
+  ansible.builtin.shell: |
+    launchctl bootout system/com.olympus.postgres 2>/dev/null || true
+    launchctl bootstrap system /Library/LaunchDaemons/com.olympus.postgres.plist
   become: true
-  ignore_errors: true
+  register: _ds_pg_reload
+  changed_when: true
+  retries: 5
+  delay: 3
+  until: _ds_pg_reload.rc == 0
+  when: _ds_pg_plist is changed or _ds_pg_wrapper is changed
+
+- name: Ensure PostgreSQL LaunchDaemon is loaded
+  ansible.builtin.shell: |
+    if launchctl print system/com.olympus.postgres >/dev/null 2>&1; then
+      echo loaded
+    else
+      launchctl bootstrap system /Library/LaunchDaemons/com.olympus.postgres.plist && echo bootstrapped
+    fi
+  become: true
+  register: _ds_pg_loaded
+  changed_when: "'bootstrapped' in _ds_pg_loaded.stdout"
+  when: _ds_pg_plist is not changed and _ds_pg_wrapper is not changed

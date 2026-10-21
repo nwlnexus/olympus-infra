@@ -11,11 +11,9 @@ maintenance_work_mem      = 512MB
 # Connections
 max_connections           = {{ data_services_postgres_max_connections }}
 
-# WAL archiving — off until QNAP NFS write perms are confirmed for _postgres
+# WAL archiving — off (the QNAP archive share is retired; Postgres itself goes after WS9)
 wal_level                 = replica
 archive_mode              = off
-# archive_command         = 'cp %p {{ data_services_nfs_archive }}/wal-archive/%f'
-# archive_timeout         = 300
 
 # Logging
 log_destination           = 'stderr'

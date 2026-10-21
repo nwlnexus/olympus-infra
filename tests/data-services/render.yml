@@ -1,12 +1,71 @@
 ---
-- name: Render data-services role (check-mode only)
+# Renders the data-services templates (PostgreSQL only; ClickHouse, Redis and the NFS
+# archive are retired) and asserts the boot-ordering and decommission properties.
+# Runs on the controller; no host needed.
+#
+#   ansible-playbook -i tests/data-services/inventory.yml tests/data-services/render.yml
+- name: Render data-services role templates
   hosts: all
   gather_facts: false
+  vars_files:
+    - ../../roles/data-services/defaults/main.yml
   vars:
-    ansible_os_family: Darwin
+    _out: "{{ lookup('ansible.builtin.env', 'TMPDIR', default='/tmp') }}/data-services-render"
   tasks:
-    - name: Include data-services role
-      ansible.builtin.include_role:
-        name: data-services
+    - name: Create output dir
+      ansible.builtin.file:
+        path: "{{ _out }}"
+        state: directory
+        mode: "0700"
+
+    - name: Render templates
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ _out }}/{{ item.dest }}"
+        mode: "0600"
+      loop:
+        - {src: ../../roles/data-services/templates/postgres-serve.j2, dest: postgres-serve}
+        - {src: ../../roles/data-services/templates/launchdaemon-postgres.plist.j2, dest: postgres.plist}
+        - {src: ../../roles/data-services/templates/postgresql.conf.j2, dest: postgresql.conf}
+        - {src: ../../roles/data-services/templates/pg_hba.conf.j2, dest: pg_hba.conf}
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Slurp rendered files
+      ansible.builtin.slurp:
+        src: "{{ _out }}/{{ item }}"
+      loop: [postgres-serve, postgres.plist, postgresql.conf, pg_hba.conf]
+      register: _r
+
+    - name: Index rendered content by file name
+      ansible.builtin.set_fact:
+        _txt: "{{ _txt | default({}) | combine({item.item: item.content | b64decode}) }}"
+      loop: "{{ _r.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: PostgreSQL waits for the tailnet address and is kept alive
       vars:
-        _op_env: {}
+        _listen: "listen_addresses = '100.95.232.41,127.0.0.1'"
+      ansible.builtin.assert:
+        that:
+          - "'inet ${bind_ip} ' in _txt['postgres-serve']"
+          - "'bind_ip=\"100.95.232.41\"' in _txt['postgres-serve']"
+          - "'exec /opt/homebrew/opt/postgresql@16/bin/postgres' in _txt['postgres-serve']"
+          - "'exit 75' in _txt['postgres-serve']"
+          - "'/usr/local/bin/postgres-serve' in _txt['postgres.plist']"
+          - "'<key>KeepAlive</key>' in _txt['postgres.plist']"
+          - "'<key>ThrottleInterval</key>' in _txt['postgres.plist']"
+          - _listen in _txt['postgresql.conf']
+
+    - name: Nothing renders a retired service
+      ansible.builtin.assert:
+        that:
+          - "'archive_command' not in _txt['postgresql.conf']"
+          - "'ai-hub-data' not in _txt['postgresql.conf']"
+          - data_services_retired_daemons | sort == ['com.olympus.clickhouse', 'com.olympus.nfs._Volumes_ai-hub-data', 'com.olympus.redis']
+
+    - name: Clean up
+      ansible.builtin.file:
+        path: "{{ _out }}"
+        state: absent

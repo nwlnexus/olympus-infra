@@ -1,0 +1,23 @@
+#!/bin/bash
+# Managed by Ansible (roles/data-services) — do not edit by hand.
+# Runs PostgreSQL as _postgres (set by the LaunchDaemon) after the tailnet address exists.
+#
+# listen_addresses includes {{ data_services_tailscale_ip }}. At boot launchd starts this
+# before tailscaled has created utun; postgres then cannot bind the address and falls
+# back to 127.0.0.1 only. Wait for the address, and exit non-zero on timeout so
+# launchd's KeepAlive retries after ThrottleInterval.
+bind_ip="{{ data_services_tailscale_ip }}"
+waited=0
+until /sbin/ifconfig | /usr/bin/grep -q "inet ${bind_ip} "; do
+  if [ "$waited" -ge {{ data_services_wait_timeout_seconds }} ]; then
+    echo "postgres-serve: ${bind_ip} not present after {{ data_services_wait_timeout_seconds }}s (tailscaled down?); exiting for launchd to retry" >&2
+    exit 75
+  fi
+  sleep 2
+  waited=$((waited + 2))
+done
+
+exec {{ data_services_postgres_brew_prefix }}/bin/postgres \
+  -D {{ data_services_nvme_root }}/data/postgres \
+  -c config_file={{ data_services_nvme_root }}/config/postgres/postgresql.conf \
+  -c hba_file={{ data_services_nvme_root }}/config/postgres/pg_hba.conf

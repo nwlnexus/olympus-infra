@@ -6,6 +6,8 @@ After=network.target
 [Service]
 Type=oneshot
 User=root
+TimeoutStartSec=15min
+ExecStartPre=-+/usr/bin/mkdir -p /usr/local/lib/atlas /etc/atlas /run/atlas
 ExecStart=/usr/local/bin/atlas self update --restart-service
 NoNewPrivileges=yes
 ProtectSystem=strict
@@ -25,6 +27,7 @@ LockPersonality=yes
 MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_FSETID CAP_SETUID CAP_SETGID CAP_KILL
 AmbientCapabilities=CAP_SETUID CAP_SETGID

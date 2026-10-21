@@ -1,7 +1,10 @@
 ---
 # Remove services that used to be managed on this host but are retired:
-#   - Redpanda (never ran on macOS; the cluster has its own in-cluster Redpanda)
-#   - Colima   (retired "k8s on the Mac" setup)
+#   - Redpanda   (never ran on macOS; the cluster has its own in-cluster Redpanda)
+#   - Colima     (retired "k8s on the Mac" setup)
+#   - ClickHouse, Redis, the QNAP archive NFS mount (olympus-sdk#446): no data, no
+#     clients. Their LaunchDaemons are booted out, disabled and deleted; data
+#     directories under /opt/olympus/data are kept.
 # Every task is a no-op when the service is already gone, so this is safe to
 # run on every converge.
 
@@ -82,3 +85,10 @@
   loop:
     - /Library/LaunchDaemons/com.olympus.colima.plist
     - /var/log/colima.log
+
+# ── ClickHouse, Redis, NFS archive mount ──────────────────────────────────────
+- name: Retire unused data-tier LaunchDaemons
+  ansible.builtin.include_tasks: macos-retire-daemon.yml
+  loop: "{{ data_services_retired_daemons }}"
+  loop_control:
+    loop_var: _ds_retire_label

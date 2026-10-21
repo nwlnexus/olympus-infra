@@ -1,0 +1,41 @@
+---
+# Retire one LaunchDaemon (label in _ds_retire_label): boot it out if loaded, disable
+# it, delete its plist. Everything is guarded by the plist, so once it is gone the
+# whole file is a no-op and a push run reports no change.
+- name: "Check for the {{ _ds_retire_label }} plist"
+  ansible.builtin.stat:
+    path: "/Library/LaunchDaemons/{{ _ds_retire_label }}.plist"
+  register: _ds_retire_plist
+
+- name: "Check whether {{ _ds_retire_label }} is loaded"
+  ansible.builtin.command:
+    cmd: "launchctl print system/{{ _ds_retire_label }}"
+  become: true
+  register: _ds_retire_loaded
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: _ds_retire_plist.stat.exists
+
+- name: "Boot out {{ _ds_retire_label }}"
+  ansible.builtin.command:
+    cmd: "launchctl bootout system/{{ _ds_retire_label }}"
+  become: true
+  changed_when: true
+  when:
+    - _ds_retire_plist.stat.exists
+    - (_ds_retire_loaded.rc | default(1)) == 0
+
+- name: "Disable {{ _ds_retire_label }}"
+  ansible.builtin.command:
+    cmd: "launchctl disable system/{{ _ds_retire_label }}"
+  become: true
+  changed_when: true
+  when: _ds_retire_plist.stat.exists
+
+- name: "Remove the {{ _ds_retire_label }} plist"
+  ansible.builtin.file:
+    path: "/Library/LaunchDaemons/{{ _ds_retire_label }}.plist"
+    state: absent
+  become: true
+  when: _ds_retire_plist.stat.exists

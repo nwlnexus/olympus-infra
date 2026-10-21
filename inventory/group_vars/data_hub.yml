@@ -60,7 +60,6 @@ data_services_state: present
 data_services_tailscale_ip: "{{ data_hub_tailscale_ip }}"
 data_services_tailscale_cidr: "100.64.0.0/10"
 data_services_nvme_root: /opt/olympus
-data_services_nfs_archive: /Volumes/ai-hub-data
 
 # PostgreSQL tuning for 64 GB M1 Max — conservative to leave headroom for Ollama.
 data_services_postgres_shared_buffers: "4GB"

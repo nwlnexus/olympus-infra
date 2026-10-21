@@ -25,7 +25,7 @@ olympus-infra/
 │   ├── external-dns          # external-dns Helm deployment
 │   ├── cert-manager          # cert-manager Helm deployment
 │   ├── ansible-pull          # ansible-pull wrapper + systemd timer / LaunchDaemon
-│   ├── data-services         # data-hub native Postgres/Redis/ClickHouse
+│   ├── data-services         # data-hub service users, /opt/olympus dirs, temporary Postgres
 │   ├── hermes-classify-include # Hermes dynamic role/include support
 │   ├── iscsi                 # iSCSI prerequisites for QNAP-backed storage
 │   ├── mem0-client           # Workstation OpenMemory MCP + Claude recall hook
@@ -36,7 +36,7 @@ olympus-infra/
 │   ├── common                # Common OS setup (packages, sysctl, etc.)
 │   └── node-prereqs          # k3s node prerequisites
 ├── playbooks/
-│   ├── data-services.yml     # Push playbook for data-hub data tier
+│   ├── data-services.yml     # Push playbook for data-hub: Postgres + Ollama + LiteLLM
 │   └── pull/                 # ansible-pull playbooks (run daily on hosts)
 │       ├── compute-hub.yml
 │       ├── management-hub.yml # Retired context, kept for history
@@ -61,32 +61,37 @@ The old `compute-hub`/`management-hub` split has converged into the single
 `olympus` cluster. Ansible changes should target the live `olympus` inventory
 unless a legacy playbook explicitly says otherwise.
 
-### data-hub data tier
+### data-hub data tier (retired)
 
 `data-hub` runs host-native services because Apple Silicon GPU/Metal acceleration
-is not available to Linux containers. The `data-services` role manages service
-accounts, directories under `/opt/olympus`, and macOS LaunchDaemons for:
+is not available to Linux containers. After the 2026-10-20 decommission
+(olympus-sdk#446) the host runs only:
 
 | Service | Port | Notes |
 |---|---:|---|
-| PostgreSQL | 5432 | Tuned conservatively for a 64 GB Mac Studio so Ollama can load large models |
-| Redis | 6379 | Tailnet-facing cache/service dependency |
-| ClickHouse | 8123 / 9000 | HTTP/native endpoints; bound to `data_services_tailscale_ip` |
+| Ollama + LiteLLM | 11434 / 4000 | The fleet's inference node; see "data-hub serving profile" |
+| PostgreSQL | 5432 | Temporary, until WS9 of olympus-sdk#444 confirms nothing is left in `claude_mem` |
 
-Redpanda and Colima are retired on data-hub: the cluster runs its own in-cluster
-Redpanda, and the Mac is not a k8s node. `data-services` no longer installs
-either one, and `tasks/macos-legacy-cleanup.yml` removes their LaunchDaemons,
-`/opt/olympus/{config,data,logs}/redpanda`, and the `_redpanda` user (set
-`data_services_remove_redpanda_user: false` to keep the user) from hosts that
-still have them.
+`data-services` manages the `_postgres` account, the Postgres directories under
+`/opt/olympus`, and the Postgres LaunchDaemon. ClickHouse, Redis and the QNAP
+archive NFS mount (`com.olympus.nfs._Volumes_ai-hub-data`) were unused (no data,
+no clients) and are gone: `tasks/macos-legacy-cleanup.yml` boots out, disables and
+deletes their LaunchDaemons (`data_services_retired_daemons`) on any host that
+still has them, and keeps the data directories. Redpanda and Colima are retired
+the same way (`/opt/olympus/{config,data,logs}/redpanda` and the `_redpanda` user
+are removed; set `data_services_remove_redpanda_user: false` to keep the user).
 
 Operational constraints:
 
 - `data_services_tailscale_ip` is `100.95.232.41`; services bind to tailnet
   addresses or allow the Tailscale CGNAT range instead of public interfaces.
+- Every data-hub LaunchDaemon that binds the tailnet IP (Postgres, Ollama, LiteLLM)
+  starts through a wrapper that waits for that address and has `KeepAlive` plus
+  `ThrottleInterval`. At the 2026-07-05 boot Postgres started before tailscaled and
+  bound `127.0.0.1` only, unnoticed for 3.5 months.
 - Secrets are not stored in this public repo. The push wrapper in the private
-  `olympus-sdk` repo passes `ds_pg_password`, `ds_redis_password`, and
-  `ds_ch_password` as extra vars to `playbooks/data-services.yml`.
+  `olympus-sdk` repo passes `ds_pg_password` (only used to `initdb` a new data
+  dir). `ds_redis_password` and `ds_ch_password` are no longer used.
 - `roles/ollama` is the only Ollama owner (see "data-hub serving profile" below).
 
 ### data-hub serving profile (Ollama + LiteLLM)
@@ -141,18 +146,6 @@ Residency budget (64 GiB unified memory; computed from model metadata, so confir
 - With only two slots, an embed request while 27B and 7B are both warm evicts one of
   them, and the reload costs seconds (7B) to tens of seconds (27B). Raising
   `ollama_max_loaded_models` to 3 costs about 0.4 GiB if that thrash shows up.
-
-### ClickHouse runbook notes
-
-`roles/data-services/templates/clickhouse-config.xml.j2` replaces the default
-ClickHouse config, so it must explicitly define `system.query_log`. The current
-config creates `system.query_log` with a 14-day TTL; without it, dashboards or
-telemetry queries backed by `system.query_log` fail with `UNKNOWN_TABLE`.
-
-The Homebrew ClickHouse v26.5.x build has runtime expression JIT failures on
-data-hub. `clickhouse-users.xml.j2` disables `compile_expressions` and
-`compile_aggregate_expressions`; do not re-enable them until the Homebrew build
-is verified fixed.
 
 ### Linux node QUIC tuning
 
@@ -257,8 +250,7 @@ Always test roles with `--check` before applying:
 ```bash
 ansible-playbook -i inventory/olympus.yml playbook.yml --check
 ansible-playbook -i inventory/olympus.yml playbook.yml --diff --check
-ansible-playbook -i inventory/olympus.yml playbooks/data-services.yml \
-  -e "ds_pg_password=... ds_redis_password=... ds_ch_password=..." \
+ansible-playbook -i inventory/olympus.yml --limit data_services playbooks/data-services.yml \
   --check --diff
 ```
 

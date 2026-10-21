@@ -7,31 +7,33 @@ data_services_tailscale_cidr: "100.64.0.0/10"
 
 # Filesystem roots
 data_services_nvme_root: /opt/olympus
-data_services_nfs_archive: /Volumes/ai-hub-data
 
-# PostgreSQL – macOS ships a built-in _postgres at UID 216; use it as-is.
+# PostgreSQL (temporary, until WS9 of olympus-sdk#444) – macOS ships a built-in
+# _postgres at UID 216; use it as-is.
 data_services_postgres_uid: 216
 data_services_postgres_port: 5432
 data_services_postgres_shared_buffers: "4GB"
 data_services_postgres_effective_cache: "12GB"
 data_services_postgres_max_connections: 200
 data_services_postgres_brew_prefix: /opt/homebrew/opt/postgresql@16
+# The LaunchDaemon wrapper waits for the tailnet address (data_services_tailscale_ip)
+# before starting postgres, then exits non-zero after this many seconds so KeepAlive
+# retries. At the 2026-07-05 boot postgres started before tailscaled and fell back to
+# 127.0.0.1 only ("Can't assign requested address"); nothing noticed for 3.5 months.
+data_services_wait_timeout_seconds: 600
 
-# Redis
-data_services_redis_uid: 402
-data_services_redis_port: 6379
-
-# ClickHouse
-data_services_clickhouse_uid: 403
-data_services_clickhouse_http_port: 8123
-data_services_clickhouse_native_port: 9000
-data_services_clickhouse_replication_port: 9009
+# Login user whose ~/Library/LaunchAgents is checked for the retired Homebrew
+# postgresql@16 agent (the push user on data-hub).
+data_services_login_user: "{{ ansible_user | default('nwilliams-lucas') }}"
 
 # Retired services – Redpanda and Colima are removed from hosts that still have them.
 # Set to false to leave the _redpanda macOS user account in place.
 data_services_remove_redpanda_user: true
 
-# Ollama
-data_services_ollama_uid: 405
-data_services_ollama_port: 11434
-data_services_ollama_model_dir: "{{ data_services_nvme_root }}/data/ollama"
+# Retired LaunchDaemons removed from the host (booted out, disabled, plist deleted).
+# Data directories under data_services_nvme_root/data are kept.
+data_services_retired_daemons:
+  - com.olympus.clickhouse
+  - com.olympus.redis
+  # NFS mount of the QNAP archive share (/Volumes/ai-hub-data); the share is gone.
+  - com.olympus.nfs._Volumes_ai-hub-data

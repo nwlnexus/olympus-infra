@@ -1,5 +1,5 @@
 ---
-- name: Remove retired services (Redpanda, Colima)
+- name: Remove retired services (Redpanda, Colima, ClickHouse, Redis, NFS archive mount)
   ansible.builtin.include_tasks: macos-legacy-cleanup.yml
 
 - name: Create system users
@@ -8,14 +8,8 @@
 - name: Create directory structure
   ansible.builtin.include_tasks: macos-dirs.yml
 
+# PostgreSQL is temporary: it goes away after WS9 of olympus-sdk#444 confirms nothing
+# is left in claude_mem. Ollama and LiteLLM are owned by roles/ollama and roles/litellm
+# (see playbooks/data-services.yml); this role no longer manages them.
 - name: Configure PostgreSQL
   ansible.builtin.include_tasks: macos-postgres.yml
-
-- name: Configure Redis
-  ansible.builtin.include_tasks: macos-redis.yml
-
-- name: Configure ClickHouse
-  ansible.builtin.include_tasks: macos-clickhouse.yml
-
-# Ollama is owned by roles/ollama (and LiteLLM by roles/litellm); see
-# playbooks/data-services.yml. This role no longer installs a second Ollama daemon.

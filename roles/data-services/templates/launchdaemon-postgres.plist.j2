@@ -9,13 +9,8 @@
   <string>_postgres</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{{ data_services_postgres_brew_prefix }}/bin/postgres</string>
-    <string>-D</string>
-    <string>{{ data_services_nvme_root }}/data/postgres</string>
-    <string>-c</string>
-    <string>config_file={{ data_services_nvme_root }}/config/postgres/postgresql.conf</string>
-    <string>-c</string>
-    <string>hba_file={{ data_services_nvme_root }}/config/postgres/pg_hba.conf</string>
+    <string>/bin/bash</string>
+    <string>/usr/local/bin/postgres-serve</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -32,6 +27,8 @@
   <true/>
   <key>KeepAlive</key>
   <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
   <key>StandardOutPath</key>
   <string>{{ data_services_nvme_root }}/logs/postgres/stdout.log</string>
   <key>StandardErrorPath</key>

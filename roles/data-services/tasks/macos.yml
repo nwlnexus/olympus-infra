@@ -17,5 +17,5 @@
 - name: Configure ClickHouse
   ansible.builtin.include_tasks: macos-clickhouse.yml
 
-- name: Configure Ollama
-  ansible.builtin.include_tasks: macos-ollama.yml
+# Ollama is owned by roles/ollama (and LiteLLM by roles/litellm); see
+# playbooks/data-services.yml. This role no longer installs a second Ollama daemon.

@@ -1,8 +1,9 @@
 ---
 # data-hub — Mac Studio data tier (macOS, LaunchDaemon-driven ansible-pull).
 # Takes effect once the host is named data-hub in inventory/data-hub.yml
-# (ai-hub → data-hub rename). Host vars are used because the pull inventory
-# has no `data-hub` group, so group_vars/data-hub.yml does not apply to it.
+# (ai-hub → data-hub rename). The serving-profile vars (Ollama, LiteLLM) live in
+# group_vars/data_hub.yml; both the pull inventory and olympus.yml put the host in
+# the `data_hub` group, so they apply to pull and push runs alike.
 
 ansible_pull_state: present
 ansible_pull_inventory: inventory/data-hub.yml

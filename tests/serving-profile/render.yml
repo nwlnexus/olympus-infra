@@ -1,0 +1,106 @@
+---
+# Renders the data-hub serving-profile templates (Ollama wrapper/plist, LiteLLM
+# config/wrapper/plist) with the real inventory/group_vars/data_hub.yml and asserts
+# the properties the profile depends on. Runs on the controller; no host needed.
+#
+#   ansible-playbook -i tests/serving-profile/inventory.yml tests/serving-profile/render.yml
+- name: Render data-hub serving profile
+  hosts: all
+  gather_facts: false
+  # Role defaults first, then the real group_vars (later files win), mirroring
+  # Ansible precedence for a host in the data_hub group.
+  vars_files:
+    - ../../roles/ollama/defaults/main.yml
+    - ../../roles/litellm/defaults/main.yml
+    - ../../inventory/group_vars/data_hub.yml
+  vars:
+    litellm_master_key: "test-master-key-not-a-secret"
+    litellm_anthropic_api_key: ""
+    _out: "{{ lookup('ansible.builtin.env', 'TMPDIR', default='/tmp') }}/serving-profile-render"
+  tasks:
+    - name: Create output dir
+      ansible.builtin.file:
+        path: "{{ _out }}"
+        state: directory
+        mode: "0700"
+
+    - name: Render templates
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ _out }}/{{ item.dest }}"
+        mode: "0600"
+      loop:
+        - {src: ../../roles/ollama/templates/ollama-serve.j2, dest: ollama-serve}
+        - {src: ../../roles/ollama/templates/ollama.plist.j2, dest: ollama.plist}
+        - {src: ../../roles/litellm/templates/litellm-config.yaml.j2, dest: litellm-config.yaml}
+        - {src: ../../roles/litellm/templates/litellm-serve.j2, dest: litellm-serve}
+        - {src: ../../roles/litellm/templates/litellm.plist.j2, dest: litellm.plist}
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Slurp rendered files
+      ansible.builtin.slurp:
+        src: "{{ _out }}/{{ item }}"
+      loop: [ollama-serve, ollama.plist, litellm-config.yaml, litellm-serve, litellm.plist]
+      register: _r
+
+    - name: Index rendered content by file name
+      ansible.builtin.set_fact:
+        _txt: "{{ _txt | default({}) | combine({item.item: item.content | b64decode}) }}"
+      loop: "{{ _r.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Ollama binds the tailnet IP only, with the serving-profile env
+      ansible.builtin.assert:
+        that:
+          - "'OLLAMA_HOST=100.95.232.41:11434' in _txt['ollama-serve']"
+          - "'0.0.0.0' not in _txt['ollama-serve'].split('exec sudo')[1]"
+          - "'OLLAMA_KEEP_ALIVE=24h' in _txt['ollama-serve']"
+          - "'OLLAMA_NUM_PARALLEL=1' in _txt['ollama-serve']"
+          - "'OLLAMA_MAX_LOADED_MODELS=2' in _txt['ollama-serve']"
+          - "'OLLAMA_CONTEXT_LENGTH=32768' in _txt['ollama-serve']"
+          - "'OLLAMA_FLASH_ATTENTION=1' in _txt['ollama-serve']"
+          - "'ifconfig' in _txt['ollama-serve']"
+          - "'<key>KeepAlive</key>' in _txt['ollama.plist']"
+
+    - name: LiteLLM binds the tailnet IP only and waits for it
+      ansible.builtin.assert:
+        that:
+          - "'--host 100.95.232.41' in _txt['litellm-serve']"
+          - "'--port 4000' in _txt['litellm-serve']"
+          - "'ifconfig' in _txt['litellm-serve']"
+          - "'pipx run' not in _txt['litellm-serve']"
+          - "'<key>KeepAlive</key>' in _txt['litellm.plist']"
+
+    - name: LiteLLM config parses and has exactly the agreed aliases
+      vars:
+        _cfg: "{{ _txt['litellm-config.yaml'] | from_yaml }}"
+        _aliases: "{{ _cfg.model_list | map(attribute='model_name') | sort }}"
+        _by_alias: "{{ dict(_cfg.model_list | map(attribute='model_name') | zip(_cfg.model_list)) }}"
+      ansible.builtin.assert:
+        that:
+          # coder-cloud stays out of the live list until litellm_coder_cloud_enabled
+          - _aliases == ['coder-heavy', 'coder-light', 'memory-embed', 'memory-extract']
+          - _by_alias['memory-embed'].litellm_params.model == 'ollama/nomic-embed-text'
+          - _by_alias['memory-extract'].litellm_params.model == 'ollama_chat/qwen3.6:27b-mlx'
+          - _by_alias['coder-light'].litellm_params.model == 'ollama_chat/qwen2.5:7b-instruct'
+          - _by_alias['coder-heavy'].litellm_params.model == 'ollama_chat/qwen3.6:27b-mlx'
+          - _by_alias['memory-embed'].litellm_params.api_base == 'http://100.95.232.41:11434'
+          - _cfg.general_settings.master_key == litellm_master_key
+
+    - name: coder-cloud appears once enabled
+      vars:
+        _cfg: >-
+          {{ lookup('ansible.builtin.template', '../../roles/litellm/templates/litellm-config.yaml.j2')
+             | from_yaml }}
+        litellm_coder_cloud_enabled: true
+        litellm_anthropic_api_key: "test-anthropic-key-not-a-secret"
+      ansible.builtin.assert:
+        that:
+          - "'coder-cloud' in (_cfg.model_list | map(attribute='model_name') | list)"
+
+    - name: Clean up
+      ansible.builtin.file:
+        path: "{{ _out }}"
+        state: absent

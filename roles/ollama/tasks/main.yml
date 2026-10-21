@@ -100,33 +100,60 @@
 
 - name: Wait for Ollama to be ready
   ansible.builtin.uri:
-    url: "http://localhost:{{ ollama_service_port }}/api/tags"
+    url: "{{ ollama_api_url }}/api/tags"
     method: GET
   register: ollama_ready
   until: ollama_ready.status == 200
   retries: 24
   delay: 5
+  check_mode: false
   when: ollama_state == "present"
 
 - name: Get list of already-pulled models
   ansible.builtin.uri:
-    url: "http://localhost:{{ ollama_service_port }}/api/tags"
+    url: "{{ ollama_api_url }}/api/tags"
     method: GET
     return_content: true
   register: ollama_models_response
+  check_mode: false
   when: ollama_state == "present"
 
+# Ollama reports an untagged pull as `<name>:latest`; normalise both sides so an
+# untagged roster entry (`nomic-embed-text`) is recognised as already present and
+# the role stays idempotent.
 - name: Set pulled model names
   ansible.builtin.set_fact:
     ollama_pulled_models: >-
       {{ ollama_models_response.json.models | map(attribute='name') | list }}
+    ollama_wanted_models: >-
+      {{ ollama_models | map('regex_replace', '^([^:]+)$', '\1:latest') | list }}
+    ollama_retired_models: >-
+      {{ ollama_models_remove | map('regex_replace', '^([^:]+)$', '\1:latest') | list }}
   when: ollama_state == "present"
+
+# Retired roster entries (e.g. llama3.2:3b) are deleted from disk when present.
+- name: Remove retired Ollama models
+  ansible.builtin.command:
+    argv:
+      - /opt/homebrew/bin/ollama
+      - rm
+      - "{{ item }}"
+  environment:
+    OLLAMA_HOST: "{{ ollama_api_url }}"
+  loop: "{{ ollama_retired_models }}"
+  register: ollama_rm
+  changed_when: ollama_rm.rc == 0
+  when:
+    - ollama_state == "present"
+    - item in ollama_pulled_models
 
 - name: Pull Ollama models
   ansible.builtin.shell: |
     /opt/homebrew/bin/ollama pull {{ item }} \
       > ~/.ollama/pull-{{ item | replace(':', '-') | replace('/', '-') }}.log 2>&1
-  loop: "{{ ollama_models }}"
+  environment:
+    OLLAMA_HOST: "{{ ollama_api_url }}"
+  loop: "{{ ollama_wanted_models }}"
   when:
     - ollama_state == "present"
     - item not in ollama_pulled_models
@@ -135,9 +162,10 @@
 
 # Warm models so the first interactive add doesn't pay a cold load. Runs after
 # the readiness poll and model pull above, so Ollama is up and models exist.
+# Skipped in --check: these are POSTs that would load models for real.
 - name: Warm up Ollama generation models
   ansible.builtin.uri:
-    url: "http://localhost:{{ ollama_service_port }}/api/generate"
+    url: "{{ ollama_api_url }}/api/generate"
     method: POST
     body_format: json
     body:
@@ -149,11 +177,13 @@
     timeout: 300
   loop: "{{ ollama_generate_warmup_models }}"
   changed_when: false
-  when: ollama_state == "present"
+  when:
+    - ollama_state == "present"
+    - not ansible_check_mode
 
 - name: Warm up Ollama embedding models
   ansible.builtin.uri:
-    url: "http://localhost:{{ ollama_service_port }}/api/embeddings"
+    url: "{{ ollama_api_url }}/api/embeddings"
     method: POST
     body_format: json
     body:
@@ -164,4 +194,6 @@
     timeout: 300
   loop: "{{ ollama_embed_warmup_models }}"
   changed_when: false
-  when: ollama_state == "present"
+  when:
+    - ollama_state == "present"
+    - not ansible_check_mode

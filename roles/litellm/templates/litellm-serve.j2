@@ -1,6 +1,23 @@
 #!/bin/bash
-# Wrapper to run LiteLLM as {{ ansible_user }} from a root LaunchDaemon
-exec sudo -Hu {{ ansible_user }} /opt/homebrew/bin/pipx run litellm \
+# Managed by Ansible (roles/litellm) — do not edit by hand.
+# Wrapper to run LiteLLM as {{ litellm_run_user }} from a root LaunchDaemon.
+{% if litellm_wait_for_address | bool %}
+
+# Wait for {{ litellm_bind_host }} to exist (tailscaled may come up after launchd starts us at boot).
+# Exit non-zero on timeout so launchd's KeepAlive retries after ThrottleInterval.
+bind_ip="{{ litellm_bind_host }}"
+waited=0
+until /sbin/ifconfig | /usr/bin/grep -q "inet ${bind_ip} "; do
+  if [ "$waited" -ge {{ litellm_wait_timeout_seconds }} ]; then
+    echo "litellm-serve: ${bind_ip} not present after {{ litellm_wait_timeout_seconds }}s (tailscaled down?); exiting for launchd to retry" >&2
+    exit 75
+  fi
+  sleep 2
+  waited=$((waited + 2))
+done
+{% endif %}
+
+exec sudo -Hu {{ litellm_run_user }} {{ litellm_bin }} \
   --config {{ litellm_config_dest }} \
   --port {{ litellm_port }} \
-  --host 0.0.0.0
+  --host {{ litellm_bind_host }}

@@ -5,26 +5,50 @@ ollama_state: present
 # runners stay patched (0.20.2 shipped an MLX prefix-cache crash that broke
 # multi-turn agentic runs — verified fixed on 0.30.11, the version data-hub now runs).
 ollama_pkg_state: latest
+
+# Models to have pulled. Names without a tag are treated as `:latest`.
 ollama_models: []
+# Models to delete from disk if present (retired roster entries).
+ollama_models_remove: []
+
+# ── Network ───────────────────────────────────────────────────────────────────
+# Address Ollama binds to. The safe default is loopback; data-hub sets its tailnet
+# IP in group_vars so only the tailnet (never 0.0.0.0 / the LAN) can reach it.
+# (Ollama has no authentication; nwlnexus/olympus-infra#1.) The role's own API calls
+# (readiness poll, pulls, warmups) go to this address too.
+ollama_bind_host: "127.0.0.1"
 ollama_service_port: 11434
-# Residency/throughput tuning. 24h keeps the mem0 write path warm: nomic (embed) +
-# llama3.2:3b (categorize) + qwen2.5:7b-instruct (extraction). MAX_LOADED_MODELS=3
-# holds those three co-resident (~0.4G + 2G + 5G). The coding model qwen3.6:27b-mlx
-# (~19G) is NOT warmed — it loads on demand when a coding job dispatches, evicting an
-# idle model. So at any moment either the mem0 trio or (mem0 + coding) is resident.
+ollama_api_url: "http://{{ '127.0.0.1' if ollama_bind_host in ['', '0.0.0.0'] else ollama_bind_host }}:{{ ollama_service_port }}"
+
+# Account the LaunchDaemon wrapper drops to (`sudo -Hu`). Models live in that
+# account's ~/.ollama/models (OLLAMA_MODELS is not set).
+ollama_run_user: "{{ ansible_user | default('ansible') }}"
+
+# When the bind address is a tailnet (non-loopback, non-wildcard) IP, the wrapper
+# waits for that address to exist before exec'ing ollama. At boot launchd starts
+# the daemon before tailscaled has brought up utun, and a bind to a not-yet-existing
+# address fails with "Can't assign requested address" (the Postgres failure of
+# 2026-07-05). On timeout the wrapper exits non-zero and KeepAlive retries.
+ollama_wait_for_address: "{{ ollama_bind_host not in ['', '0.0.0.0', '127.0.0.1', 'localhost'] }}"
+ollama_wait_timeout_seconds: 600
+
+# ── Residency / throughput tuning ─────────────────────────────────────────────
+# KEEP_ALIVE 24h keeps whatever was used last resident (the embedder in
+# particular). MAX_LOADED_MODELS=2 holds one large model plus the embedder; a third
+# model request evicts the least recently used one. NUM_PARALLEL=1 avoids per-slot
+# KV-cache multiplication. CONTEXT_LENGTH is the default num_ctx for every load
+# (KV is sized for the full context at load time, hence the memory budget in
+# AGENTS.md "data-hub serving profile").
 ollama_keep_alive: "24h"
-ollama_max_loaded_models: 3
-# NUM_PARALLEL=1. Two distinct workloads on this box: (1) mem0 fact-extraction —
-# qwen2.5:7b-instruct, fast + NON-thinking (see below), and (2) agentic coding —
-# qwen3.6:27b-mlx (thinking, 262K ctx). Kept split because qwen3.6-mlx's mandatory
-# thinking makes extraction ~28s+/call, which blocks OpenMemory's single uvicorn
-# worker past its ~180s liveness probe → pod SIGKILL. qwen2.5:7b extracts in seconds.
-# At 1 there's no per-slot KV balloon; the coding model gets full context.
+ollama_max_loaded_models: 2
 ollama_num_parallel: 1
+ollama_context_length: 32768
+ollama_flash_attention: true
+
 # Models warmed after a (re)start so the first real request is hot. Must be a subset
-# of ollama_models. Warm the mem0 path only; the ~19G coding model loads on demand.
-ollama_generate_warmup_models:
-  - "llama3.2:3b"
-  - "qwen2.5:7b-instruct"
+# of ollama_models. Only the small embedder is warmed by default: warming the ~18 GiB
+# generation model on every role run costs minutes, and KEEP_ALIVE keeps it resident
+# once used.
+ollama_generate_warmup_models: []
 ollama_embed_warmup_models:
   - "nomic-embed-text"

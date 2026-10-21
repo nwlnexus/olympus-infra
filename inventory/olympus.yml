@@ -48,6 +48,13 @@ all:
         ansible_ssh_private_key_file: ~/.ssh/ansible
         ansible_python_interpreter: /usr/bin/python3
 
+    # Same host again, as the group that inventory/group_vars/data_hub.yml targets
+    # (the serving profile: Ollama + LiteLLM vars). Kept separate from `data_services`
+    # so the vars follow the host, not this push-only grouping.
+    data_hub:
+      hosts:
+        data-hub:
+
     # ── Provisioning (styx — PXE/Packer, NOT a k8s node) ────────────────────
     provisioning:
       hosts:

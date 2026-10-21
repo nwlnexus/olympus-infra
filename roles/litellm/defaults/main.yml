@@ -3,6 +3,49 @@ litellm_state: present
 litellm_port: 4000
 litellm_config_dest: /opt/litellm/config.yaml
 litellm_log_level: INFO
-# Fetched at runtime via `op read` from 1Password Dev vault (item: litellm)
+
+# Address LiteLLM binds to. Loopback by default; data-hub sets its tailnet IP in
+# group_vars. LiteLLM is the only door to Ollama for platform clients (D6 in
+# olympus-sdk's memory-gateway spec); every request needs the master key.
+litellm_bind_host: "127.0.0.1"
+litellm_wait_for_address: "{{ litellm_bind_host not in ['', '0.0.0.0', '127.0.0.1', 'localhost'] }}"
+litellm_wait_timeout_seconds: 600
+
+# Account the LaunchDaemon wrapper drops to, and the pipx-installed binary it runs.
+# (`pipx run litellm` is NOT used: it builds a throwaway venv on the system python,
+# which is 3.14 and breaks on pyexpat; the role installs litellm on python@3.13.)
+litellm_run_user: "{{ ansible_user | default('ansible') }}"
+litellm_bin: "/Users/{{ litellm_run_user }}/.local/bin/litellm"
+
+# Ollama upstream (same host). Follows the ollama role's bind address.
+litellm_ollama_host: "{{ ollama_bind_host | default('127.0.0.1') }}"
+litellm_ollama_port: "{{ ollama_service_port | default(11434) }}"
+litellm_ollama_api_base: >-
+  http://{{ '127.0.0.1' if litellm_ollama_host in ['', '0.0.0.0'] else litellm_ollama_host }}:{{ litellm_ollama_port }}
+
+# ── Model aliases ─────────────────────────────────────────────────────────────
+# alias -> Ollama model. Clients never see Ollama model names.
+litellm_embed_model: "nomic-embed-text"
+litellm_extract_model: "qwen3.6:27b-mlx"
+litellm_coder_light_model: "qwen2.5:7b-instruct"
+litellm_coder_heavy_model: "qwen3.6:27b-mlx"
+
+# coder-cloud: placeholder provider entry, rendered only when enabled. Enable it
+# once an Anthropic key exists at litellm_anthropic_key_op_ref.
+litellm_coder_cloud_enabled: false
+litellm_coder_cloud_model: "anthropic/claude-sonnet-4-6"
+
+# Seconds before LiteLLM gives up on an upstream call (27B thinking models are slow).
+litellm_request_timeout: 600
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+# Read on the host with `op read`, authenticated by the 1Password service-account
+# token that ansible-pull already uses (/etc/olympus/op-service-account-token).
+# Values are never logged and the rendered config is mode 0600.
+litellm_op_bin: /opt/homebrew/bin/op
+litellm_op_token_file: /etc/olympus/op-service-account-token
+litellm_master_key_op_ref: "op://Dev/litellm/master-key"
+litellm_anthropic_key_op_ref: "op://Dev/litellm/anthropic-api-key"
+# Populated at runtime from the refs above.
 litellm_anthropic_api_key: ""
 litellm_master_key: ""

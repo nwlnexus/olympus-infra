@@ -17,6 +17,29 @@
   become: true
   when: baseline_state == "present"
 
+# Ubuntu 26.04 ships the same /var/log/cloud-init*.log rule in both the cloud-init
+# and cloud-init-base packages. logrotate rejects the duplicate ("duplicate log
+# entry for /var/log/cloud-init.log"), so logrotate.service fails every run and the
+# host reports degraded. Keep the cloud-init package's copy and drop the base copy;
+# dpkg remembers a removed conffile, so upgrades do not bring it back.
+- name: Look for the duplicate cloud-init logrotate rules
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/logrotate.d/cloud-init
+    - /etc/logrotate.d/cloud-init-base
+  register: baseline_cloud_init_logrotate
+  when: baseline_state == "present"
+
+- name: Remove the duplicate cloud-init-base logrotate rule
+  ansible.builtin.file:
+    path: /etc/logrotate.d/cloud-init-base
+    state: absent
+  become: true
+  when:
+    - baseline_state == "present"
+    - baseline_cloud_init_logrotate.results | map(attribute='stat.exists') | select | list | length == 2
+
 - name: Remove ansible-pull logrotate config (state=absent)
   ansible.builtin.file:
     path: /etc/logrotate.d/ansible-pull

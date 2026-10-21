@@ -7,7 +7,7 @@
     service_users:
       - {name: _postgres, uid: "{{ data_services_postgres_uid }}", comment: "PostgreSQL Data Service"}
   block:
-    - name: "Create system user {{ item.name }}"
+    - name: "Create the service account"
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }}
       become: true
@@ -17,7 +17,7 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: "Set UID for {{ item.name }}"
+    - name: "Set UID"
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} UniqueID {{ item.uid }}
       become: true
@@ -27,7 +27,7 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: "Set GID (staff=20) for {{ item.name }}"
+    - name: "Set GID (staff=20)"
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} PrimaryGroupID 20
       become: true
@@ -37,7 +37,7 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: "Set shell to /usr/bin/false for {{ item.name }}"
+    - name: "Set shell to /usr/bin/false"
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} UserShell /usr/bin/false
       become: true
@@ -47,7 +47,7 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: "Set comment for {{ item.name }}"
+    - name: "Set comment"
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} RealName "{{ item.comment }}"
       become: true
@@ -57,7 +57,7 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: "Set home to /var/empty for {{ item.name }}"
+    - name: "Set home to /var/empty"
       ansible.builtin.command:
         cmd: dscl . -create /Users/{{ item.name }} NFSHomeDirectory /var/empty
       become: true

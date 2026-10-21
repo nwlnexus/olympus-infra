@@ -8,5 +8,10 @@ all:
       ansible_connection: local
       ansible_host: localhost
       ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  children:
+    # Group that inventory/group_vars/data_hub.yml targets (serving profile vars).
+    data_hub:
+      hosts:
+        data-hub:
   vars:
     ansible_python_interpreter: /usr/bin/python3

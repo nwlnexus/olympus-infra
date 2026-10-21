@@ -1,75 +1,50 @@
+# Managed by Ansible (roles/litellm) — do not edit by hand. Contains secrets (mode 0600).
+#
+# Aliases are the only names clients use. Everything routes to the local Ollama
+# ({{ litellm_ollama_api_base }}), which is not reachable without going through here
+# once its bind address is the tailnet/loopback only.
 model_list:
-  # ---------------------------------------------------------------------------
-  # Local models via Ollama (localhost — co-located on ai-hub)
-  # ---------------------------------------------------------------------------
-  - model_name: local-fast
+  # memory pipeline: embeddings (768-dim) and fact/entity extraction
+  - model_name: memory-embed
     litellm_params:
-      model: ollama/glm-4.7-flash:latest
-      api_base: http://127.0.0.1:{{ ollama_service_port | default(11434) }}
+      model: ollama/{{ litellm_embed_model }}
+      api_base: {{ litellm_ollama_api_base }}
 
-  - model_name: local-heavy
+  - model_name: memory-extract
     litellm_params:
-      model: ollama/llama3.3:70b
-      api_base: http://127.0.0.1:{{ ollama_service_port | default(11434) }}
+      model: ollama_chat/{{ litellm_extract_model }}
+      api_base: {{ litellm_ollama_api_base }}
 
-  # ---------------------------------------------------------------------------
-  # Haiku tier → glm-4.7-flash (fast local)
-  # ---------------------------------------------------------------------------
-  - model_name: haiku
+  # coding executor (olympus-sdk #197): small/fast and large local models
+  - model_name: coder-light
     litellm_params:
-      model: ollama/glm-4.7-flash:latest
-      api_base: http://127.0.0.1:{{ ollama_service_port | default(11434) }}
+      model: ollama_chat/{{ litellm_coder_light_model }}
+      api_base: {{ litellm_ollama_api_base }}
 
-  - model_name: claude-haiku-4-5-20251001
+  - model_name: coder-heavy
     litellm_params:
-      model: ollama/glm-4.7-flash:latest
-      api_base: http://127.0.0.1:{{ ollama_service_port | default(11434) }}
+      model: ollama_chat/{{ litellm_coder_heavy_model }}
+      api_base: {{ litellm_ollama_api_base }}
 
-  # ---------------------------------------------------------------------------
-  # Sonnet tier → glm-4.7-flash
-  # llama3.3:70b (~42GB) + glm-4.7-flash (~19GB) exceed 64GB when both hot.
-  # Route both tiers to GLM to keep only one model loaded.
-  # ---------------------------------------------------------------------------
-  - model_name: sonnet
+{% if litellm_coder_cloud_enabled | bool %}
+  # cloud fallback for the coding executor (real API spend)
+  - model_name: coder-cloud
     litellm_params:
-      model: ollama/glm-4.7-flash:latest
-      api_base: http://127.0.0.1:{{ ollama_service_port | default(11434) }}
-
-  - model_name: claude-sonnet-4-6
-    litellm_params:
-      model: ollama/glm-4.7-flash:latest
-      api_base: http://127.0.0.1:{{ ollama_service_port | default(11434) }}
-
-  - model_name: claude-sonnet-4-5
-    litellm_params:
-      model: ollama/glm-4.7-flash:latest
-      api_base: http://127.0.0.1:{{ ollama_service_port | default(11434) }}
-
-  # ---------------------------------------------------------------------------
-  # Opus tier → Anthropic (pass-through, real API spend)
-  # ---------------------------------------------------------------------------
-  - model_name: opus
-    litellm_params:
-      model: anthropic/claude-opus-4-6
+      model: {{ litellm_coder_cloud_model }}
       api_key: "{{ litellm_anthropic_api_key }}"
-
-  - model_name: opus[1m]
-    litellm_params:
-      model: anthropic/claude-opus-4-6
-      api_key: "{{ litellm_anthropic_api_key }}"
-
-  - model_name: claude-opus-4-6
-    litellm_params:
-      model: anthropic/claude-opus-4-6
-      api_key: "{{ litellm_anthropic_api_key }}"
-
-  - model_name: claude-opus-4-5
-    litellm_params:
-      model: anthropic/claude-opus-4-5
-      api_key: "{{ litellm_anthropic_api_key }}"
+{% else %}
+  # coder-cloud is DISABLED until an Anthropic key exists. To enable: store the key
+  # at {{ litellm_anthropic_key_op_ref }} and set litellm_coder_cloud_enabled: true.
+  #
+  # - model_name: coder-cloud
+  #   litellm_params:
+  #     model: {{ litellm_coder_cloud_model }}
+  #     api_key: <from 1Password>
+{% endif %}
 
 litellm_settings:
   drop_params: true
+  request_timeout: {{ litellm_request_timeout }}
 
 general_settings:
-  master_key: "{{ litellm_master_key | default('') }}"
+  master_key: "{{ litellm_master_key }}"

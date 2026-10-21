@@ -1,21 +1,40 @@
 ---
-# Push-based data services setup for data-hub.
-# Requires: become (sudo) for LaunchDaemon operations, dscl, Homebrew.
-# Secrets are passed in via -e vars (read by the wrapper before invoking ansible-playbook):
-#   ds_pg_password, ds_redis_password, ds_ch_password
+# Push-based setup for data-hub (the Mac Studio).
 #
-# Usage (via wrapper):
-#   ./tools/deploy-data-services.sh
+#   play 1  data-services  Postgres (temporary), service users and /opt/olympus dirs
+#   play 2  serving        Ollama + LiteLLM: the fleet's inference node
 #
-# Or directly with explicit secrets:
-#   ansible-playbook -i inventory/data-hub.yml \
-#     -e "ansible_connection=ssh ansible_host=192.168.253.5 ansible_user=nwilliams-lucas" \
-#     -e "ds_pg_password=... ds_redis_password=... ds_ch_password=..." \
-#     playbooks/data-services.yml
+# Two plays because the plays need different privilege:
+#   - data-services does its own `become` per task and needs a root play for dscl/launchctl
+#   - ollama and litellm install Homebrew/pipx packages as the login user (Homebrew
+#     refuses to run as root) and use `become` only on the tasks that need it
+#
+# Secrets: ds_pg_password (initdb of a brand-new data dir only) is passed as an
+# extra var by the push wrapper. LiteLLM's keys are read on the host from 1Password
+# via /etc/olympus/op-service-account-token; nothing else is needed.
+#
+# Usage (from olympus-sdk, which holds the push config):
+#   make data-services
+# or:
+#   ansible-playbook -i ../olympus-infra/inventory/olympus.yml --limit data_services \
+#     ../olympus-infra/playbooks/data-services.yml [--check --diff] [--tags ollama,litellm]
 
 - name: Configure data-hub data services
   hosts: data-hub
   become: true
   gather_facts: true
+  tags: [data-services]
   roles:
     - data-services
+
+- name: Configure data-hub serving profile (Ollama + LiteLLM)
+  hosts: data-hub
+  become: false
+  gather_facts: true
+  environment:
+    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  roles:
+    - role: ollama
+      tags: [ollama]
+    - role: litellm
+      tags: [litellm]

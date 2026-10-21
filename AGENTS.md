@@ -87,29 +87,60 @@ Operational constraints:
 - Secrets are not stored in this public repo. The push wrapper in the private
   `olympus-sdk` repo passes `ds_pg_password`, `ds_redis_password`, and
   `ds_ch_password` as extra vars to `playbooks/data-services.yml`.
-- `roles/data-services` still contains an older `macos-ollama.yml` include.
-  Treat `roles/ollama` as the canonical Ollama owner; rerun the data-hub
-  maintenance playbook after data-service changes if the legacy daemon appears.
+- `roles/ollama` is the only Ollama owner (see "data-hub serving profile" below).
 
-### Ollama ownership and model residency
+### data-hub serving profile (Ollama + LiteLLM)
 
-Use `roles/ollama` for Ollama. It installs/updates the Homebrew `ollama` package,
-owns `/Library/LaunchDaemons/homebrew.mxcl.ollama.plist`, and removes the legacy
-`com.olympus.ollama` LaunchDaemon that previously failed to bind `:11434`.
+data-hub is the fleet's inference node. `roles/ollama` and `roles/litellm` own it
+end to end; `playbooks/data-services.yml` runs them as a second play after
+`data-services`. Vars live in `inventory/group_vars/data_hub.yml` (the host is in
+the `data_hub` group in both `inventory/olympus.yml` and the pull inventory
+`inventory/data-hub.yml`; before 2026-10-20 the file was `data-hub.yml`, matched no
+group, and applied to nothing).
 
-Current data-hub model split:
+- **Ollama** (`homebrew.mxcl.ollama` LaunchDaemon, wrapper `/usr/local/bin/ollama-serve`,
+  runs as `ollama_run_user`): binds `100.95.232.41:11434` only, never `0.0.0.0`
+  (olympus-infra#1). The wrapper waits for that address before it execs, and launchd
+  `KeepAlive` retries, so a boot where tailscaled is late cannot leave it unbound.
+  `OLLAMA_KEEP_ALIVE=24h`, `NUM_PARALLEL=1`, `MAX_LOADED_MODELS=2`,
+  `CONTEXT_LENGTH=32768`, `FLASH_ATTENTION=1`. Models live in the run user's
+  `~/.ollama/models` (`OLLAMA_MODELS` is unset). Roster: `nomic-embed-text`,
+  `qwen3.6:27b-mlx`, `qwen2.5:7b-instruct`; `llama3.2:3b` is removed from disk if present.
+- **LiteLLM** (`com.litellm.proxy` LaunchDaemon, wrapper `/usr/local/bin/litellm-serve`):
+  binds the tailnet IP on `:4000`, same wait-for-address guard. Aliases
+  `memory-embed` (nomic-embed-text), `memory-extract` and `coder-heavy`
+  (qwen3.6:27b-mlx), `coder-light` (qwen2.5:7b-instruct), `coder-cloud` (disabled
+  until an Anthropic key exists at `litellm_anthropic_key_op_ref`; then set
+  `litellm_coder_cloud_enabled: true`). The master key is read on the host with
+  `op read` using `/etc/olympus/op-service-account-token`; the config is mode 0600.
+  The role removes the old hand-made `~/Library/LaunchAgents/com.litellm.proxy.plist`.
+  Per-client virtual keys need LiteLLM's database and are not provisioned yet.
+- `roles/data-services` no longer installs Ollama (its `com.olympus.ollama` daemon is
+  gone; `roles/ollama` still boots out any stray copy).
 
-| Workload | Models | Residency |
-|---|---|---|
-| OpenMemory/mem0 embedding | `nomic-embed-text` | Warmed after restart via `/api/embeddings` |
-| OpenMemory categorization | `llama3.2:3b` | Warmed after restart via `/api/generate` |
-| OpenMemory fact extraction | `qwen2.5:7b-instruct` | Warmed after restart; chosen because it is fast and non-thinking |
-| Agentic coding | `qwen3.6:27b-mlx` | Pulled but loaded on demand; not warmed |
+Residency budget (64 GiB unified memory; computed from model metadata, so confirm with
+`ollama ps` and `vm_stat` after the first warm):
 
-`ollama_keep_alive: "24h"`, `ollama_max_loaded_models: 3`, and
-`ollama_num_parallel: 1` keep the mem0 path hot without forcing the large coding
-model to stay resident. The large coding model can evict an idle warm model when
-needed, then the mem0 trio warms again on the next role run or service restart.
+| Item | GiB |
+|---|---:|
+| `qwen3.6:27b-mlx` weights (nvfp4, 27.4B) | 17.7 |
+| ...KV cache at 32k, f16: 16 full-attention layers x 4 KV heads x 256 dim = 64 KiB/token | 2.0 |
+| ...linear-attention state (48 layers) plus compute buffers | 1.7 |
+| `nomic-embed-text` weights plus KV | 0.4 |
+| `qwen2.5:7b-instruct` weights (Q4_K_M) | 4.4 |
+| ...KV cache at 32k, f16: 28 layers x 4 KV heads x 128 dim = 56 KiB/token | 1.75 |
+| ...compute buffers | 0.5 |
+
+- Steady state, 27B plus embedder: about 21.8 GiB.
+- Worst allowed pair, 27B plus 7B: about 28.1 GiB (all three together would be about
+  28.5 GiB; `MAX_LOADED_MODELS=2` is a policy limit, not a memory one).
+- Against 64 GiB: macOS 8, Ollama/LiteLLM processes 0.5, Postgres until WS9 4.5, worst
+  pair 28.1, macOS CI runner (#391) budget 16 = 57.1 GiB, leaving about 6.9 GiB (about
+  11.4 once Postgres is gone). The default Metal working-set cap
+  (`iogpu.wired_limit_mb=0`, roughly 48 GiB) is well above the 28.1 GiB model peak.
+- With only two slots, an embed request while 27B and 7B are both warm evicts one of
+  them, and the reload costs seconds (7B) to tens of seconds (27B). Raising
+  `ollama_max_loaded_models` to 3 costs about 0.4 GiB if that thrash shows up.
 
 ### ClickHouse runbook notes
 
@@ -202,9 +233,8 @@ tailscale_authkey: "{{ vault_tailscale_authkey }}"
 k3s_version: "v1.29.0+k3s1"
 ollama_models:
   - nomic-embed-text
-  - llama3.2:3b
-  - qwen2.5:7b-instruct
   - qwen3.6:27b-mlx
+  - qwen2.5:7b-instruct
 data_services_tailscale_ip: "100.95.232.41"
 flux_version: "v2.3.0"
 cloudflared_state: present   # present | absent

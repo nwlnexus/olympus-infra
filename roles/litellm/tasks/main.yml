@@ -16,6 +16,7 @@
   register: _litellm_websockets_check
   changed_when: false
   failed_when: false
+  check_mode: false
   when: litellm_state == "present"
 
 - name: Uninstall existing LiteLLM venv (proxy deps missing — rebuild with python@3.13)
@@ -53,31 +54,60 @@
   failed_when: false
   when: litellm_state == "absent"
 
-- name: Fetch LiteLLM Anthropic API key from 1Password Connect
-  ansible.builtin.command: /opt/homebrew/bin/op read "op://Dev/litellm/anthropic-api-key"
-  register: _litellm_anthropic_api_key
+# ── Secrets: `op read` on the host, authenticated by the service-account token that
+# ansible-pull already uses. No Connect host/token, nothing on a command line.
+# check_mode: false so --check can render the config; values are never logged.
+- name: Read the 1Password service-account token
+  ansible.builtin.slurp:
+    src: "{{ litellm_op_token_file }}"
+  register: _litellm_op_token
+  become: true
   no_log: true
-  changed_when: false
-  environment:
-    OP_CONNECT_HOST: "{{ onepassword_connect_host }}"
-    OP_CONNECT_TOKEN: "{{ vault_onepassword_connect_token }}"
+  check_mode: false
   when: litellm_state == "present"
 
-- name: Fetch LiteLLM master key from 1Password Connect
-  ansible.builtin.command: /opt/homebrew/bin/op read "op://Dev/litellm/master-key"
+- name: Fetch LiteLLM master key from 1Password
+  ansible.builtin.command:
+    argv:
+      - "{{ litellm_op_bin }}"
+      - read
+      - "{{ litellm_master_key_op_ref }}"
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ _litellm_op_token.content | b64decode | trim }}"
   register: _litellm_master_key
   no_log: true
   changed_when: false
-  environment:
-    OP_CONNECT_HOST: "{{ onepassword_connect_host }}"
-    OP_CONNECT_TOKEN: "{{ vault_onepassword_connect_token }}"
+  check_mode: false
   when: litellm_state == "present"
+
+- name: Fetch LiteLLM Anthropic API key from 1Password (coder-cloud)
+  ansible.builtin.command:
+    argv:
+      - "{{ litellm_op_bin }}"
+      - read
+      - "{{ litellm_anthropic_key_op_ref }}"
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ _litellm_op_token.content | b64decode | trim }}"
+  register: _litellm_anthropic_api_key
+  no_log: true
+  changed_when: false
+  check_mode: false
+  when:
+    - litellm_state == "present"
+    - litellm_coder_cloud_enabled | bool
 
 - name: Set LiteLLM key facts
   ansible.builtin.set_fact:
-    litellm_anthropic_api_key: "{{ _litellm_anthropic_api_key.stdout | trim }}"
     litellm_master_key: "{{ _litellm_master_key.stdout | trim }}"
+    litellm_anthropic_api_key: "{{ (_litellm_anthropic_api_key.stdout | default('')) | trim }}"
   no_log: true
+  when: litellm_state == "present"
+
+- name: Refuse to render LiteLLM without a master key
+  ansible.builtin.assert:
+    that: litellm_master_key | length > 0
+    fail_msg: "{{ litellm_master_key_op_ref }} resolved to an empty value; LiteLLM would start without authentication."
+    quiet: true
   when: litellm_state == "present"
 
 - name: Ensure LiteLLM config directory exists
@@ -85,7 +115,7 @@
     path: "{{ litellm_config_dest | dirname }}"
     state: directory
     mode: "0755"
-    owner: "{{ ansible_user }}"
+    owner: "{{ litellm_run_user }}"
   become: true
   when: litellm_state == "present"
 
@@ -93,9 +123,10 @@
   ansible.builtin.template:
     src: litellm-config.yaml.j2
     dest: "{{ litellm_config_dest }}"
-    owner: "{{ ansible_user }}"
-    mode: "0640"
+    owner: "{{ litellm_run_user }}"
+    mode: "0600"
   become: true
+  no_log: true
   notify: Restart LiteLLM
   when: litellm_state == "present"
 
@@ -107,7 +138,40 @@
     group: wheel
     mode: "0755"
   become: true
+  notify: Restart LiteLLM
   when: litellm_state == "present"
+
+# Drift cleanup: LiteLLM used to be run by a hand-made per-user LaunchAgent
+# (label com.litellm.proxy in the gui domain) holding :4000. The role-owned
+# LaunchDaemon replaces it, so the agent must be gone before the daemon binds.
+- name: Look up the uid of the LiteLLM run user
+  ansible.builtin.command: id -u {{ litellm_run_user }}
+  register: _litellm_run_uid
+  changed_when: false
+  check_mode: false
+  when: litellm_state == "present"
+
+- name: Check for the hand-made LiteLLM LaunchAgent
+  ansible.builtin.stat:
+    path: "/Users/{{ litellm_run_user }}/Library/LaunchAgents/com.litellm.proxy.plist"
+  register: _litellm_agent_plist
+  when: litellm_state == "present"
+
+- name: Boot out the hand-made LiteLLM LaunchAgent
+  ansible.builtin.command: launchctl bootout gui/{{ _litellm_run_uid.stdout | trim }}/com.litellm.proxy
+  become: true
+  failed_when: false
+  changed_when: true
+  when:
+    - litellm_state == "present"
+    - _litellm_agent_plist.stat.exists
+
+- name: Remove the hand-made LiteLLM LaunchAgent plist
+  ansible.builtin.file:
+    path: "/Users/{{ litellm_run_user }}/Library/LaunchAgents/com.litellm.proxy.plist"
+    state: absent
+  when:
+    - litellm_state == "present"
 
 - name: Deploy LiteLLM LaunchDaemon plist
   ansible.builtin.template:

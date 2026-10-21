@@ -1,10 +1,29 @@
 #!/bin/bash
-# Wrapper to run Ollama as {{ ansible_user }} from a root LaunchDaemon.
-# OLLAMA_HOST=0.0.0.0 binds all interfaces so the tailnet (and k3s pods via the
-# ai-hub tailnet route) can reach the API — required by the mem0/OpenMemory platform.
-exec sudo -Hu {{ ansible_user }} /usr/bin/env \
-  OLLAMA_HOST=0.0.0.0:{{ ollama_service_port }} \
+# Managed by Ansible (roles/ollama) — do not edit by hand.
+# Wrapper to run Ollama as {{ ollama_run_user }} from a root LaunchDaemon.
+# OLLAMA_HOST is a single address ({{ ollama_bind_host }}), not 0.0.0.0, because Ollama has no
+# authentication: only that interface may reach it (nwlnexus/olympus-infra#1).
+{% if ollama_wait_for_address | bool %}
+
+# Wait for {{ ollama_bind_host }} to exist (tailscaled may come up after launchd starts us at boot).
+# Exit non-zero on timeout so launchd's KeepAlive retries after ThrottleInterval.
+bind_ip="{{ ollama_bind_host }}"
+waited=0
+until /sbin/ifconfig | /usr/bin/grep -q "inet ${bind_ip} "; do
+  if [ "$waited" -ge {{ ollama_wait_timeout_seconds }} ]; then
+    echo "ollama-serve: ${bind_ip} not present after {{ ollama_wait_timeout_seconds }}s (tailscaled down?); exiting for launchd to retry" >&2
+    exit 75
+  fi
+  sleep 2
+  waited=$((waited + 2))
+done
+{% endif %}
+
+exec sudo -Hu {{ ollama_run_user }} /usr/bin/env \
+  OLLAMA_HOST={{ ollama_bind_host }}:{{ ollama_service_port }} \
   OLLAMA_KEEP_ALIVE={{ ollama_keep_alive }} \
   OLLAMA_MAX_LOADED_MODELS={{ ollama_max_loaded_models }} \
   OLLAMA_NUM_PARALLEL={{ ollama_num_parallel }} \
+  OLLAMA_CONTEXT_LENGTH={{ ollama_context_length }} \
+  OLLAMA_FLASH_ATTENTION={{ 1 if ollama_flash_attention | bool else 0 }} \
   /opt/homebrew/bin/ollama serve

@@ -1,0 +1,69 @@
+---
+# data-hub — Mac Studio M1 Max (64 GB, 10-core, 927 GB NVMe)
+# Role: the fleet's inference node (Ollama behind LiteLLM) plus, temporarily,
+#       Postgres (retired after WS9 of olympus-sdk#444) and the macOS CI runner (#391).
+#       NOT a k8s node — Apple Silicon Metal cannot be passed to Linux containers.
+#
+# These vars load because data-hub is a member of the `data_hub` inventory group
+# (see inventory/olympus.yml and inventory/data-hub.yml). Before 2026-10-20 this file
+# was named group_vars/data-hub.yml and no group of that name existed in any
+# inventory, so it applied to nothing (the host ran on role defaults).
+
+# ── Tailnet ───────────────────────────────────────────────────────────────────
+data_hub_tailscale_ip: "100.95.232.41"
+
+# ── Ollama ────────────────────────────────────────────────────────────────────
+# Serving profile: olympus-sdk docs/superpowers/specs/2026-10-20-memory-gateway-and-inference-hub-design.md
+# section 5.4. Bound to the tailnet address only (never 0.0.0.0) and waits for it at
+# boot. Residency budget: AGENTS.md "data-hub serving profile".
+ollama_state: present
+# Install-but-never-upgrade: an Ollama upgrade is a deliberate, separate step
+# (set to `latest` for one push run), not a side effect of merging or of a pull run.
+ollama_pkg_state: present
+ollama_run_user: nwilliams-lucas
+ollama_bind_host: "{{ data_hub_tailscale_ip }}"
+ollama_service_port: 11434
+ollama_keep_alive: "24h"
+ollama_max_loaded_models: 2
+ollama_num_parallel: 1
+ollama_context_length: 32768
+ollama_flash_attention: true
+ollama_models:
+  - nomic-embed-text     # memory-embed alias (768-dim)
+  - qwen3.6:27b-mlx      # memory-extract + coder-heavy alias (thinking model, 262K native ctx)
+  - qwen2.5:7b-instruct  # coder-light alias; fast, non-thinking
+ollama_models_remove:
+  - llama3.2:3b          # retired: only OpenMemory categorization used it
+ollama_generate_warmup_models: []
+ollama_embed_warmup_models:
+  - nomic-embed-text
+
+# ── LiteLLM ───────────────────────────────────────────────────────────────────
+# Aliases memory-embed, memory-extract, coder-light, coder-heavy, coder-cloud.
+# Bound to the tailnet address; every request needs the master key (1Password).
+litellm_state: present
+litellm_run_user: nwilliams-lucas
+litellm_bind_host: "{{ data_hub_tailscale_ip }}"
+litellm_port: 4000
+litellm_config_dest: /opt/litellm/config.yaml
+litellm_coder_cloud_enabled: false
+
+# ── Tailscale ─────────────────────────────────────────────────────────────────
+tailscale_state: present
+tailscale_hostname: data-hub
+
+# Cloudflared binary present (tunnel deleted — binary kept for potential future use)
+cloudflared_state: present
+
+# ── Data Services ─────────────────────────────────────────────────────────────
+data_services_state: present
+data_services_tailscale_ip: "{{ data_hub_tailscale_ip }}"
+data_services_tailscale_cidr: "100.64.0.0/10"
+data_services_nvme_root: /opt/olympus
+data_services_nfs_archive: /Volumes/ai-hub-data
+
+# PostgreSQL tuning for 64 GB M1 Max — conservative to leave headroom for Ollama.
+data_services_postgres_shared_buffers: "4GB"
+data_services_postgres_effective_cache: "12GB"
+data_services_postgres_max_connections: 200
+data_services_postgres_brew_prefix: /opt/homebrew/opt/postgresql@16

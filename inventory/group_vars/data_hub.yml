@@ -17,6 +17,9 @@ data_hub_tailscale_ip: "100.95.232.41"
 # section 5.4. Bound to the tailnet address only (never 0.0.0.0) and waits for it at
 # boot. Residency budget: AGENTS.md "data-hub serving profile".
 ollama_state: present
+# Install-but-never-upgrade: an Ollama upgrade is a deliberate, separate step
+# (set to `latest` for one push run), not a side effect of merging or of a pull run.
+ollama_pkg_state: present
 ollama_run_user: nwilliams-lucas
 ollama_bind_host: "{{ data_hub_tailscale_ip }}"
 ollama_service_port: 11434

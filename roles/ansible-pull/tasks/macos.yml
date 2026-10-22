@@ -95,6 +95,27 @@
   become: true
   when: ansible_pull_state == "present"
 
+# The 1Password service-account token must only be readable by the pull user.
+# /etc/olympus is world-readable on macOS hosts, so the file mode is the control
+# (olympus-infra#301).
+- name: Check the 1Password service-account token file
+  ansible.builtin.stat:
+    path: /etc/olympus/op-service-account-token
+  register: _ansible_pull_op_token
+  become: true
+  when: ansible_pull_state == "present"
+
+- name: Restrict the 1Password service-account token file to the pull user (0600)
+  ansible.builtin.file:
+    path: /etc/olympus/op-service-account-token
+    owner: "{{ ansible_pull_user }}"
+    group: staff
+    mode: "0600"
+  become: true
+  when:
+    - ansible_pull_state == "present"
+    - _ansible_pull_op_token.stat.exists
+
 # After removal, /etc/olympus/hermes-token (if present) still counts as
 # fallback evidence of Ansible management in the atlas host inventory.
 - name: Remove managed-by marker (state=absent)

@@ -18,6 +18,7 @@ qnap_csi_op_vault: Dev
 # Override per-host: e.g. qnap_iscsi_op_item: ai-hub-qnap-iscsi
 qnap_iscsi_op_item: "{{ inventory_hostname }}-qnap-iscsi"
 qnap_iscsi_op_vault: Dev
-# k3s kubeconfig path. Default = bare-metal k3s (world-readable, mode 0644).
+# k3s kubeconfig path. Default = bare-metal k3s (root-only, mode 0600; the helm
+# task runs with become).
 # Override for non-standard k3s hosts if ever needed.
 qnap_csi_kubeconfig: "/etc/rancher/k3s/k3s.yaml"

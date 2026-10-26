@@ -96,7 +96,7 @@
     content: |
       cluster-init: true
       token: "{{ _k3s_token }}"
-      write-kubeconfig-mode: "0644"
+      write-kubeconfig-mode: "0600"
       {% if k3s_node_ip | default('') != '' %}
       # BEGIN ANSIBLE MANAGED - k3s_node_ip
       node-ip: "{{ k3s_node_ip }}"
@@ -161,7 +161,7 @@
     content: |
       server: "https://{{ k3s_vip }}:6443"
       token: "{{ _k3s_token }}"
-      write-kubeconfig-mode: "0644"
+      write-kubeconfig-mode: "0600"
       {% if k3s_node_ip | default('') != '' %}
       # BEGIN ANSIBLE MANAGED - k3s_node_ip
       node-ip: "{{ k3s_node_ip }}"
@@ -282,7 +282,7 @@
 - name: Install k3s
   ansible.builtin.shell: |
     set -o pipefail
-    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="{{ k3s_version }}" INSTALL_K3S_EXEC="--write-kubeconfig-mode=0644" sh -
+    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="{{ k3s_version }}" INSTALL_K3S_EXEC="--write-kubeconfig-mode=0600" sh -
   args:
     creates: /usr/local/bin/k3s
     executable: /bin/bash
@@ -295,7 +295,7 @@
 - name: Build k3s config content
   ansible.builtin.set_fact:
     _k3s_config: |
-      write-kubeconfig-mode: "0644"
+      write-kubeconfig-mode: "0600"
       {% if k3s_node_ip | default('') != '' %}
       # BEGIN ANSIBLE MANAGED - k3s_node_ip
       node-ip: "{{ k3s_node_ip }}"
@@ -436,15 +436,30 @@
     - _k3s_state == 'present'
     - not (k3s_agent | default(false))
 
-- name: Ensure kubeconfig is world-readable
-  ansible.builtin.file:
+# The system kubeconfig is cluster-admin: root only (olympus-sdk#554). k3s
+# writes it with write-kubeconfig-mode at start; this corrects a drifted file
+# (e.g. one written 0644 by an older role version) without a restart. Every
+# on-host consumer (kubectl/helm/flux/slurp) runs with become.
+- name: Check for the system kubeconfig
+  ansible.builtin.stat:
     path: "{{ k3s_kubeconfig_path }}"
-    mode: "0644"
+  register: _k3s_kubeconfig_stat
   become: true
   when:
     - _k3s_state == 'present'
     - not (k3s_agent | default(false))
-  failed_when: false
+
+- name: Restrict the system kubeconfig to root (0600)
+  ansible.builtin.file:
+    path: "{{ k3s_kubeconfig_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  become: true
+  when:
+    - _k3s_state == 'present'
+    - not (k3s_agent | default(false))
+    - _k3s_kubeconfig_stat.stat.exists | default(false)
 
 - name: Reconcile node labels/taints (server, idempotent)
   ansible.builtin.include_tasks: node-labels.yml

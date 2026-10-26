@@ -60,6 +60,7 @@
     --set password={{ _qnap_mgmt_pass }}
     --set chapInitiatorUser={{ _chap_user }}
     --set chapInitiatorSecret={{ _chap_pass }}
+  become: true  # the k3s kubeconfig is root-only (0600)
   no_log: true
   register: _helm_install
   changed_when:

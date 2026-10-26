@@ -70,7 +70,7 @@ ddclient_state: present
 
 # --- ESO bootstrap (primary node only — playbook guards via k3s_primary) ---
 eso_namespace: external-secrets
-# ansible-pull runs as root (sudo); override default HOME-based path to use k3s kubeconfig
+# kubectl runs as root (eso_kubectl_become); override default HOME-based path to use k3s kubeconfig
 eso_kubeconfig_path: "{{ k3s_kubeconfig_path }}"
 
 # --- cloudflared-k8s (primary node only) ---

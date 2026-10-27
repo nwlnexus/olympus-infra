@@ -13,6 +13,8 @@
 #
 # Runs from an operator workstation over SSH to the nodes listed in the config
 # (passwordless sudo required). It is read-only: it never changes the cluster.
+# The 4-/5-servers stages derive the new servers' etcd member IDs themselves
+# (by peer URL) from the member list; K3S_GATE_NEW_ETCD_IDS only overrides.
 # Expected values (etcd member IDs and version, VolumeAttachment count, ...)
 # come from the config, so a hop only edits the config.
 #
@@ -128,7 +130,18 @@ if ((${#etcd_ok[@]} > 0)); then
   if ((bad)); then fail "etcd.version" "want $want; got (server/cluster) ${txt% }"
   else pass "etcd.version" "$want (server/cluster: ${txt% })"; fi
 
-  # member/list: same member IDs everywhere, no learners
+  # member/list: same member IDs everywhere, no learners. The IDs of the new
+  # servers (stage 4-/5-servers) come from the member list on the first answering
+  # server, matched by peer URL https://<ip>:2380, unless K3S_GATE_NEW_ETCD_IDS set them.
+  derive_bad=""
+  for entry in ${GATE_DERIVE_NEW_IPS:-}; do
+    dname=${entry%%=*} dip=${entry#*=}
+    did=$(jq -r --arg u "https://$dip:2380" \
+      '[.members[] | select(any(.peerURLs[]?; . == $u)) | .ID] | join(" ")' <<<"${e_members[${etcd_ok[0]}]}")
+    if [[ -n $did && $(wc -w <<<"$did") -eq 1 ]]; then EXPECTED_ETCD_MEMBERS+=" $did"
+    else derive_bad+="$dname: no single member with peer URL https://$dip:2380 (got '${did:-none}')"$'\n'; fi
+  done
+  [[ -z $derive_bad ]] || { fail "etcd.newMembers" "cannot derive new member IDs"; detail "${derive_bad%$'\n'}"; }
   want_ids=$(jq -rn --arg s "$EXPECTED_ETCD_MEMBERS" '$s | split(" ") | map(select(. != "")) | sort | join(" ")')
   bad="" learners=""
   for name in "${etcd_ok[@]}"; do

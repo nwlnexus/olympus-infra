@@ -1,0 +1,141 @@
+---
+# inference-server: one llama.cpp `llama-server` process and systemd unit per model on
+# Ubuntu (GEEKOM A9, Ryzen AI Max+ 395 "Strix Halo", 128 GB unified memory). Linux twin of
+# roles/llama-server (macOS): the `*_models` and `*_instances` variables have the same
+# shape, so data-hub and the A9 share one schema. Spec: olympus-sdk H8, issue #568.
+#
+# Off unless a host opts in (group_vars/inference_server.yml; `absent` there until the
+# host is flashed and named in inventory).
+inference_server_state: absent
+
+# ── llama.cpp (official release binaries, pinned) ─────────────────────────────
+# Why prebuilt: ggml-org publishes Ubuntu x64 Vulkan and ROCm tarballs for every build tag
+# (llama-<tag>-bin-ubuntu-vulkan-x64.tar.gz, llama-<tag>-bin-ubuntu-rocm-10.0-x64.tar.gz;
+# the ROCm one is built for gfx1151, i.e. Strix Halo). A pinned, sha256-checked download
+# is reproducible and takes seconds; a source build would pull a toolchain, the Vulkan SDK
+# and ~20 min of CPU into every host for no gain. Both tarballs unpack to llama-<tag>/ with
+# RUNPATH=$ORIGIN. Note: the release tags are bNNNN (the `v0.7.0` GitHub release has no
+# assets); `llama-server --version` reports 0.7.0-dev (build NNNN).
+#
+# vulkan (default): needs only Ubuntu's Mesa RADV (mesa-vulkan-drivers, libvulkan1).
+# rocm: needs the host's ROCm userspace (libamdhip64.so.7, libhipblas.so.3, librocblas.so.5,
+#       i.e. ROCm 7.x from AMD's apt repository). The role does NOT install ROCm; it asserts
+#       the libraries exist under inference_server_rocm_path. Select with
+#       `-e inference_server_backend=rocm` once the #530 spike says it is faster.
+inference_server_backend: vulkan
+inference_server_llama_tag: b11795
+inference_server_llama_base_url: "https://github.com/ggml-org/llama.cpp/releases/download"
+# sha256 values are the GitHub release asset digests (also verified by hand on download).
+inference_server_llama_builds:
+  vulkan:
+    asset: "llama-{{ inference_server_llama_tag }}-bin-ubuntu-vulkan-x64.tar.gz"
+    sha256: addbcd7cbd8e2c8cf3b0a975875d241bb129a1ff687e3832b20943966e8b6497
+    size: 34945552
+  rocm:
+    asset: "llama-{{ inference_server_llama_tag }}-bin-ubuntu-rocm-10.0-x64.tar.gz"
+    sha256: 5fe808a99b23b9be159742b31173933199f191f2e040c2f36ef4677f0d3eb02a
+    size: 249832180
+inference_server_install_root: /opt/olympus/llama.cpp
+# `current` points at <install_root>/<tag>-<backend>; changing the tag or backend moves
+# the link and restarts the instances.
+inference_server_bin: "{{ inference_server_install_root }}/current/llama-server"
+inference_server_rocm_path: /opt/rocm
+inference_server_download_timeout: 120
+# Ubuntu packages: Vulkan loader + Mesa RADV driver, libgomp (CPU backend), curl (watchdog),
+# nftables (connection cap), vulkan-tools (vulkaninfo, for the runbook).
+inference_server_packages:
+  - ca-certificates
+  - curl
+  - libgomp1
+  - nftables
+  - libvulkan1
+  - mesa-vulkan-drivers
+  - vulkan-tools
+
+# ── Service account ───────────────────────────────────────────────────────────
+# System user that runs every instance. `video` and `render` grant /dev/dri/* and /dev/kfd.
+inference_server_user: llama
+inference_server_group: llama
+inference_server_supplementary_groups: [video, render]
+inference_server_cache_dir: /var/cache/inference-server
+
+# ── Network ───────────────────────────────────────────────────────────────────
+# No --api-key: bind one address, never 0.0.0.0 (the A9's tailnet IP; LiteLLM is the client).
+inference_server_bind_host: "127.0.0.1"
+inference_server_wait_for_address: "{{ inference_server_bind_host not in ['', '0.0.0.0', '127.0.0.1', 'localhost'] }}"
+inference_server_wait_timeout_seconds: 600
+inference_server_api_host: "{{ '127.0.0.1' if inference_server_bind_host in ['', '0.0.0.0'] else inference_server_bind_host }}"
+
+# ── Models ────────────────────────────────────────────────────────────────────
+# Same shape as llama_server_models (HF pinned revision; size in bytes; sha256 = LFS oid):
+#   {file, repo, revision, size, sha256}
+# Size is asserted every run; the full sha256 only with inference_server_verify_checksums.
+inference_server_models_dir: /opt/olympus/models/gguf
+inference_server_hf_base_url: "https://huggingface.co"
+inference_server_models: []
+inference_server_models_remove: []
+inference_server_verify_checksums: false
+inference_server_model_download_timeout: 60
+
+# ── Instances ─────────────────────────────────────────────────────────────────
+# Same shape as llama_server_instances:
+#   name, port, model (a `file` above), alias (--alias), kind (chat|embed), embed_dim (embed),
+#   args (one list item per flag: bare string or [flag, value...]).
+# Extra, optional: `queue` = requests allowed to wait beyond the -np slots (default below).
+# --host, --port, -m and --alias are added by the wrapper
+# (/usr/local/bin/inference-server-serve-<name>; unit inference-server-<name>.service).
+inference_server_instances: []
+inference_server_drop_flags: []
+
+# ── Concurrency cap and bounded queue ─────────────────────────────────────────
+# llama-server has no queue limit of its own: -np is the number of parallel slots, further
+# requests wait in an unbounded deferred queue, and its HTTP pool grows by up to 1024
+# threads (tools/server/server-http.cpp, tag b11795). The bound is therefore enforced in
+# the kernel: an nftables rule per instance port rejects (TCP RST) new connections once
+# more than  slots(-np) + queue + headroom  are open. LiteLLM sees the reset at once and
+# fails over / retries instead of stacking requests behind a long generation.
+# Per-request timeouts are the `--timeout N` arg of each instance (read/write seconds).
+# OFF by default: the rule counts open TCP connections, not in-flight requests (idle keep-alive
+# connections from LiteLLM count too, so it can reset healthy traffic). Enable after measuring.
+inference_server_connection_limit_enabled: false
+inference_server_default_queue: 4
+# Connections reserved for the watchdog probes and metrics scrapes.
+inference_server_connection_headroom: 2
+inference_server_limits_file: /etc/olympus/inference-server-limits.nft
+
+# ── Readiness and probes ──────────────────────────────────────────────────────
+inference_server_ready_retries: 120
+inference_server_ready_delay: 5
+inference_server_probe_timeout: 300
+# changed (instances this run restarted/started) | always | never
+inference_server_probe_mode: changed
+
+# ── Watchdog (systemd timer) ──────────────────────────────────────────────────
+# inference-server-watchdog.timer runs the oneshot service every interval seconds. Same
+# logic as the macOS watchdog: per instance, a failed-check counter and (chat) a counter of
+# minutes busy without decode progress; at either threshold and past the cooldown the
+# instance is restarted with `systemctl restart`. Journal tag: inference-server-watchdog
+# (alert rules match "RESTART <name> reason=").
+inference_server_watchdog_enabled: true
+inference_server_watchdog_interval: 60
+inference_server_watchdog_fail_threshold: 3
+inference_server_watchdog_stall_threshold: 3
+inference_server_watchdog_cooldown_seconds: 600
+inference_server_watchdog_probe_timeout: 120
+inference_server_watchdog_state_dir: /run/inference-server-watchdog
+# Metric names from llama-server --metrics (documented in tools/server/README.md at b11795);
+# the watchdog falls back to /slots when either is missing.
+inference_server_metric_processing: "llamacpp:requests_processing"
+inference_server_metric_decode_total: "llamacpp:n_decode_total"
+
+# ── amdgpu / TTM kernel parameters (GRUB drop-in; reboot required, never done by the role) ──
+# GPU-addressable memory on Strix Halo is the TTM/GTT limit, not the BIOS carve-out. Values are
+# derived from inference_server_gpu_memory_gib (4 KiB pages): 96 GiB -> 25165824 pages.
+inference_server_kernel_params_enabled: true
+inference_server_gpu_memory_gib: 96
+inference_server_ttm_pages_limit: "{{ (inference_server_gpu_memory_gib | int) * 262144 }}"
+inference_server_ttm_page_pool_size: "{{ inference_server_ttm_pages_limit }}"
+# Legacy MiB knob, deprecated in favour of ttm.pages_limit on current kernels (Ubuntu 26.04 ships 7.0).
+# Set to e.g. 98304 only if the running kernel does not honour the ttm limit alone.
+inference_server_amdgpu_gttsize_mib: ""
+inference_server_grub_dropin: /etc/default/grub.d/90-olympus-inference-server.cfg

@@ -1,0 +1,14 @@
+# Managed by Ansible (roles/inference-server) - do not edit by hand.
+[Unit]
+Description=Per-instance connection caps for llama-server (nftables)
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/usr/sbin/nft -f {{ inference_server_limits_file }}
+ExecStop=/usr/sbin/nft delete table inet olympus_inference
+
+[Install]
+WantedBy=multi-user.target

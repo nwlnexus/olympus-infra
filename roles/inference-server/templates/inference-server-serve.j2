@@ -1,0 +1,37 @@
+#!/bin/bash
+# Managed by Ansible (roles/inference-server) - do not edit by hand.
+# Wrapper for llama-server instance {{ _instance.name }} ({{ _instance.model }}), run by
+# inference-server-{{ _instance.name }}.service as {{ inference_server_user }}. --host is a single address
+# ({{ inference_server_bind_host }}), never 0.0.0.0: llama-server runs without an API key here.
+set -eu
+{% if inference_server_backend == 'rocm' %}
+
+# ROCm userspace comes from the host install, not the llama.cpp tarball.
+export LD_LIBRARY_PATH="{{ inference_server_rocm_path }}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+{% endif %}
+{% if inference_server_wait_for_address | bool %}
+
+# Wait for {{ inference_server_bind_host }} to exist (tailscaled may come up after this unit starts).
+# Exit non-zero on timeout so systemd (Restart=always) retries.
+bind_ip="{{ inference_server_bind_host }}"
+waited=0
+until ip -o -4 addr show | grep -q "inet ${bind_ip}/"; do
+  if [ "$waited" -ge {{ inference_server_wait_timeout_seconds }} ]; then
+    echo "inference-server-serve-{{ _instance.name }}: ${bind_ip} not present after {{ inference_server_wait_timeout_seconds }}s (tailscaled down?); exiting for systemd to retry" >&2
+    exit 75
+  fi
+  sleep 2
+  waited=$((waited + 2))
+done
+{% endif %}
+
+exec {{ inference_server_bin }} \
+  --host {{ inference_server_bind_host }} \
+  --port {{ _instance.port }} \
+  -m {{ (inference_server_models_dir ~ '/' ~ _instance.model) | quote }} \
+  --alias {{ _instance.alias | quote }}{% for _arg in _instance.args | default([]) %}
+{% set _tokens = [_arg] if _arg is string else _arg %}
+{% if (_tokens[0] | string) not in inference_server_drop_flags %} \
+  {{ _tokens | map('string') | map('quote') | join(' ') }}{% endif %}
+{% endfor %}
+

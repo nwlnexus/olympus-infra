@@ -6,6 +6,7 @@
 # Control-plane: 3 onodes (NVMe, HA etcd, kube-vip VIP 192.168.253.2)
 # Agent: naraka-01 (128 GB RAM, ingress entry point)
 # Data tier: data-hub (macOS, native LaunchDaemons — NOT a k8s node)
+# Inference: GEEKOM A9 (Ubuntu, tailnet host, NOT a k8s node) - group empty until the owner names it
 # Provisioning: styx (PXE/Packer — NOT a k8s node)
 
 all:
@@ -73,6 +74,18 @@ all:
     data_hub:
       hosts:
         data-hub:
+
+    # ── Inference (GEEKOM A9 - llama-server, NOT a k8s node) ─────────────────
+    # a9-mega: LAN address for push runs; vars: inventory/group_vars/inference_server.yml.
+    inference_server:
+      hosts:
+        a9-mega:
+          ansible_host: 192.168.253.15
+      vars:
+        ansible_connection: ssh
+        ansible_user: ansible
+        ansible_ssh_private_key_file: ~/.ssh/ansible
+        ansible_python_interpreter: /usr/bin/python3
 
     # ── Provisioning (styx — PXE/Packer, NOT a k8s node) ────────────────────
     provisioning:

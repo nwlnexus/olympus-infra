@@ -1,0 +1,61 @@
+---
+- name: Deploy the watchdog script
+  ansible.builtin.template:
+    src: inference-server-watchdog.j2
+    dest: /usr/local/bin/inference-server-watchdog
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when: inference_server_watchdog_enabled | bool
+
+- name: Deploy the watchdog service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  loop: [inference-server-watchdog.service, inference-server-watchdog.timer]
+  notify: Reload systemd
+  when: inference_server_watchdog_enabled | bool
+
+- name: Flush handlers (daemon-reload before enabling the timer)
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the watchdog timer
+  ansible.builtin.systemd:
+    name: inference-server-watchdog.timer
+    enabled: true
+    state: started
+  become: true
+  when: inference_server_watchdog_enabled | bool
+
+- name: Stat the watchdog timer (watchdog disabled)
+  ansible.builtin.stat:
+    path: /etc/systemd/system/inference-server-watchdog.timer
+    get_checksum: false
+  register: _inference_server_watchdog_disabled_stat
+  when: not (inference_server_watchdog_enabled | bool)
+
+- name: Stop the watchdog timer (watchdog disabled)
+  ansible.builtin.systemd:
+    name: inference-server-watchdog.timer
+    enabled: false
+    state: stopped
+  become: true
+  when:
+    - not (inference_server_watchdog_enabled | bool)
+    - _inference_server_watchdog_disabled_stat.stat.exists
+
+- name: Remove the watchdog files (watchdog disabled)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  become: true
+  loop:
+    - /etc/systemd/system/inference-server-watchdog.timer
+    - /etc/systemd/system/inference-server-watchdog.service
+    - /usr/local/bin/inference-server-watchdog
+  when: not (inference_server_watchdog_enabled | bool)

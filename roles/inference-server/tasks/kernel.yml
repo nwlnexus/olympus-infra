@@ -1,0 +1,62 @@
+---
+# GRUB drop-in only. Never reboots: the notice below and /var/run/reboot-required tell the
+# operator; verify after the reboot with /sys/module/ttm/parameters/pages_limit.
+- name: Compute the kernel parameters
+  ansible.builtin.set_fact:
+    _inference_server_kernel_params: >-
+      {{ ['ttm.pages_limit=' ~ inference_server_ttm_pages_limit,
+          'ttm.page_pool_size=' ~ inference_server_ttm_page_pool_size]
+         + (['amdgpu.gttsize=' ~ inference_server_amdgpu_gttsize_mib] if (inference_server_amdgpu_gttsize_mib | string) != '' else []) }}
+  when: inference_server_kernel_params_enabled | bool
+  tags: [inference_server_kernel]
+
+- name: Install the GRUB drop-in for the amdgpu/TTM parameters
+  ansible.builtin.template:
+    src: grub-dropin.cfg.j2
+    dest: "{{ inference_server_grub_dropin }}"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Update grub
+  when: inference_server_kernel_params_enabled | bool
+  tags: [inference_server_kernel]
+
+- name: Read the running kernel command line
+  ansible.builtin.slurp:
+    src: /proc/cmdline
+  register: _inference_server_cmdline
+  check_mode: false
+  when: inference_server_kernel_params_enabled | bool
+  tags: [inference_server_kernel]
+
+- name: Decide whether a reboot is pending for the kernel parameters
+  ansible.builtin.set_fact:
+    _inference_server_reboot_pending: >-
+      {{ _inference_server_kernel_params | difference((_inference_server_cmdline.content | b64decode).split()) | length > 0 }}
+  when: inference_server_kernel_params_enabled | bool
+  tags: [inference_server_kernel]
+
+- name: Flag the reboot for the operator (never reboots)
+  ansible.builtin.copy:
+    dest: /var/run/reboot-required
+    content: "*** System restart required ***\n"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when:
+    - inference_server_kernel_params_enabled | bool
+    - _inference_server_reboot_pending | bool
+  tags: [inference_server_kernel]
+
+- name: Reboot-required notice
+  ansible.builtin.debug:
+    msg: >-
+      REBOOT REQUIRED (not done by this role): {{ _inference_server_kernel_params | join(' ') }} are not
+      on the running kernel command line. Reboot, then check /sys/module/ttm/parameters/pages_limit
+      is {{ inference_server_ttm_pages_limit }}.
+  when:
+    - inference_server_kernel_params_enabled | bool
+    - _inference_server_reboot_pending | bool
+  tags: [inference_server_kernel]

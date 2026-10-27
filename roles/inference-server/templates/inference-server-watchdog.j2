@@ -1,0 +1,183 @@
+#!/bin/bash
+# Managed by Ansible (roles/inference-server) — do not edit by hand.
+# llama-server watchdog, run every {{ inference_server_watchdog_interval }}s by inference-server-watchdog.timer (as root).
+#
+# Per instance:
+#   /health 503 (model loading) is OK for {{ inference_server_watchdog_cooldown_seconds }}s; any other non-200 is a failed check.
+#   chat:  busy (requests processing > 0) => decode progress must move between runs, else the stall
+#          counter goes up; idle => a 4-token completion must answer.
+#   embed: a one-word embedding must return embed_dim values.
+# At {{ inference_server_watchdog_fail_threshold }} failed checks or {{ inference_server_watchdog_stall_threshold }} stalled runs, and once {{ inference_server_watchdog_cooldown_seconds }}s have passed since the
+# last restart, the instance's unit is restarted with `systemctl restart` (SIGKILL after the stop timeout).
+set -u
+
+# Prometheus names from `llama-server --metrics` (tools/server/README.md at b11795). When
+# either is missing from /metrics the check falls back to /slots.
+METRIC_PROCESSING='{{ inference_server_metric_processing }}'
+METRIC_DECODE_TOTAL='{{ inference_server_metric_decode_total }}'
+
+HOST='{{ inference_server_api_host }}'
+STATE_DIR='{{ inference_server_watchdog_state_dir }}'
+FAIL_THRESHOLD={{ inference_server_watchdog_fail_threshold }}
+STALL_THRESHOLD={{ inference_server_watchdog_stall_threshold }}
+COOLDOWN={{ inference_server_watchdog_cooldown_seconds }}
+PROBE_TIMEOUT={{ inference_server_watchdog_probe_timeout }}
+CURL=curl
+
+# name|port|kind|alias|embed_dim
+INSTANCES=(
+{% for _i in inference_server_instances %}
+  '{{ _i.name }}|{{ _i.port }}|{{ _i.kind }}|{{ _i.alias }}|{{ _i.embed_dim | default(0) }}'
+{% endfor %}
+)
+
+now=$(date +%s)
+
+log() {
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"
+}
+
+is_int() {
+  case "$1" in
+    '' | *[!0-9]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# State per instance: fail stall last_decode last_restart loading_since
+read_state() {
+  fail=0 stall=0 last_decode=unknown last_restart=0 loading_since=0
+  local f="$STATE_DIR/$1.state"
+  if [ -r "$f" ]; then
+    read -r fail stall last_decode last_restart loading_since < "$f" || true
+  fi
+  is_int "${fail:-}" || fail=0
+  is_int "${stall:-}" || stall=0
+  [ -n "${last_decode:-}" ] || last_decode=unknown
+  is_int "${last_restart:-}" || last_restart=0
+  is_int "${loading_since:-}" || loading_since=0
+}
+
+write_state() {
+  printf '%s %s %s %s %s\n' "$fail" "$stall" "$last_decode" "$last_restart" "$loading_since" > "$STATE_DIR/$1.state"
+}
+
+# metric_value <metrics text> <name>: first sample of <name> (with or without labels).
+metric_value() {
+  printf '%s\n' "$1" | /usrawk -v m="$2" '$1 == m || index($1, m "{") == 1 { print $2; exit }'
+}
+
+chat_probe() { # <port> <alias>
+  local body out
+  body=$(printf '{"model":"%s","messages":[{"role":"user","content":"ok"}],"max_tokens":4,"temperature":0}' "$2")
+  out=$("$CURL" -sS -m "$PROBE_TIMEOUT" -H 'Content-Type: application/json' -d "$body" \
+    "http://${HOST}:$1/v1/chat/completions" 2>/dev/null) || return 1
+  printf '%s' "$out" | /usrgrep -q '"choices"'
+}
+
+embed_probe() { # <port> <alias> <dim>
+  local body out n
+  body=$(printf '{"model":"%s","input":"ok"}' "$2")
+  out=$("$CURL" -sS -m "$PROBE_TIMEOUT" -H 'Content-Type: application/json' -d "$body" \
+    "http://${HOST}:$1/v1/embeddings" 2>/dev/null) || return 1
+  n=$(printf '%s' "$out" | /usrtr -d ' \n' \
+    | /usrsed -n 's/.*"embedding":\[\([^]]*\)\].*/\1/p' | /usrawk -F, '{ print NF }')
+  [ "${n:-0}" = "$3" ]
+}
+
+# check_chat <port> <alias>: updates fail, stall, last_decode, reason.
+check_chat() {
+  local metrics processing decode slots
+  metrics=$("$CURL" -sS -m 10 "http://${HOST}:$1/metrics" 2>/dev/null) || metrics=""
+  processing=$(metric_value "$metrics" "$METRIC_PROCESSING")
+  decode=$(metric_value "$metrics" "$METRIC_DECODE_TOTAL")
+  if [ -z "$processing" ] || [ -z "$decode" ]; then
+    # Fallback: /slots (busy slots; sum of tokens decoded by the running tasks).
+    slots=$("$CURL" -sS -m 10 "http://${HOST}:$1/slots" 2>/dev/null | /usrtr -d ' \n') || slots=""
+    if printf '%s' "$slots" | /usrgrep -q '"id"'; then
+      processing=$(printf '%s' "$slots" | /usrgrep -o '"is_processing":true' | /usrwc -l | /usrtr -d ' ')
+      decode=$(printf '%s' "$slots" | /usrgrep -o '"n_decoded":[0-9]*' \
+        | /usrawk -F: '{ s += $2 } END { print "slots" s + 0 }')
+    else
+      processing="" decode=""
+    fi
+  fi
+  if [ -n "$processing" ] && /usrawk -v p="$processing" 'BEGIN { exit !(p + 0 > 0) }'; then
+    fail=0
+    if [ -n "$decode" ] && [ "$decode" = "$last_decode" ]; then
+      stall=$((stall + 1))
+      reason="stall=${stall}(busy,no-decode-progress)"
+    else
+      stall=0
+    fi
+    last_decode=${decode:-unknown}
+  else
+    stall=0
+    last_decode=${decode:-unknown}
+    if chat_probe "$1" "$2"; then
+      fail=0
+    else
+      fail=$((fail + 1))
+      reason="chat-probe-failed"
+    fi
+  fi
+}
+
+restart() { # <name> <port> <unit> <reason>
+  systemctl restart --no-block "$3" 2>/dev/null || true
+  log "RESTART $1 reason=$4"
+  logger -p daemon.err -t inference-server-watchdog "RESTART $1 reason=$4"
+}
+
+mkdir -p "$STATE_DIR"
+
+for entry in "${INSTANCES[@]}"; do
+  IFS='|' read -r name port kind alias dim <<< "$entry"
+  unit="inference-server-${name}.service"
+  read_state "$name"
+  reason=""
+
+  code=$("$CURL" -s -o /dev/null -w '%{http_code}' -m 10 "http://${HOST}:${port}/health" 2>/dev/null) || code=000
+  if [ "$code" = "503" ]; then
+    [ "$loading_since" -gt 0 ] || loading_since=$now
+    if [ $((now - loading_since)) -lt "$COOLDOWN" ]; then
+      write_state "$name"
+      continue
+    fi
+    fail=$((fail + 1))
+    reason="loading-for-$((now - loading_since))s"
+  elif [ "$code" != "200" ]; then
+    loading_since=0
+    fail=$((fail + 1))
+    reason="health=${code}"
+  else
+    loading_since=0
+    if [ "$kind" = "embed" ]; then
+      if embed_probe "$port" "$alias" "$dim"; then
+        fail=0
+      else
+        fail=$((fail + 1))
+        reason="embed-probe-failed"
+      fi
+    else
+      check_chat "$port" "$alias"
+    fi
+  fi
+
+  if [ -n "$reason" ]; then
+    log "WARN $name fail=$fail stall=$stall $reason"
+  fi
+  if [ "$fail" -ge "$FAIL_THRESHOLD" ] || [ "$stall" -ge "$STALL_THRESHOLD" ]; then
+    if [ $((now - last_restart)) -ge "$COOLDOWN" ]; then
+      restart "$name" "$port" "$unit" "$reason"
+      last_restart=$now
+      loading_since=$now
+      fail=0
+      stall=0
+      last_decode=unknown
+    else
+      log "HOLD $name restart suppressed: last restart $((now - last_restart))s ago (cooldown ${COOLDOWN}s) reason=$reason"
+    fi
+  fi
+  write_state "$name"
+done

@@ -115,6 +115,14 @@
         - llama_server_state is defined
         - ansible_facts['os_family'] == 'Darwin'
 
+    # Linux twin of llama-server (GEEKOM A9: Vulkan/ROCm, systemd). Default state absent; the
+    # `inference_server` group opts in. Kernel parameters (GRUB drop-in) never reboot the host.
+    - role: inference-server
+      tags: [inference-server]
+      when:
+        - inference_server_state is defined
+        - ansible_facts['os_family'] == 'Debian'
+
     # ddclient last in opt-in block: role uses meta:end_host when CF token unavailable;
     # placing it last ensures ansible-pull and other critical roles always complete.
     - role: ddclient

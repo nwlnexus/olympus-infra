@@ -1,0 +1,21 @@
+# Managed by Ansible (roles/inference-server) - do not edit by hand.
+# Concurrency cap / bounded queue per instance: reject (TCP RST) new connections beyond
+# slots (-np) + queue + headroom. Own table, so ufw/nftables rules elsewhere are untouched.
+add table inet olympus_inference
+delete table inet olympus_inference
+
+table inet olympus_inference {
+  chain input {
+    type filter hook input priority -10; policy accept;
+{% for _instance in inference_server_instances %}
+{% set _ns = namespace(np=1) %}
+{% for _arg in _instance.args | default([]) %}
+{% if _arg is not string and (_arg[0] | string) in ['-np', '--parallel'] %}
+{% set _ns.np = _arg[1] | int %}
+{% endif %}
+{% endfor %}
+    # {{ _instance.name }}: {{ _ns.np }} slot(s) + {{ _instance.queue | default(inference_server_default_queue) }} queued + {{ inference_server_connection_headroom }} headroom
+    tcp dport {{ _instance.port }} ct state new ct count over {{ (_ns.np | int) + (_instance.queue | default(inference_server_default_queue) | int) + (inference_server_connection_headroom | int) }} reject with tcp reset
+{% endfor %}
+  }
+}

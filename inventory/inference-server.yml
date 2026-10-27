@@ -1,0 +1,13 @@
+---
+# Pull inventory for the GEEKOM A9 inference host a9-mega (ansible-pull, local connection).
+# Runbook: roles/inference-server/README.md. Vars: inventory/group_vars/inference_server.yml.
+all:
+  children:
+    # Group that inventory/group_vars/inference_server.yml targets.
+    inference_server:
+      hosts:
+        a9-mega:
+          ansible_host: 127.0.0.1  # ansible-pull runs locally on the host
+          ansible_connection: local
+  vars:
+    ansible_python_interpreter: /usr/bin/python3

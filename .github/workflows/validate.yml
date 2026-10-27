@@ -1,0 +1,78 @@
+name: validate
+
+# Fast, deterministic, offline-ish checks (olympus-sdk#576, HW17). The job id and name `validate` are the
+# status-check context that the repository ruleset requires. This repository is public, so the job runs on
+# GitHub-hosted runners only: fork PRs must never reach the self-hosted cluster runners.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install ansible-core and the Galaxy requirements
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet 'ansible-core==2.21.5'
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/venv/bin/ansible-galaxy" collection install -r requirements.yml
+
+      - name: ansible-playbook --syntax-check on every playbook
+        run: |
+          set -euo pipefail
+          # ansible.cfg (repo root) supplies roles_path and the inventory directory; `-i localhost,` replaces
+          # the inventory so the check needs no host data. Host patterns that match nothing only warn.
+          fail=0
+          while IFS= read -r playbook; do
+            echo "::group::$playbook"
+            if ansible-playbook -i localhost, --syntax-check "$playbook"; then
+              echo "ok: $playbook"
+            else
+              echo "::error file=$playbook::ansible-playbook --syntax-check failed"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done < <(find playbooks -name '*.yml' | sort)
+          exit "$fail"
+
+      - name: shellcheck the plain shell scripts
+        run: |
+          set -euo pipefail
+          # Scope: scripts/*.sh, roles/*/files/*.sh and the extensionless /bin/sh script in roles/baseline/files.
+          # Jinja-templated wrappers (roles/*/templates/*.j2) are not plain shell and are covered by the
+          # render tests below; the roles/*/tests/*.sh helpers are test code and are not linted here.
+          # Severity warning and above: info/style notes (SC2029, SC2001, SC2016, SC1091) are not blocking.
+          shellcheck --version
+          shellcheck -x -S warning scripts/k3s-snapshot.sh roles/*/files/*.sh roles/baseline/files/olympus-cni-ipv6-drop
+          # Exclusion: SC2154 is a false positive for scripts/k3s-health-gate.sh. Its kjson() helper assigns
+          # the caller's variable through a bash nameref (`local -n`), which shellcheck cannot follow.
+          shellcheck -x -S warning -e SC2154 scripts/k3s-health-gate.sh
+
+      - name: Offline render tests (data-services, serving-profile)
+        run: |
+          set -euo pipefail
+          # Controller-local template renders with assertions; no host needed. tests/k3s-render is not run
+          # here: it writes /etc/rancher and fails without root (it is a manual --check --diff render).
+          for t in data-services serving-profile; do
+            echo "::group::tests/$t"
+            ansible-playbook -i "tests/$t/inventory.yml" "tests/$t/render.yml"
+            echo "::endgroup::"
+          done

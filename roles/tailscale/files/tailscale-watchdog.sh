@@ -6,8 +6,14 @@
 # for days (map long-poll wedged), so the node dropped off the tailnet while the
 # service-manager saw a healthy process. Run by a LaunchDaemon every few minutes.
 #
-# Acts only when BackendState is Running and Self.Online is false (or the daemon
-# does not answer) for TS_WATCHDOG_THRESHOLD consecutive runs, and at most once
+# A second wedge was seen on data-hub (2026-10): Self.Online stayed true locally
+# while the map long-poll timed out for 129 hours, so the control plane saw a stale
+# node. tailscaled reports it in .Health ("hasn't received a network map from the
+# coordination server in ..."), which counts as offline too.
+#
+# Acts only when BackendState is Running and Self.Online is false, or Health reports
+# a stale network map (or the daemon does not answer), for TS_WATCHDOG_THRESHOLD
+# consecutive runs, and at most once
 # per TS_WATCHDOG_COOLDOWN seconds. A stopped or logged-out node is left alone:
 # a restart cannot fix that.
 #
@@ -47,6 +53,8 @@ if d.get("BackendState") != "Running":
     print("not-running")
 elif (d.get("Self") or {}).get("Online") is False:
     print("offline")
+elif any("network map" in str(h) for h in (d.get("Health") or [])):
+    print("stale-map")
 else:
     print("online")
 ' 2>/dev/null || echo unresponsive)

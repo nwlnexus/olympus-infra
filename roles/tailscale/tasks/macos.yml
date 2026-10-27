@@ -259,7 +259,7 @@
 # `brew services` keeps the process alive, but cannot see that it is running
 # without a control-plane connection. The watchdog checks `tailscale status`
 # every few minutes and kickstarts the LaunchDaemon after sustained
-# BackendState=Running + Self.Online=false. See files/tailscale-watchdog.sh.
+# BackendState=Running + (Self.Online=false or a stale-network-map health warning). See files/tailscale-watchdog.sh.
 
 - name: Install tailscale watchdog script (macOS)
   ansible.builtin.copy:

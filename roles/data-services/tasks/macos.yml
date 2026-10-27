@@ -2,6 +2,9 @@
 - name: Remove retired services (Redpanda, Colima, ClickHouse, Redis, NFS archive mount)
   ansible.builtin.include_tasks: macos-legacy-cleanup.yml
 
+- name: Keep the host on wired networking and clear VPN-client conflicts
+  ansible.builtin.include_tasks: macos-network.yml
+
 - name: Create system users
   ansible.builtin.include_tasks: macos-users.yml
 

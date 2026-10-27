@@ -26,7 +26,16 @@ reset() { rm -rf "$T/state" "$T/restarts" "$T/log"; }
 OFFLINE='{"BackendState":"Running","Self":{"Online":false}}'
 ONLINE='{"BackendState":"Running","Self":{"Online":true}}'
 
+STALE='{"BackendState":"Running","Self":{"Online":true},"Health":["Tailscale hasn'"'"'t received a network map from the coordination server in 129h50m56s."]}'
+OTHER_HEALTH='{"BackendState":"Running","Self":{"Online":true},"Health":["Tailscale can'"'"'t reach the configured DNS servers."]}'
+
 reset; mk_ts "$ONLINE"; run 10000; run 10300; check "online never restarts" 0 "$(restarts)"
+
+reset; mk_ts "$STALE"; run 10000; run 10300; check "stale map below threshold does not restart" 0 "$(restarts)"
+run 10600; check "third consecutive stale map restarts" 1 "$(restarts)"
+
+reset; mk_ts "$OTHER_HEALTH"; run 10000; run 10300; run 10600; run 10900
+check "unrelated health warning does not restart" 0 "$(restarts)"
 
 reset; mk_ts "$OFFLINE"; run 10000; run 10300; check "offline below threshold does not restart" 0 "$(restarts)"
 run 10600; check "third consecutive offline restarts" 1 "$(restarts)"

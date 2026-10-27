@@ -1,0 +1,104 @@
+---
+# Keep data-hub on its wired connection and off third-party VPN clients:
+#   - Wi-Fi is powered off and its network service disabled, so it cannot rejoin a
+#     network after a reboot or a macOS update. Skipped (with a failure) if the
+#     default route currently runs over Wi-Fi, so this can never cut the host off.
+#   - Cloudflare WARP is removed. It runs a root daemon beside tailscaled and in some
+#     modes claims 100.64.0.0/10, the tailnet range.
+# Every task is a no-op once the host is converged.
+
+# ── Wi-Fi ─────────────────────────────────────────────────────────────────────
+- name: Find the Wi-Fi device
+  ansible.builtin.shell:
+    cmd: >-
+      networksetup -listallhardwareports |
+      awk '/Hardware Port: Wi-Fi/{f=1;next} f&&/Device:/{print $2;exit}'
+  register: _ds_wifi_device
+  changed_when: false
+  check_mode: false
+  when: data_services_wifi_disabled | bool
+
+- name: Find the default route interface
+  ansible.builtin.shell:
+    cmd: route -n get default | awk '/interface:/{print $2}'
+  register: _ds_default_iface
+  changed_when: false
+  check_mode: false
+  when: data_services_wifi_disabled | bool
+
+- name: Refuse to disable Wi-Fi while the default route runs over it
+  ansible.builtin.assert:
+    that: _ds_wifi_device.stdout | trim != _ds_default_iface.stdout | trim
+    fail_msg: >-
+      The default route uses {{ _ds_default_iface.stdout | trim }}, which is the Wi-Fi
+      device. Bring up the wired connection before disabling Wi-Fi.
+  when:
+    - data_services_wifi_disabled | bool
+    - _ds_wifi_device.stdout | trim | length > 0
+
+- name: Check the Wi-Fi power state
+  ansible.builtin.command:
+    cmd: networksetup -getairportpower {{ _ds_wifi_device.stdout | trim }}
+  register: _ds_wifi_power
+  changed_when: false
+  check_mode: false
+  when:
+    - data_services_wifi_disabled | bool
+    - _ds_wifi_device.stdout | trim | length > 0
+
+- name: Power Wi-Fi off
+  ansible.builtin.command:
+    cmd: networksetup -setairportpower {{ _ds_wifi_device.stdout | trim }} off
+  become: true
+  changed_when: true
+  when:
+    - data_services_wifi_disabled | bool
+    - _ds_wifi_device.stdout | trim | length > 0
+    - "'On' in _ds_wifi_power.stdout"
+
+- name: Check whether the Wi-Fi network service is enabled
+  ansible.builtin.command:
+    cmd: networksetup -getnetworkserviceenabled Wi-Fi
+  register: _ds_wifi_service
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: data_services_wifi_disabled | bool
+
+- name: Disable the Wi-Fi network service
+  ansible.builtin.command:
+    cmd: networksetup -setnetworkserviceenabled Wi-Fi off
+  become: true
+  changed_when: true
+  when:
+    - data_services_wifi_disabled | bool
+    - (_ds_wifi_service.stdout | default('')) is search('Enabled')
+
+# ── Cloudflare WARP ───────────────────────────────────────────────────────────
+- name: Check whether the WARP LaunchDaemon is loaded
+  ansible.builtin.command:
+    cmd: launchctl print system/com.cloudflare.1dot1dot1dot1.macos.warp.daemon
+  become: true
+  register: _ds_warp_loaded
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: data_services_remove_warp | bool
+
+- name: Boot out the WARP LaunchDaemon
+  ansible.builtin.command:
+    cmd: launchctl bootout system/com.cloudflare.1dot1dot1dot1.macos.warp.daemon
+  become: true
+  changed_when: true
+  when:
+    - data_services_remove_warp | bool
+    - (_ds_warp_loaded.rc | default(1)) == 0
+
+# Homebrew refuses to run as root, so the cask is removed as the login user.
+- name: Uninstall the Cloudflare WARP cask
+  community.general.homebrew_cask:
+    name: cloudflare-warp
+    state: absent
+    path: /opt/homebrew/bin
+  become: false
+  when: data_services_remove_warp | bool

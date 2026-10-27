@@ -1,0 +1,192 @@
+#!/bin/bash
+# Managed by Ansible (roles/llama-server) — do not edit by hand.
+# llama-server watchdog, run every {{ llama_server_watchdog_interval }}s by com.olympus.llama-server-watchdog (as root).
+#
+# Per instance:
+#   /health 503 (model loading) is OK for {{ llama_server_watchdog_cooldown_seconds }}s; any other non-200 is a failed check.
+#   chat:  busy (requests processing > 0) => decode progress must move between runs, else the stall
+#          counter goes up; idle => a 4-token completion must answer.
+#   embed: a one-word embedding must return embed_dim values.
+# At {{ llama_server_watchdog_fail_threshold }} failed checks or {{ llama_server_watchdog_stall_threshold }} stalled runs, and once {{ llama_server_watchdog_cooldown_seconds }}s have passed since the
+# last restart, the instance is SIGKILLed and launchd (KeepAlive) starts it again. Bash 3.2 compatible.
+set -u
+
+# Prometheus names from `llama-server --metrics`. Not yet confirmed on the installed
+# version: when either is missing from /metrics the check falls back to /slots.
+METRIC_PROCESSING='{{ llama_server_metric_processing }}'
+METRIC_DECODE_TOTAL='{{ llama_server_metric_decode_total }}'
+
+HOST='{{ llama_server_api_host }}'
+STATE_DIR='{{ llama_server_watchdog_state_dir }}'
+FAIL_THRESHOLD={{ llama_server_watchdog_fail_threshold }}
+STALL_THRESHOLD={{ llama_server_watchdog_stall_threshold }}
+COOLDOWN={{ llama_server_watchdog_cooldown_seconds }}
+PROBE_TIMEOUT={{ llama_server_watchdog_probe_timeout }}
+CURL=/usr/bin/curl
+
+# name|port|kind|alias|embed_dim
+INSTANCES=(
+{% for _i in llama_server_instances %}
+  '{{ _i.name }}|{{ _i.port }}|{{ _i.kind }}|{{ _i.alias }}|{{ _i.embed_dim | default(0) }}'
+{% endfor %}
+)
+
+now=$(/bin/date +%s)
+
+log() {
+  echo "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) $*"
+}
+
+is_int() {
+  case "$1" in
+    '' | *[!0-9]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# State per instance: fail stall last_decode last_restart loading_since
+read_state() {
+  fail=0 stall=0 last_decode=unknown last_restart=0 loading_since=0
+  local f="$STATE_DIR/$1.state"
+  if [ -r "$f" ]; then
+    read -r fail stall last_decode last_restart loading_since < "$f" || true
+  fi
+  is_int "${fail:-}" || fail=0
+  is_int "${stall:-}" || stall=0
+  [ -n "${last_decode:-}" ] || last_decode=unknown
+  is_int "${last_restart:-}" || last_restart=0
+  is_int "${loading_since:-}" || loading_since=0
+}
+
+write_state() {
+  printf '%s %s %s %s %s\n' "$fail" "$stall" "$last_decode" "$last_restart" "$loading_since" > "$STATE_DIR/$1.state"
+}
+
+# metric_value <metrics text> <name>: first sample of <name> (with or without labels).
+metric_value() {
+  printf '%s\n' "$1" | /usr/bin/awk -v m="$2" '$1 == m || index($1, m "{") == 1 { print $2; exit }'
+}
+
+chat_probe() { # <port> <alias>
+  local body out
+  body=$(printf '{"model":"%s","messages":[{"role":"user","content":"ok"}],"max_tokens":4,"temperature":0}' "$2")
+  out=$("$CURL" -sS -m "$PROBE_TIMEOUT" -H 'Content-Type: application/json' -d "$body" \
+    "http://${HOST}:$1/v1/chat/completions" 2>/dev/null) || return 1
+  printf '%s' "$out" | /usr/bin/grep -q '"choices"'
+}
+
+embed_probe() { # <port> <alias> <dim>
+  local body out n
+  body=$(printf '{"model":"%s","input":"ok"}' "$2")
+  out=$("$CURL" -sS -m "$PROBE_TIMEOUT" -H 'Content-Type: application/json' -d "$body" \
+    "http://${HOST}:$1/v1/embeddings" 2>/dev/null) || return 1
+  n=$(printf '%s' "$out" | /usr/bin/tr -d ' \n' \
+    | /usr/bin/sed -n 's/.*"embedding":\[\([^]]*\)\].*/\1/p' | /usr/bin/awk -F, '{ print NF }')
+  [ "${n:-0}" = "$3" ]
+}
+
+# check_chat <port> <alias>: updates fail, stall, last_decode, reason.
+check_chat() {
+  local metrics processing decode slots
+  metrics=$("$CURL" -sS -m 10 "http://${HOST}:$1/metrics" 2>/dev/null) || metrics=""
+  processing=$(metric_value "$metrics" "$METRIC_PROCESSING")
+  decode=$(metric_value "$metrics" "$METRIC_DECODE_TOTAL")
+  if [ -z "$processing" ] || [ -z "$decode" ]; then
+    # Fallback: /slots (busy slots; sum of tokens decoded by the running tasks).
+    slots=$("$CURL" -sS -m 10 "http://${HOST}:$1/slots" 2>/dev/null | /usr/bin/tr -d ' \n') || slots=""
+    if printf '%s' "$slots" | /usr/bin/grep -q '"id"'; then
+      processing=$(printf '%s' "$slots" | /usr/bin/grep -o '"is_processing":true' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+      decode=$(printf '%s' "$slots" | /usr/bin/grep -o '"n_decoded":[0-9]*' \
+        | /usr/bin/awk -F: '{ s += $2 } END { print "slots" s + 0 }')
+    else
+      processing="" decode=""
+    fi
+  fi
+  if [ -n "$processing" ] && /usr/bin/awk -v p="$processing" 'BEGIN { exit !(p + 0 > 0) }'; then
+    fail=0
+    if [ -n "$decode" ] && [ "$decode" = "$last_decode" ]; then
+      stall=$((stall + 1))
+      reason="stall=${stall}(busy,no-decode-progress)"
+    else
+      stall=0
+    fi
+    last_decode=${decode:-unknown}
+  else
+    stall=0
+    last_decode=${decode:-unknown}
+    if chat_probe "$1" "$2"; then
+      fail=0
+    else
+      fail=$((fail + 1))
+      reason="chat-probe-failed"
+    fi
+  fi
+}
+
+restart() { # <name> <port> <label> <reason>
+  local pid
+  pid=$(/bin/launchctl print "system/$3" 2>/dev/null | /usr/bin/awk '$1 == "pid" && $2 == "=" { print $3; exit }')
+  # The job's main process is sudo, which waits on llama-server: kill the server itself
+  # too, so a stopped (SIGSTOP) or wedged server never survives its parent.
+  /usr/bin/pkill -KILL -f -- "llama-server .*--port $2( |$)" 2>/dev/null || true
+  if [ -n "$pid" ]; then
+    /bin/launchctl kill SIGKILL "system/$3" 2>/dev/null || true
+  else
+    /bin/launchctl kickstart "system/$3" 2>/dev/null || true
+  fi
+  log "RESTART $1 reason=$4"
+  /usr/bin/logger -t llama-server-watchdog "RESTART $1 reason=$4"
+}
+
+/bin/mkdir -p "$STATE_DIR"
+
+for entry in "${INSTANCES[@]}"; do
+  IFS='|' read -r name port kind alias dim <<< "$entry"
+  label="com.olympus.llama-server.${name}"
+  read_state "$name"
+  reason=""
+
+  code=$("$CURL" -s -o /dev/null -w '%{http_code}' -m 10 "http://${HOST}:${port}/health" 2>/dev/null) || code=000
+  if [ "$code" = "503" ]; then
+    [ "$loading_since" -gt 0 ] || loading_since=$now
+    if [ $((now - loading_since)) -lt "$COOLDOWN" ]; then
+      write_state "$name"
+      continue
+    fi
+    fail=$((fail + 1))
+    reason="loading-for-$((now - loading_since))s"
+  elif [ "$code" != "200" ]; then
+    loading_since=0
+    fail=$((fail + 1))
+    reason="health=${code}"
+  else
+    loading_since=0
+    if [ "$kind" = "embed" ]; then
+      if embed_probe "$port" "$alias" "$dim"; then
+        fail=0
+      else
+        fail=$((fail + 1))
+        reason="embed-probe-failed"
+      fi
+    else
+      check_chat "$port" "$alias"
+    fi
+  fi
+
+  if [ -n "$reason" ]; then
+    log "WARN $name fail=$fail stall=$stall $reason"
+  fi
+  if [ "$fail" -ge "$FAIL_THRESHOLD" ] || [ "$stall" -ge "$STALL_THRESHOLD" ]; then
+    if [ $((now - last_restart)) -ge "$COOLDOWN" ]; then
+      restart "$name" "$port" "$label" "$reason"
+      last_restart=$now
+      loading_since=$now
+      fail=0
+      stall=0
+      last_decode=unknown
+    else
+      log "HOLD $name restart suppressed: last restart $((now - last_restart))s ago (cooldown ${COOLDOWN}s) reason=$reason"
+    fi
+  fi
+  write_state "$name"
+done

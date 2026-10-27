@@ -1,0 +1,521 @@
+---
+# Tasks tagged llama_server_prepare (asserts, package, models dir, downloads, removals)
+# can run on their own before a cutover: `--tags llama_server_prepare` installs the
+# package and downloads the models without touching any LaunchDaemon.
+
+- name: Present
+  when: llama_server_state == "present"
+  block:
+    # ── 1. Preconditions ────────────────────────────────────────────────────────
+    - name: Assert the platform and the instance/model lists agree
+      vars:
+        _files: "{{ llama_server_models | map(attribute='file') | list }}"
+        _names: "{{ llama_server_instances | map(attribute='name') | list }}"
+        _ports: "{{ llama_server_instances | map(attribute='port') | list }}"
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['os_family'] == 'Darwin'
+          - llama_server_instances | length > 0
+          - _names | unique | length == _names | length
+          - _ports | unique | length == _ports | length
+          - llama_server_instances | map(attribute='model') | difference(_files) | length == 0
+          - llama_server_instances | selectattr('kind', 'in', ['chat', 'embed']) | list | length == llama_server_instances | length
+          - _files | intersect(llama_server_models_remove) | length == 0
+          - llama_server_bind_host not in ['', '0.0.0.0']
+        fail_msg: >-
+          llama-server needs macOS, unique instance names and ports, kind chat|embed, every
+          instance model listed in llama_server_models (and not in llama_server_models_remove),
+          and a single bind address (never 0.0.0.0).
+        quiet: true
+      tags: [llama_server_prepare]
+
+    # ── 2. Package (Homebrew llama.cpp; install/pin only as the prefix owner) ───
+    - name: Stat the Homebrew prefix
+      ansible.builtin.stat:
+        path: "{{ llama_server_brew_prefix }}"
+        get_checksum: false
+      register: _llama_server_brew_prefix
+      tags: [llama_server_prepare]
+
+    # ansible-pull runs as `ansible`, but /opt/homebrew belongs to the login user and
+    # Homebrew refuses to run as anyone else: pull runs only check the binary below.
+    - name: Decide whether this run may manage the Homebrew package
+      ansible.builtin.set_fact:
+        _llama_server_brew_manage: >-
+          {{ _llama_server_brew_prefix.stat.exists
+             and _llama_server_brew_prefix.stat.pw_name == ansible_facts['user_id'] }}
+      tags: [llama_server_prepare]
+
+    - name: Install llama.cpp via Homebrew (present, never upgraded by a run)
+      community.general.homebrew:
+        name: "{{ llama_server_brew_formula }}"
+        state: present
+      register: _llama_server_pkg
+      when: _llama_server_brew_manage | bool
+      tags: [llama_server_prepare]
+
+    - name: List pinned Homebrew formulae
+      ansible.builtin.command:
+        argv: ["{{ llama_server_brew_prefix }}/bin/brew", list, --pinned]
+      register: _llama_server_pinned
+      changed_when: false
+      check_mode: false
+      when: _llama_server_brew_manage | bool
+      tags: [llama_server_prepare]
+
+    - name: Pin llama.cpp so `brew upgrade` never moves it
+      ansible.builtin.command:
+        argv: ["{{ llama_server_brew_prefix }}/bin/brew", pin, "{{ llama_server_brew_formula }}"]
+      changed_when: true
+      when:
+        - _llama_server_brew_manage | bool
+        - llama_server_brew_formula not in _llama_server_pinned.stdout_lines
+      tags: [llama_server_prepare]
+
+    - name: Stat the llama-server binary
+      ansible.builtin.stat:
+        path: "{{ llama_server_bin }}"
+        get_checksum: false
+      register: _llama_server_bin_stat
+      tags: [llama_server_prepare]
+
+    # A Homebrew binary is a symlink into the Cellar: .../Cellar/llama.cpp/<version>[_<rev>]/bin/.
+    - name: Read the installed llama.cpp version from the Cellar path
+      ansible.builtin.set_fact:
+        _llama_server_version: >-
+          {{ (_llama_server_bin_stat.stat.lnk_source | default('')
+              | regex_search('/Cellar/' ~ (llama_server_brew_formula | regex_escape) ~ '/([^/_]+)', '\1')
+              | default([''], true)) | first }}
+      tags: [llama_server_prepare]
+
+    - name: Assert llama-server is installed at the minimum version
+      ansible.builtin.assert:
+        that:
+          - _llama_server_bin_stat.stat.exists
+          - _llama_server_version == '' or _llama_server_version is version(llama_server_min_version, '>=')
+        fail_msg: >-
+          {{ llama_server_bin }} missing or older than {{ llama_server_min_version }}
+          (found '{{ _llama_server_version }}'). Run the push playbook as the Homebrew owner
+          (`--tags llama_server_prepare`) to install it.
+        quiet: true
+      # In --check a first install is only simulated, so the binary cannot exist yet.
+      when: not (ansible_check_mode and (_llama_server_pkg is changed))
+      tags: [llama_server_prepare]
+
+    # ── 3. Models directory ─────────────────────────────────────────────────────
+    # /opt/olympus itself stays as data-services made it; only the models dirs are ours.
+    - name: Create the models directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ llama_server_run_user }}"
+        mode: "0755"
+      become: true
+      loop:
+        - "{{ llama_server_models_dir | dirname }}"
+        - "{{ llama_server_models_dir }}"
+      tags: [llama_server_prepare]
+
+    # ── 4. Download and verify ──────────────────────────────────────────────────
+    - name: Stat the GGUF models
+      ansible.builtin.stat:
+        path: "{{ llama_server_models_dir }}/{{ item.file }}"
+        get_checksum: false
+      become: true
+      loop: "{{ llama_server_models }}"
+      loop_control:
+        label: "{{ item.file }}"
+      register: _llama_server_model_stat
+      tags: [llama_server_prepare]
+
+    # Only missing files are fetched (no checksum of 20 GB files on every run); get_url
+    # verifies the sha256 of the download before moving it into place.
+    - name: Download missing GGUF models (pinned revision, sha256 checked)
+      ansible.builtin.get_url:
+        url: "{{ llama_server_hf_base_url }}/{{ item.item.repo }}/resolve/{{ item.item.revision }}/{{ item.item.file }}"
+        dest: "{{ llama_server_models_dir }}/{{ item.item.file }}"
+        checksum: "sha256:{{ item.item.sha256 }}"
+        tmp_dest: "{{ llama_server_models_dir }}"
+        owner: "{{ llama_server_run_user }}"
+        mode: "0644"
+        timeout: "{{ llama_server_download_timeout }}"
+      become: true
+      loop: "{{ _llama_server_model_stat.results }}"
+      loop_control:
+        label: "{{ item.item.file }}"
+      when: not item.stat.exists
+      tags: [llama_server_prepare]
+
+    - name: Stat the GGUF models after download
+      ansible.builtin.stat:
+        path: "{{ llama_server_models_dir }}/{{ item.file }}"
+        get_checksum: "{{ llama_server_verify_checksums | bool }}"
+        checksum_algorithm: sha256
+      become: true
+      loop: "{{ llama_server_models }}"
+      loop_control:
+        label: "{{ item.file }}"
+      register: _llama_server_model_check
+      tags: [llama_server_prepare]
+
+    - name: Assert every GGUF model has the pinned size (and sha256 when verifying)
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.size == (item.item.size | int)
+          - not (llama_server_verify_checksums | bool) or item.stat.checksum == item.item.sha256
+        fail_msg: "{{ item.item.file }}: missing, wrong size or wrong sha256 (want {{ item.item.size }} B, {{ item.item.sha256 }})"
+        quiet: true
+      loop: "{{ _llama_server_model_check.results }}"
+      loop_control:
+        label: "{{ item.item.file }}"
+      # In --check a missing file is only "downloaded", so there is nothing to measure.
+      when: item.stat.exists or not ansible_check_mode
+      tags: [llama_server_prepare]
+
+    # ── 5. Retired model files ──────────────────────────────────────────────────
+    - name: Remove retired GGUF model files
+      ansible.builtin.file:
+        path: "{{ llama_server_models_dir }}/{{ item }}"
+        state: absent
+      become: true
+      loop: "{{ llama_server_models_remove }}"
+      tags: [llama_server_prepare]
+
+    # ── 6. Wrappers, LaunchDaemons, log rotation ────────────────────────────────
+    - name: Deploy llama-server wrapper scripts
+      ansible.builtin.template:
+        src: llama-server-serve.j2
+        dest: "/usr/local/bin/llama-server-serve-{{ _instance.name }}"
+        owner: root
+        group: wheel
+        mode: "0755"
+      become: true
+      loop: "{{ llama_server_instances }}"
+      loop_control:
+        loop_var: _instance
+        label: "{{ _instance.name }}"
+      register: _llama_server_wrappers
+
+    - name: Deploy llama-server LaunchDaemon plists
+      ansible.builtin.template:
+        src: llama-server.plist.j2
+        dest: "/Library/LaunchDaemons/com.olympus.llama-server.{{ _instance.name }}.plist"
+        owner: root
+        group: wheel
+        mode: "0644"
+      become: true
+      loop: "{{ llama_server_instances }}"
+      loop_control:
+        loop_var: _instance
+        label: "{{ _instance.name }}"
+      register: _llama_server_plists
+
+    - name: Deploy newsyslog rotation for llama-server logs
+      ansible.builtin.template:
+        src: newsyslog-llama-server.conf.j2
+        dest: /etc/newsyslog.d/llama-server.conf
+        owner: root
+        group: wheel
+        mode: "0644"
+      become: true
+
+    # ── 7. Load: reload changed, bootstrap missing, never touch a running unchanged one
+    - name: Check which llama-server LaunchDaemons are loaded
+      ansible.builtin.command: launchctl print system/com.olympus.llama-server.{{ _instance.name }}
+      become: true
+      register: _llama_server_loaded
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      loop: "{{ llama_server_instances }}"
+      loop_control:
+        loop_var: _instance
+        label: "{{ _instance.name }}"
+
+    # `launchctl bootout` is asynchronous: a bootstrap fired right after it races the
+    # still-unloading service ("Bootstrap failed: 5: Input/output error"). Retry the pair
+    # until the bootstrap takes (the same pattern as roles/ollama).
+    - name: Reload changed llama-server LaunchDaemons (bootout is async — retry bootstrap until it takes)
+      ansible.builtin.shell: |
+        launchctl bootout system/com.olympus.llama-server.{{ _instance.name }} 2>/dev/null || true
+        launchctl bootstrap system /Library/LaunchDaemons/com.olympus.llama-server.{{ _instance.name }}.plist
+      become: true
+      register: _llama_server_reload
+      changed_when: true
+      retries: 5
+      delay: 3
+      until: _llama_server_reload.rc == 0
+      loop: "{{ llama_server_instances }}"
+      loop_control:
+        loop_var: _instance
+        index_var: _idx
+        label: "{{ _instance.name }}"
+      when: >-
+        _llama_server_wrappers.results[_idx] is changed
+        or _llama_server_plists.results[_idx] is changed
+        or (_llama_server_pkg | default({})) is changed
+
+    - name: Bootstrap llama-server LaunchDaemons that are not loaded
+      ansible.builtin.command: launchctl bootstrap system /Library/LaunchDaemons/com.olympus.llama-server.{{ _instance.name }}.plist
+      become: true
+      register: _llama_server_bootstrap
+      changed_when: true
+      loop: "{{ llama_server_instances }}"
+      loop_control:
+        loop_var: _instance
+        index_var: _idx
+        label: "{{ _instance.name }}"
+      when:
+        - _llama_server_loaded.results[_idx].rc != 0
+        - _llama_server_wrappers.results[_idx] is not changed
+        - _llama_server_plists.results[_idx] is not changed
+        - (_llama_server_pkg | default({})) is not changed
+
+    # ── 8. Prune instances that left the list (never the watchdog) ──────────────
+    # The glob needs a dot after `llama-server`, so com.olympus.llama-server-watchdog
+    # cannot match; the explicit exclude keeps it that way if the glob ever changes.
+    - name: Find llama-server instance plists
+      ansible.builtin.find:
+        paths: /Library/LaunchDaemons
+        patterns: "com.olympus.llama-server.*.plist"
+        excludes: "com.olympus.llama-server-watchdog.plist"
+      register: _llama_server_found_plists
+
+    - name: Boot out and remove stale llama-server instances
+      ansible.builtin.shell: |
+        launchctl bootout system/{{ _label }} 2>/dev/null || true
+        rm -f {{ item.path | quote }} /usr/local/bin/llama-server-serve-{{ _label | regex_replace('^com\.olympus\.llama-server\.', '') | quote }}
+      become: true
+      changed_when: true
+      vars:
+        _label: "{{ item.path | basename | regex_replace('\\.plist$', '') }}"
+      loop: "{{ _llama_server_found_plists.files }}"
+      loop_control:
+        label: "{{ _label }}"
+      when: >-
+        (_label | regex_replace('^com\.olympus\.llama-server\.', ''))
+        not in (llama_server_instances | map(attribute='name') | list)
+
+    # ── 9. Readiness and probes (skipped in --check: nothing was started) ───────
+    # Probes run for instances this run (re)started, or for all with
+    # llama_server_probe_mode: always. An hourly pull does not queue a probe behind a
+    # long extraction on a single-slot (-np 1) instance.
+    - name: Collect the instances started by this run
+      ansible.builtin.set_fact:
+        _llama_server_probe_names: >-
+          {{ (llama_server_instances | map(attribute='name') | list)
+             if llama_server_probe_mode == 'always'
+             else [] if llama_server_probe_mode == 'never'
+             else ((_llama_server_reload.results | default([]))
+                   + (_llama_server_bootstrap.results | default([])))
+                  | selectattr('changed', 'defined') | selectattr('changed')
+                  | map(attribute='_instance') | map(attribute='name') | unique | list }}
+
+    - name: Wait for llama-server /health to return 200
+      ansible.builtin.uri:
+        url: "http://{{ llama_server_api_host }}:{{ _instance.port }}/health"
+        method: GET
+        status_code: [200]
+      register: _llama_server_health
+      until: _llama_server_health.status == 200
+      retries: "{{ llama_server_ready_retries }}"
+      delay: "{{ llama_server_ready_delay }}"
+      loop: "{{ llama_server_instances }}"
+      loop_control:
+        loop_var: _instance
+        label: "{{ _instance.name }}"
+      when: not ansible_check_mode
+
+    - name: Probe chat instances with a strict json_schema request
+      ansible.builtin.uri:
+        url: "http://{{ llama_server_api_host }}:{{ _instance.port }}/v1/chat/completions"
+        method: POST
+        body_format: json
+        body:
+          model: "{{ _instance.alias }}"
+          messages:
+            - role: user
+              content: 'Reply with the JSON object {"ok": true} and nothing else.'
+          temperature: 0
+          max_tokens: 64
+          response_format:
+            type: json_schema
+            json_schema:
+              name: probe
+              strict: true
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+                additionalProperties: false
+        status_code: [200]
+        timeout: "{{ llama_server_probe_timeout }}"
+      register: _llama_server_chat_probe
+      changed_when: false
+      failed_when: >-
+        _llama_server_chat_probe.status != 200
+        or not ((_llama_server_chat_probe.json.choices[0].message.content | from_json).ok is boolean)
+      loop: "{{ llama_server_instances | selectattr('kind', 'equalto', 'chat') | list }}"
+      loop_control:
+        loop_var: _instance
+        label: "{{ _instance.name }}"
+      when:
+        - not ansible_check_mode
+        - _instance.name in _llama_server_probe_names
+
+    - name: Probe embedding instances for the expected dimension
+      ansible.builtin.uri:
+        url: "http://{{ llama_server_api_host }}:{{ _instance.port }}/v1/embeddings"
+        method: POST
+        body_format: json
+        body:
+          model: "{{ _instance.alias }}"
+          input: "ok"
+        status_code: [200]
+        timeout: "{{ llama_server_probe_timeout }}"
+      register: _llama_server_embed_probe
+      changed_when: false
+      failed_when: >-
+        _llama_server_embed_probe.status != 200
+        or (_llama_server_embed_probe.json.data[0].embedding | length) != (_instance.embed_dim | int)
+      loop: "{{ llama_server_instances | selectattr('kind', 'equalto', 'embed') | list }}"
+      loop_control:
+        loop_var: _instance
+        label: "{{ _instance.name }}"
+      when:
+        - not ansible_check_mode
+        - _instance.name in _llama_server_probe_names
+
+    # ── 10. Watchdog ────────────────────────────────────────────────────────────
+    - name: Deploy the llama-server watchdog script
+      ansible.builtin.template:
+        src: llama-server-watchdog.j2
+        dest: /usr/local/bin/llama-server-watchdog
+        owner: root
+        group: wheel
+        mode: "0755"
+      become: true
+      register: _llama_server_watchdog_script
+      when: llama_server_watchdog_enabled | bool
+
+    - name: Deploy the llama-server watchdog LaunchDaemon plist
+      ansible.builtin.template:
+        src: llama-server-watchdog.plist.j2
+        dest: /Library/LaunchDaemons/com.olympus.llama-server-watchdog.plist
+        owner: root
+        group: wheel
+        mode: "0644"
+      become: true
+      register: _llama_server_watchdog_plist
+      when: llama_server_watchdog_enabled | bool
+
+    - name: Check whether the watchdog is loaded
+      ansible.builtin.command: launchctl print system/com.olympus.llama-server-watchdog
+      become: true
+      register: _llama_server_watchdog_loaded
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: llama_server_watchdog_enabled | bool
+
+    - name: Load the watchdog (reload when changed, bootstrap when missing)
+      ansible.builtin.shell: |
+        launchctl bootout system/com.olympus.llama-server-watchdog 2>/dev/null || true
+        launchctl bootstrap system /Library/LaunchDaemons/com.olympus.llama-server-watchdog.plist
+      become: true
+      register: _llama_server_watchdog_reload
+      changed_when: true
+      retries: 5
+      delay: 3
+      until: _llama_server_watchdog_reload.rc == 0
+      when:
+        - llama_server_watchdog_enabled | bool
+        - >-
+          _llama_server_watchdog_script is changed
+          or _llama_server_watchdog_plist is changed
+          or _llama_server_watchdog_loaded.rc != 0
+
+    - name: Stat the watchdog plist (watchdog disabled)
+      ansible.builtin.stat:
+        path: /Library/LaunchDaemons/com.olympus.llama-server-watchdog.plist
+        get_checksum: false
+      register: _llama_server_watchdog_disabled_stat
+      when: not (llama_server_watchdog_enabled | bool)
+
+    - name: Boot out the watchdog (watchdog disabled)
+      ansible.builtin.command: launchctl bootout system/com.olympus.llama-server-watchdog
+      become: true
+      failed_when: false
+      changed_when: true
+      when:
+        - not (llama_server_watchdog_enabled | bool)
+        - _llama_server_watchdog_disabled_stat.stat.exists
+
+    - name: Remove the watchdog files (watchdog disabled)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      become: true
+      loop:
+        - /Library/LaunchDaemons/com.olympus.llama-server-watchdog.plist
+        - /usr/local/bin/llama-server-watchdog
+      when: not (llama_server_watchdog_enabled | bool)
+
+- name: Absent
+  when: llama_server_state == "absent"
+  block:
+    # Instance plists and the watchdog plist; only what exists is booted out, so an
+    # absent run on a host that never had llama-server reports no change.
+    - name: Find llama-server LaunchDaemon plists
+      ansible.builtin.find:
+        paths: /Library/LaunchDaemons
+        patterns: "com.olympus.llama-server*.plist"
+      register: _llama_server_absent_plists
+
+    - name: Boot out llama-server LaunchDaemons
+      ansible.builtin.command: launchctl bootout system/{{ item.path | basename | regex_replace('\.plist$', '') }}
+      become: true
+      failed_when: false
+      changed_when: true
+      loop: "{{ _llama_server_absent_plists.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Find llama-server wrappers
+      ansible.builtin.find:
+        paths: /usr/local/bin
+        patterns:
+          - "llama-server-serve-*"
+          - "llama-server-watchdog"
+      register: _llama_server_absent_bins
+
+    - name: Remove llama-server plists, wrappers and log rotation
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      become: true
+      loop: >-
+        {{ (_llama_server_absent_plists.files | map(attribute='path') | list)
+           + (_llama_server_absent_bins.files | map(attribute='path') | list)
+           + ['/etc/newsyslog.d/llama-server.conf'] }}
+
+    # Model files are kept (a re-enable needs no 25 GB download). The package is removed
+    # only when asked, and only by the Homebrew prefix owner.
+    - name: Stat the Homebrew prefix (package removal)
+      ansible.builtin.stat:
+        path: "{{ llama_server_brew_prefix }}"
+        get_checksum: false
+      register: _llama_server_brew_prefix_absent
+      when: llama_server_remove_package | bool
+
+    - name: Uninstall llama.cpp via Homebrew
+      community.general.homebrew:
+        name: "{{ llama_server_brew_formula }}"
+        state: absent
+      when:
+        - llama_server_remove_package | bool
+        - _llama_server_brew_prefix_absent.stat.exists
+        - _llama_server_brew_prefix_absent.stat.pw_name == ansible_facts['user_id']

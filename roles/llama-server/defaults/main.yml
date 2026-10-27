@@ -1,0 +1,98 @@
+---
+# llama-server: one llama.cpp `llama-server` process and LaunchDaemon per model (macOS).
+# No model swapper: every listed model stays resident. Plan: olympus-sdk
+# docs/plans/2026-10-27-data-hub-llama-server-cutover.md (nwlnexus/olympus-sdk#588).
+#
+# Off unless a host opts in (data-hub sets `present` in group_vars).
+llama_server_state: absent
+
+# ── Package ───────────────────────────────────────────────────────────────────
+# Homebrew `llama.cpp`, installed `present` (never upgraded by a run) and `brew pin`ned.
+# Homebrew refuses to run as a user that does not own its prefix, and ansible-pull runs
+# as `ansible` while /opt/homebrew belongs to the login user. So install/pin only run
+# when the connecting user owns llama_server_brew_prefix; otherwise the role only
+# asserts that the binary exists at the minimum version (push installs, pull checks).
+llama_server_brew_formula: llama.cpp
+llama_server_brew_prefix: /opt/homebrew
+llama_server_min_version: "0.7.0"
+# Fallback (e.g. a pinned GitHub release zip unpacked by hand): point this at its
+# llama-server. A binary outside the Homebrew Cellar skips the version gate.
+llama_server_bin: "{{ llama_server_brew_prefix }}/bin/llama-server"
+# Uninstall the Homebrew package when llama_server_state is absent.
+llama_server_remove_package: false
+
+# ── Network ───────────────────────────────────────────────────────────────────
+# llama-server has no authentication here (no --api-key): bind one address, never
+# 0.0.0.0. data-hub sets its tailnet IP (parity with Ollama, olympus-infra#1).
+llama_server_bind_host: "127.0.0.1"
+llama_server_wait_for_address: "{{ llama_server_bind_host not in ['', '0.0.0.0', '127.0.0.1', 'localhost'] }}"
+llama_server_wait_timeout_seconds: 600
+llama_server_api_host: "{{ '127.0.0.1' if llama_server_bind_host in ['', '0.0.0.0'] else llama_server_bind_host }}"
+
+# Account the LaunchDaemon wrappers drop to (`sudo -Hu`); owns the models directory.
+llama_server_run_user: "{{ ansible_user | default('ansible') }}"
+
+# ── Models ────────────────────────────────────────────────────────────────────
+# GGUF files, downloaded from Hugging Face at a pinned revision only when missing:
+#   https://huggingface.co/<repo>/resolve/<revision>/<file>
+# Each entry: {file, repo, revision, size (bytes), sha256 (the HF LFS oid)}.
+# The size is asserted on every run; the full sha256 (minutes for 20 GB) only when
+# llama_server_verify_checksums is true. get_url always checks it after a download.
+llama_server_models_dir: /opt/olympus/models/gguf
+llama_server_hf_base_url: "https://huggingface.co"
+llama_server_models: []
+# File names to delete from llama_server_models_dir (retired quants).
+llama_server_models_remove: []
+llama_server_verify_checksums: false
+llama_server_download_timeout: 60
+
+# ── Instances ─────────────────────────────────────────────────────────────────
+# One per served model:
+#   name:      instance name; label com.olympus.llama-server.<name>, wrapper
+#              /usr/local/bin/llama-server-serve-<name>, logs /var/log/llama-server-<name>.{log,err}
+#   port:      listen port on llama_server_bind_host
+#   model:     a `file` from llama_server_models
+#   alias:     model name the server reports (`--alias`); LiteLLM sends it as `openai/<alias>`
+#   kind:      chat | embed (decides the probes and the watchdog check)
+#   embed_dim: embed only; asserted by the probe and checked by the watchdog
+#   args:      extra arguments, one list item per flag: a bare string (`--metrics`) or a
+#              list of the flag and its values (`[-c, 32768]`). Each token is shell-quoted.
+# --host, --port, -m and --alias are added by the wrapper.
+llama_server_instances: []
+# Flags removed from every instance's args, for a flag the installed llama-server
+# does not know (check `llama-server --help`), e.g. ['--cache-ram'].
+llama_server_drop_flags: []
+
+# ── Readiness and probes ──────────────────────────────────────────────────────
+# /health returns 503 while a model loads; a 20 GB GGUF loads in well under 10 min.
+llama_server_ready_retries: 120
+llama_server_ready_delay: 5
+llama_server_probe_timeout: 300
+# Functional probes (chat: strict json_schema {"ok": bool}; embed: embed_dim values):
+#   changed  only instances this run reloaded or bootstrapped (default; keeps pull runs fast)
+#   always   every instance on every run
+#   never    skip
+llama_server_probe_mode: changed
+
+# ── Watchdog ──────────────────────────────────────────────────────────────────
+# com.olympus.llama-server-watchdog runs /usr/local/bin/llama-server-watchdog every
+# llama_server_watchdog_interval seconds (as root). Per instance it counts failed
+# checks and, for chat instances, minutes busy without decode progress; at either
+# threshold (and once the cooldown since the last restart has passed) it SIGKILLs the
+# instance so launchd restarts it.
+llama_server_watchdog_enabled: true
+llama_server_watchdog_interval: 60
+llama_server_watchdog_fail_threshold: 3
+llama_server_watchdog_stall_threshold: 3
+llama_server_watchdog_cooldown_seconds: 600
+llama_server_watchdog_probe_timeout: 120
+llama_server_watchdog_state_dir: /var/run/llama-server-watchdog
+llama_server_watchdog_log: /var/log/llama-server-watchdog.log
+# Prometheus metric names exported by llama-server --metrics. Confirm on the installed
+# version (plan step 10); the watchdog falls back to /slots when they are missing.
+llama_server_metric_processing: "llamacpp:requests_processing"
+llama_server_metric_decode_total: "llamacpp:n_decode_total"
+
+# Log rotation (newsyslog): count and size (KiB) per log file.
+llama_server_log_count: 5
+llama_server_log_size_kb: 10240

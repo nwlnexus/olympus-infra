@@ -84,3 +84,16 @@ body:
       description: If applicable, add screenshots to help explain the issue
     validations:
       required: false
+
+  - type: textarea
+    id: done-when
+    attributes:
+      label: Done when
+      description: >-
+        Observable conditions that make this finished, each with the check command and its expected result.
+        A long task's /goal is copied from this field, so keep it checkable.
+      placeholder: |
+        - The steps to reproduce no longer trigger the bug.
+        Check: `<command>` -> expected: <exact output or exit code>
+    validations:
+      required: true

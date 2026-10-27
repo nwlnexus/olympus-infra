@@ -43,3 +43,16 @@ body:
         - low
     validations:
       required: true
+
+  - type: textarea
+    id: done-when
+    attributes:
+      label: Done when
+      description: >-
+        Observable conditions that make this finished, each with the check command and its expected result.
+        A long task's /goal is copied from this field, so keep it checkable.
+      placeholder: |
+        - The feature works end to end for the use case above.
+        Check: `<command>` -> expected: <exact output or exit code>
+    validations:
+      required: true

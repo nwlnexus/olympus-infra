@@ -509,11 +509,11 @@
           delegate_to: "{{ _ref }}"
           register: _members_after_raw
           # A new member joins as a learner and k3s promotes it once it has caught up.
+          # etcd's JSON omits isLearner when it is false: a missing field means a voter.
           until: >-
             _members_after_raw.rc == 0 and
             ((_members_after_raw.stdout | from_json).members
              | selectattr('peerURLs', 'contains', 'https://' ~ k3s_node_ip ~ ':2380') | list | length == 1) and
-            # etcd's JSON omits isLearner when it is false: a missing field means a voter.
             ((_members_after_raw.stdout | from_json).members
              | selectattr('peerURLs', 'contains', 'https://' ~ k3s_node_ip ~ ':2380')
              | selectattr('isLearner', 'defined') | selectattr('isLearner') | list | length == 0)

@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/inference-server) - do not edit by hand.
+[Unit]
+Description=Run the llama-server stall watchdog every {{ inference_server_watchdog_interval }}s
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec={{ inference_server_watchdog_interval }}s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

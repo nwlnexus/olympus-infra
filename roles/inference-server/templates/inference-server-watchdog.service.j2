@@ -1,0 +1,18 @@
+# Managed by Ansible (roles/inference-server) - do not edit by hand.
+[Unit]
+Description=llama-server stall watchdog (one pass over every instance)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/inference-server-watchdog
+# A pass can wait on probe timeouts of every instance; bound it well above that.
+TimeoutStartSec=15min
+SyslogIdentifier=inference-server-watchdog
+RuntimeDirectory=inference-server-watchdog
+RuntimeDirectoryPreserve=yes
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelModules=true
+ProtectControlGroups=true

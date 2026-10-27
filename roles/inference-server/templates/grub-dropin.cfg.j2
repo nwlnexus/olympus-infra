@@ -1,0 +1,6 @@
+# Managed by Ansible (roles/inference-server) - do not edit by hand.
+# GPU-addressable memory for the Ryzen AI Max+ 395 iGPU: {{ inference_server_gpu_memory_gib }} GiB of 128 GiB unified memory.
+# ttm.* values count 4 KiB pages ({{ inference_server_gpu_memory_gib }} GiB = {{ inference_server_ttm_pages_limit }} pages).
+# Applied by update-grub; takes effect at the next reboot (the role never reboots).
+# Sources: roles/inference-server/README.md
+GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:+$GRUB_CMDLINE_LINUX_DEFAULT }{{ _inference_server_kernel_params | join(' ') }}"

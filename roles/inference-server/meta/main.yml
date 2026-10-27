@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  author: Olympus Infrastructure Team
+  description: llama.cpp llama-server instances (one systemd unit per model, Vulkan or ROCm) plus a stall watchdog, for the GEEKOM A9 (Strix Halo)
+  company: Olympus Organization
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+  galaxy_tags:
+    - llm
+    - inference
+
+dependencies: []

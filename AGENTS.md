@@ -31,6 +31,7 @@ olympus-infra/
 │   ├── mem0-client           # Workstation OpenMemory MCP + Claude recall hook
 │   ├── ollama                # Ollama (retired on data-hub 2026-10-27; kept for rollback)
 │   ├── llama-server          # llama.cpp llama-server, one LaunchDaemon per model + watchdog (macOS)
+│   ├── inference-server      # llama.cpp llama-server on Ubuntu (systemd, Vulkan/ROCm) for the GEEKOM A9: units, watchdog timer, TTM kernel params
 │   ├── qnap-csi-bootstrap    # QNAP CSI/Trident bootstrap on the k3s primary
 │   ├── homebrew              # Homebrew (macOS)
 │   ├── ddclient              # Dynamic DNS client

@@ -1,0 +1,43 @@
+---
+# Model files, llama.cpp releases and the GRUB drop-in are kept (a re-enable needs no 25 GB
+# download and no reboot). Only the units, wrappers, caps and watchdog are removed. Idempotent
+# on a host that never had the role (find returns nothing).
+- name: Find inference-server units
+  ansible.builtin.find:
+    paths: /etc/systemd/system
+    patterns: "inference-server-*"
+  register: _inference_server_absent_units
+
+- name: Stop and disable inference-server units
+  ansible.builtin.systemd:
+    name: "{{ item.path | basename }}"
+    enabled: false
+    state: stopped
+  become: true
+  failed_when: false
+  loop: "{{ _inference_server_absent_units.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Find inference-server wrappers
+  ansible.builtin.find:
+    paths: /usr/local/bin
+    patterns: ["inference-server-serve-*", "inference-server-watchdog"]
+  register: _inference_server_absent_bins
+
+- name: Remove inference-server units, wrappers and cap rules
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  become: true
+  register: _inference_server_absent_removed
+  loop: >-
+    {{ (_inference_server_absent_units.files | map(attribute='path') | list)
+       + (_inference_server_absent_bins.files | map(attribute='path') | list)
+       + [inference_server_limits_file] }}
+
+- name: Reload systemd after removing units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+  when: _inference_server_absent_removed is changed

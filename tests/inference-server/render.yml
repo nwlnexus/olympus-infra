@@ -1,0 +1,348 @@
+---
+# Renders the inference-server (Ubuntu, systemd) templates with the real
+# inventory/group_vars/inference_server.yml and asserts the properties the A9 depends on:
+# pins, one unit per instance, sandbox that keeps GPU access, connection caps, watchdog,
+# kernel parameters, and that the shipped inventory keeps the host out of every play. Runs on
+# the controller; no host needed. shellcheck lints the rendered scripts when on PATH (it is on
+# GitHub-hosted runners); `nft -c` runs when nft is present.
+#
+#   ansible-playbook -i tests/inference-server/inventory.yml tests/inference-server/render.yml
+- name: Render inference-server profile
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - ../../roles/inference-server/defaults/main.yml
+    - ../../inventory/group_vars/inference_server.yml
+  vars:
+    _role: ../../roles/inference-server
+    _out: "{{ lookup('ansible.builtin.env', 'TMPDIR', default='/tmp') }}/inference-server-render"
+    _names: "{{ inference_server_instances | map(attribute='name') | list }}"
+    _by_name: "{{ dict(_names | zip(inference_server_instances)) }}"
+    _kernel_params:
+      - "ttm.pages_limit={{ inference_server_ttm_pages_limit }}"
+      - "ttm.page_pool_size={{ inference_server_ttm_page_pool_size }}"
+  tasks:
+    # vars_files outrank play vars, so the test address and state go in as facts. The address is a
+    # documentation one (RFC 5737), not a host: the shipped group_vars carry a TODO placeholder.
+    - name: Override the shipped placeholders for rendering
+      ansible.builtin.set_fact:
+        inference_server_tailscale_ip: "192.0.2.10"
+        inference_server_state: present
+
+    - name: Create output dir
+      ansible.builtin.file:
+        path: "{{ _out }}"
+        state: directory
+        mode: "0700"
+
+    # ── The shipped inventory keeps the host out of every play ─────────────────
+    - name: Shipped inventory has no host and state absent until the owner fills the TODOs
+      vars:
+        _shipped: "{{ lookup('ansible.builtin.file', '../../inventory/group_vars/inference_server.yml') | from_yaml }}"
+        _pull: "{{ lookup('ansible.builtin.file', '../../inventory/inference-server.yml') | from_yaml }}"
+        _push: "{{ lookup('ansible.builtin.file', '../../inventory/olympus.yml') | from_yaml }}"
+      ansible.builtin.assert:
+        that:
+          - _shipped.inference_server_state == 'absent'
+          - _shipped.inference_server_tailscale_ip is match('^TODO')
+          - _shipped.ansible_pull_limit is match('^TODO')
+          - _pull.all.children.inference_server.hosts == {}
+          - _push.all.children.inference_server.hosts == {}
+          - (lookup('ansible.builtin.file', _role ~ '/defaults/main.yml') | from_yaml).inference_server_state == 'absent'
+
+    # ── Pins and lists ─────────────────────────────────────────────────────────
+    - name: llama.cpp and model pins are well formed and match the instances
+      vars:
+        _files: "{{ inference_server_models | map(attribute='file') | list }}"
+        _used: "{{ inference_server_instances | map(attribute='model') | unique | list }}"
+        _ports: "{{ inference_server_instances | map(attribute='port') | list }}"
+        _builds: "{{ inference_server_llama_builds.values() | list }}"
+      ansible.builtin.assert:
+        that:
+          - inference_server_backend == 'vulkan'
+          - inference_server_llama_tag is match('^b[0-9]+$')
+          - inference_server_llama_builds.keys() | sort == ['rocm', 'vulkan']
+          - _builds | rejectattr('sha256', 'match', '^[0-9a-f]{64}$') | list | length == 0
+          - _builds | map(attribute='size') | select('integer') | select('gt', 0) | list | length == 2
+          - inference_server_llama_builds.vulkan.asset == 'llama-' ~ inference_server_llama_tag ~ '-bin-ubuntu-vulkan-x64.tar.gz'
+          - inference_server_llama_builds.rocm.asset == 'llama-' ~ inference_server_llama_tag ~ '-bin-ubuntu-rocm-10.0-x64.tar.gz'
+          - _files | unique | length == _files | length
+          - _used | difference(_files) | length == 0
+          - _files | difference(_used) | length == 0
+          - inference_server_models | rejectattr('sha256', 'match', '^[0-9a-f]{64}$') | list | length == 0
+          - inference_server_models | rejectattr('revision', 'match', '^[0-9a-f]{40}$') | list | length == 0
+          - inference_server_models | rejectattr('file', 'match', '^[A-Za-z0-9._-]+\.gguf$') | list | length == 0
+          - inference_server_models | map(attribute='size') | select('integer') | select('gt', 0) | list | length == inference_server_models | length
+          - _names | sort == ['nomic-embed', 'qwen25-7b', 'qwen36-27b']
+          - _ports | sort == [8081, 8082, 8083]
+          - _by_name['nomic-embed'].kind == 'embed'
+          - _by_name['nomic-embed'].embed_dim == 768
+          - inference_server_bind_host == '192.0.2.10'
+
+    - name: Model pins and instance args match the data-hub profile (one shared shape)
+      vars:
+        _dh: "{{ lookup('ansible.builtin.file', '../../inventory/group_vars/data_hub.yml') | from_yaml }}"
+      ansible.builtin.assert:
+        that:
+          - _dh.llama_server_models == inference_server_models
+          - _dh.llama_server_instances == inference_server_instances
+
+    # ── Render ─────────────────────────────────────────────────────────────────
+    - name: Render wrappers
+      ansible.builtin.template:
+        src: "{{ _role }}/templates/inference-server-serve.j2"
+        dest: "{{ _out }}/inference-server-serve-{{ _instance.name }}"
+        mode: "0600"
+      loop: "{{ inference_server_instances }}"
+      loop_control:
+        loop_var: _instance
+        label: "{{ _instance.name }}"
+
+    - name: Render units
+      ansible.builtin.template:
+        src: "{{ _role }}/templates/inference-server.service.j2"
+        dest: "{{ _out }}/inference-server-{{ _instance.name }}.service"
+        mode: "0600"
+      loop: "{{ inference_server_instances }}"
+      loop_control:
+        loop_var: _instance
+        label: "{{ _instance.name }}"
+
+    - name: Render the remaining templates
+      ansible.builtin.template:
+        src: "{{ _role }}/templates/{{ item.src }}"
+        dest: "{{ _out }}/{{ item.dest }}"
+        mode: "0600"
+      vars:
+        _inference_server_kernel_params: "{{ _kernel_params }}"
+      loop:
+        - {src: inference-server-watchdog.j2, dest: inference-server-watchdog}
+        - {src: inference-server-watchdog.service.j2, dest: inference-server-watchdog.service}
+        - {src: inference-server-watchdog.timer.j2, dest: inference-server-watchdog.timer}
+        - {src: inference-server-limits.nft.j2, dest: inference-server-limits.nft}
+        - {src: inference-server-limits.service.j2, dest: inference-server-limits.service}
+        - {src: grub-dropin.cfg.j2, dest: grub-dropin.cfg}
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Slurp rendered files
+      ansible.builtin.slurp:
+        src: "{{ _out }}/{{ item }}"
+      loop: >-
+        {{ (_names | map('regex_replace', '^', 'inference-server-serve-') | list)
+           + (_names | map('regex_replace', '^(.*)$', 'inference-server-\1.service') | list)
+           + ['inference-server-watchdog', 'inference-server-watchdog.service', 'inference-server-watchdog.timer',
+              'inference-server-limits.nft', 'inference-server-limits.service', 'grub-dropin.cfg'] }}
+      register: _r
+
+    - name: Index rendered content by file name
+      ansible.builtin.set_fact:
+        _txt: "{{ _txt | default({}) | combine({item.item: item.content | b64decode}) }}"
+      loop: "{{ _r.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # ── Wrappers ───────────────────────────────────────────────────────────────
+    - name: Wrappers bind the tailnet address only, wait for it and exec the pinned build
+      vars:
+        _w: "{{ _txt['inference-server-serve-' ~ item.name] }}"
+        _cmd: "{{ _w.split('exec ')[1] }}"
+      ansible.builtin.assert:
+        that:
+          - "'ip -o -4 addr show' in _w"
+          - "'/opt/olympus/llama.cpp/current/llama-server' in _w"
+          - "'--host 192.0.2.10' in _w"
+          - "'0.0.0.0' not in _cmd"
+          - "('--port ' ~ item.port) in _w"
+          - "('-m /opt/olympus/models/gguf/' ~ item.model) in _w"
+          - "('--alias ' ~ item.alias) in _w"
+          - "'--metrics' in _w"
+          - "'--no-webui' in _w"
+          - "'--api-key' not in _w"
+          - "'LD_LIBRARY_PATH' not in _w"
+          - _cmd.strip().splitlines()[:-1] | reject('match', '.* \\\\$') | list | length == 0
+          - not (_cmd.strip().splitlines()[-1] is match('.*\\\\$'))
+      loop: "{{ inference_server_instances }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Instance arguments match the data-hub serving table (27B, 7B, embed)
+      ansible.builtin.assert:
+        that:
+          - "'-c 32768' in _txt['inference-server-serve-qwen36-27b']"
+          - "'-np 1' in _txt['inference-server-serve-qwen36-27b']"
+          - "'-ngl 999' in _txt['inference-server-serve-qwen36-27b']"
+          - "'-fa on' in _txt['inference-server-serve-qwen36-27b']"
+          - "'--jinja' in _txt['inference-server-serve-qwen36-27b']"
+          - "'--reasoning-format deepseek' in _txt['inference-server-serve-qwen36-27b']"
+          - >-
+            "--chat-template-kwargs '{\"enable_thinking\":false}'" in _txt['inference-server-serve-qwen36-27b']
+          - "'--cache-ram 0' in _txt['inference-server-serve-qwen36-27b']"
+          - "'--timeout 900' in _txt['inference-server-serve-qwen36-27b']"
+          - "'--timeout 900' in _txt['inference-server-serve-qwen25-7b']"
+          - "'--reasoning-format' not in _txt['inference-server-serve-qwen25-7b']"
+          - "'--embeddings' in _txt['inference-server-serve-nomic-embed']"
+          - "'--pooling mean' in _txt['inference-server-serve-nomic-embed']"
+          - "'-np 4' in _txt['inference-server-serve-nomic-embed']"
+          - "'--timeout 120' in _txt['inference-server-serve-nomic-embed']"
+
+    - name: A flag in inference_server_drop_flags disappears from every wrapper
+      vars:
+        _instance: "{{ _by_name['qwen36-27b'] }}"
+        inference_server_drop_flags: ['--cache-ram', '--reasoning-format']
+        _w: "{{ lookup('ansible.builtin.template', _role ~ '/templates/inference-server-serve.j2') }}"
+      ansible.builtin.assert:
+        that:
+          - "'--cache-ram' not in _w"
+          - "'--reasoning-format' not in _w"
+          - "'deepseek' not in _w"
+          - "'--metrics' in _w"
+
+    - name: ROCm variant puts the host ROCm libraries on LD_LIBRARY_PATH
+      vars:
+        inference_server_backend: rocm
+        _instance: "{{ _by_name['qwen36-27b'] }}"
+        _w: "{{ lookup('ansible.builtin.template', _role ~ '/templates/inference-server-serve.j2') }}"
+      ansible.builtin.assert:
+        that:
+          - "'export LD_LIBRARY_PATH=\"/opt/rocm/lib' in _w"
+
+    # ── Units ──────────────────────────────────────────────────────────────────
+    - name: Units restart always, run unprivileged with GPU access and a sandbox, log to journald
+      vars:
+        _u: "{{ _txt['inference-server-' ~ item ~ '.service'] }}"
+      ansible.builtin.assert:
+        that:
+          - "'Restart=always' in _u"
+          - "'StartLimitIntervalSec=0' in _u"
+          - "'User=llama' in _u"
+          - "'SupplementaryGroups=video render' in _u"
+          - "('ExecStart=/usr/local/bin/inference-server-serve-' ~ item) in _u"
+          - "'StandardOutput=journal' in _u"
+          - "('SyslogIdentifier=inference-server-' ~ item) in _u"
+          - "'NoNewPrivileges=true' in _u"
+          - "'ProtectSystem=strict' in _u"
+          - "'ProtectHome=true' in _u"
+          - "'CapabilityBoundingSet=\n' in _u"
+          - "'DevicePolicy=closed' in _u"
+          - "'DeviceAllow=char-drm rw' in _u"
+          - "'DeviceAllow=/dev/kfd rw' in _u"
+          - "'LimitMEMLOCK=infinity' in _u"
+          - "'tailscaled.service' in _u"
+          - "'inference-server-limits.service' in _u"
+          # these would break GPU access
+          - "'\\nPrivateDevices=' not in _u"
+          - "'\\nMemoryDenyWriteExecute=' not in _u"
+          - "'\\nProtectKernelTunables=' not in _u"
+          - "'\\nIPAddressDeny=' not in _u"
+      loop: "{{ _names }}"
+
+    # ── Connection caps (bounded queue) ────────────────────────────────────────
+    - name: nftables caps admit slots + queue + headroom connections per instance port
+      vars:
+        _n: "{{ _txt['inference-server-limits.nft'] }}"
+      ansible.builtin.assert:
+        that:
+          - "'table inet olympus_inference' in _n"
+          - "'tcp dport 8081 ct state new ct count over 7 reject with tcp reset' in _n"
+          - "'tcp dport 8082 ct state new ct count over 7 reject with tcp reset' in _n"
+          - "'tcp dport 8083 ct state new ct count over 10 reject with tcp reset' in _n"
+          - "'ExecStart=/usr/sbin/nft -f /etc/olympus/inference-server-limits.nft' in _txt['inference-server-limits.service']"
+
+    - name: A per-instance queue overrides the default
+      vars:
+        # a fixed copy: a var must not be defined in terms of itself
+        inference_server_instances:
+          - {name: q, port: 8081, model: m.gguf, alias: q, kind: chat, queue: 0, args: [[-np, 1]]}
+        _n: "{{ lookup('ansible.builtin.template', _role ~ '/templates/inference-server-limits.nft.j2') }}"
+      ansible.builtin.assert:
+        that:
+          - "'ct count over 3 reject' in _n"
+
+    # ── Watchdog ───────────────────────────────────────────────────────────────
+    - name: Watchdog checks every instance every 60 s with the metric names and restarts through systemd
+      vars:
+        _s: "{{ _txt['inference-server-watchdog'] }}"
+        _t: "{{ _txt['inference-server-watchdog.timer'] }}"
+      ansible.builtin.assert:
+        that:
+          - "\"METRIC_PROCESSING='llamacpp:requests_processing'\" in _s"
+          - "\"METRIC_DECODE_TOTAL='llamacpp:n_decode_total'\" in _s"
+          - "\"HOST='192.0.2.10'\" in _s"
+          - "\"'qwen36-27b|8081|chat|qwen3.6-27b|0'\" in _s"
+          - "\"'qwen25-7b|8082|chat|qwen2.5-7b-instruct|0'\" in _s"
+          - "\"'nomic-embed|8083|embed|nomic-embed-text|768'\" in _s"
+          - "'FAIL_THRESHOLD=3' in _s"
+          - "'STALL_THRESHOLD=3' in _s"
+          - "'COOLDOWN=600' in _s"
+          - "'/slots' in _s"
+          - "'systemctl restart --no-block' in _s"
+          - "'unit=\"inference-server-${name}.service\"' in _s"
+          - "'RESTART $1 reason=' in _s"
+          - "'launchctl' not in _s"
+          - "'OnUnitActiveSec=60s' in _t"
+          - "'ExecStart=/usr/local/bin/inference-server-watchdog' in _txt['inference-server-watchdog.service']"
+          - "'Type=oneshot' in _txt['inference-server-watchdog.service']"
+
+    # ── Kernel parameters ──────────────────────────────────────────────────────
+    - name: 96 GiB of GPU-addressable memory is 25165824 4-KiB pages; the GRUB drop-in appends them
+      vars:
+        _g: "{{ _txt['grub-dropin.cfg'] }}"
+      ansible.builtin.assert:
+        that:
+          - inference_server_ttm_pages_limit | int == 25165824
+          - inference_server_ttm_pages_limit | int * 4096 == 96 * 1024 * 1024 * 1024
+          - inference_server_ttm_page_pool_size | int == 25165824
+          - "'GRUB_CMDLINE_LINUX_DEFAULT=\"${GRUB_CMDLINE_LINUX_DEFAULT:+$GRUB_CMDLINE_LINUX_DEFAULT }ttm.pages_limit=25165824 ttm.page_pool_size=25165824\"' in _g"
+          - "'amdgpu.gttsize' not in _g"
+
+    - name: The legacy amdgpu.gttsize knob is added only when set
+      vars:
+        inference_server_amdgpu_gttsize_mib: 98304
+        _inference_server_kernel_params: "{{ _kernel_params + ['amdgpu.gttsize=98304'] }}"
+        _g: "{{ lookup('ansible.builtin.template', _role ~ '/templates/grub-dropin.cfg.j2') }}"
+      ansible.builtin.assert:
+        that:
+          - "'ttm.page_pool_size=25165824 amdgpu.gttsize=98304' in _g"
+
+    # ── Lint the rendered scripts, units and rules ─────────────────────────────
+    - name: Look for shellcheck and nft
+      ansible.builtin.command: "{{ item.cmd }}"
+      register: _tools
+      changed_when: false
+      failed_when: false
+      loop:
+        - {name: shellcheck, cmd: shellcheck --version}
+        - {name: nft, cmd: nft --version}
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: shellcheck the rendered wrappers and watchdog
+      ansible.builtin.command:
+        argv: >-
+          {{ ['shellcheck', '-s', 'bash', '-S', 'warning']
+             + (_names | map('regex_replace', '^', _out ~ '/inference-server-serve-') | list)
+             + [_out ~ '/inference-server-watchdog'] }}
+      changed_when: false
+      when: _tools.results[0].rc == 0
+
+    - name: Note that shellcheck was skipped
+      ansible.builtin.debug:
+        msg: "shellcheck not on PATH: rendered scripts were not linted"
+      when: _tools.results[0].rc != 0
+
+    - name: nft syntax check of the connection caps (when nft is installed)
+      ansible.builtin.command: nft -c -f {{ _out }}/inference-server-limits.nft
+      changed_when: false
+      failed_when: false
+      register: _nftc
+      when: _tools.results[1].rc == 0
+
+    - name: Show the nft check result (informational, -c may need privileges on the runner)
+      ansible.builtin.debug:
+        msg: "nft -c rc={{ _nftc.rc | default('skipped') }} {{ _nftc.stderr | default('') }}"
+
+    - name: Clean up
+      ansible.builtin.file:
+        path: "{{ _out }}"
+        state: absent

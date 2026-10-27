@@ -1,0 +1,66 @@
+# Managed by Ansible (roles/inference-server) - do not edit by hand.
+[Unit]
+Description=llama-server {{ _instance.name }} ({{ _instance.alias }}, {{ _instance.kind }}) on :{{ _instance.port }}
+Documentation=https://github.com/ggml-org/llama.cpp/tree/master/tools/server
+After=network-online.target{% if inference_server_wait_for_address | bool %} tailscaled.service{% endif %}
+
+Wants=network-online.target{% if inference_server_connection_limit_enabled | bool %} inference-server-limits.service{% endif %}
+
+# Restart=always with no start-rate limit: a wedged or crashed instance always comes back;
+# the watchdog (inference-server-watchdog.timer) restarts the ones that hang without dying.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User={{ inference_server_user }}
+Group={{ inference_server_group }}
+SupplementaryGroups={{ inference_server_supplementary_groups | join(' ') }}
+ExecStart=/usr/local/bin/inference-server-serve-{{ _instance.name }}
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+# Journald only: llama-server logs to stdout/stderr (journalctl -u inference-server-{{ _instance.name }}).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=inference-server-{{ _instance.name }}
+Environment=XDG_CACHE_HOME={{ inference_server_cache_dir }}
+Environment=HOME={{ inference_server_cache_dir }}
+# ROCm and pinned GPU buffers need unlimited locked memory.
+LimitMEMLOCK=infinity
+LimitNOFILE=65536
+OOMScoreAdjust=-500
+
+# Sandbox. GPU access needs /dev/dri (Vulkan, ROCm) and /dev/kfd (ROCm), so PrivateDevices
+# stays off and a closed device policy allows only those nodes. No MemoryDenyWriteExecute
+# (GPU drivers JIT shaders) and ProtectKernelTunables stays off (ROCm reads/writes /sys/class/kfd).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+DevicePolicy=closed
+DeviceAllow=char-drm rw
+DeviceAllow=/dev/kfd rw
+DeviceAllow=/dev/null rw
+DeviceAllow=/dev/zero rw
+DeviceAllow=/dev/urandom r
+DeviceAllow=/dev/random r
+CacheDirectory=inference-server
+ReadWritePaths={{ inference_server_cache_dir }}
+ReadOnlyPaths={{ inference_server_models_dir }} {{ inference_server_install_root }}
+
+[Install]
+WantedBy=multi-user.target

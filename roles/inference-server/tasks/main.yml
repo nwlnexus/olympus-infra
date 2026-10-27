@@ -1,0 +1,23 @@
+---
+# Tag inference_server_prepare: asserts, packages, llama.cpp download, models directory,
+# model downloads and removals. `--tags inference_server_prepare` fetches everything
+# (llama.cpp tarball, ~25 GB of GGUF) without touching any unit, the kernel parameters or the
+# watchdog. Kernel parameters have their own tag, inference_server_kernel.
+- name: Present
+  when: inference_server_state == "present"
+  block:
+    - name: Prepare (asserts, packages, llama.cpp, models)
+      ansible.builtin.import_tasks: prepare.yml
+
+    - name: Kernel parameters (GRUB drop-in, reboot notice)
+      ansible.builtin.import_tasks: kernel.yml
+
+    - name: Instances (wrappers, units, connection caps, probes)
+      ansible.builtin.import_tasks: instances.yml
+
+    - name: Watchdog (systemd timer)
+      ansible.builtin.import_tasks: watchdog.yml
+
+- name: Absent
+  when: inference_server_state == "absent"
+  ansible.builtin.import_tasks: absent.yml

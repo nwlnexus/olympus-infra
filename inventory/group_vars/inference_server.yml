@@ -1,0 +1,113 @@
+---
+# GEEKOM A9 Mega (Ryzen AI Max+ 395, 128 GB unified memory) - the fleet's inference host.
+# Ubuntu 26.04, tailnet host managed by olympus-infra, NOT a k3s node (olympus-sdk#568, H8).
+# Linux twin of group_vars/data_hub.yml: same models, same three instances, same ports.
+#
+# These vars load for hosts in the `inference_server` inventory group (inventory/inference-server.yml
+# for ansible-pull, inventory/olympus.yml for push). The group is EMPTY until the owner names the
+# host after flashing (runbook: roles/inference-server/README.md), and the state below is `absent`,
+# so nothing runs against any host until both are done.
+
+# TODO(owner, after flashing): the A9's tailnet address. Placeholder, not an address.
+inference_server_tailscale_ip: "TODO-a9-tailnet-ip"
+
+# Flip to `present` in the same PR that fills in the host name and address.
+inference_server_state: absent
+
+# ── ansible-pull (applies to the host once it is in the group) ─────────────────
+ansible_pull_state: present
+ansible_pull_inventory: inventory/inference-server.yml
+ansible_pull_playbook: playbooks/pull/olympus.yml
+# TODO(owner): set to the A9's host name (same value as in inventory/inference-server.yml);
+# the pull inventory also defines `localhost`, which the implicit limit would match too.
+ansible_pull_limit: "TODO-a9-hostname"
+
+# ── Tailscale ─────────────────────────────────────────────────────────────────
+tailscale_state: present
+tailscale_hostname: "TODO-a9-hostname"
+
+# ── inference-server ──────────────────────────────────────────────────────────
+# llama.cpp b11795 official Ubuntu Vulkan build (default). `-e inference_server_backend=rocm`
+# selects the ROCm build once the host has ROCm 7.x userspace (see the role README).
+inference_server_backend: vulkan
+inference_server_bind_host: "{{ inference_server_tailscale_ip }}"
+inference_server_models_dir: /opt/olympus/models/gguf
+# 96 of 128 GiB addressable by the GPU: ttm.pages_limit=25165824 (GRUB drop-in, reboot required).
+inference_server_gpu_memory_gib: 96
+# Timeouts: memory worker 300 s < LiteLLM 600 s < llama-server 900 s. At most -np + 4 requests
+# are admitted per instance (nftables cap); the rest are reset immediately.
+inference_server_models:
+  - file: Qwen3.6-27B-Q5_K_M.gguf
+    repo: unsloth/Qwen3.6-27B-GGUF
+    revision: 82d411acf4a06cfb8d9b073a5211bf410bfc29bf
+    size: 19509790944
+    sha256: cfecab168156269f25d5ffe9e13cf2a401ca2f43a9693fa00bcd1625316ccbde
+  - file: Qwen2.5-7B-Instruct-Q4_K_M.gguf
+    repo: bartowski/Qwen2.5-7B-Instruct-GGUF
+    revision: 8911e8a47f92bac19d6f5c64a2e2095bd2f7d031
+    size: 4683074240
+    sha256: 65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423
+  - file: nomic-embed-text-v1.5.f16.gguf
+    repo: nomic-ai/nomic-embed-text-v1.5-GGUF
+    revision: 0188c9bf409793f810680a5a431e7b899c46104c
+    size: 274290560
+    sha256: f7af6f66802f4df86eda10fe9bbcfc75c39562bed48ef6ace719a251cf1c2fdb
+inference_server_models_remove: []
+# Flags the installed llama-server does not know go here (check `llama-server --help`).
+inference_server_drop_flags: []
+inference_server_instances:
+  # memory-extract + coder-heavy. Thinking off by default (LiteLLM sends
+  # enable_thinking per alias); reasoning, if any, goes to reasoning_content.
+  - name: qwen36-27b
+    port: 8081
+    model: Qwen3.6-27B-Q5_K_M.gguf
+    alias: qwen3.6-27b
+    kind: chat
+    args:
+      - [-c, 32768]
+      - [-np, 1]
+      - [-ngl, 999]
+      - [-fa, "on"]
+      - --jinja
+      - [--reasoning-format, deepseek]
+      - [--chat-template-kwargs, '{"enable_thinking":false}']
+      - [-n, 8192]
+      - [--cache-ram, 0]
+      - --metrics
+      - --no-webui
+      - [--timeout, 900]
+  # coder-light
+  - name: qwen25-7b
+    port: 8082
+    model: Qwen2.5-7B-Instruct-Q4_K_M.gguf
+    alias: qwen2.5-7b-instruct
+    kind: chat
+    args:
+      - [-c, 32768]
+      - [-np, 1]
+      - [-ngl, 999]
+      - [-fa, "on"]
+      - --jinja
+      - [-n, 8192]
+      - [--cache-ram, 0]
+      - --metrics
+      - --no-webui
+      - [--timeout, 900]
+  # memory-embed (768-dim; prod embeds go to the in-cluster TEI, this is the fallback)
+  - name: nomic-embed
+    port: 8083
+    model: nomic-embed-text-v1.5.f16.gguf
+    alias: nomic-embed-text
+    kind: embed
+    embed_dim: 768
+    args:
+      - --embeddings
+      - [--pooling, mean]
+      - [-c, 8192]
+      - [-np, 4]
+      - [-b, 8192]
+      - [-ub, 2048]
+      - [-ngl, 999]
+      - --metrics
+      - --no-webui
+      - [--timeout, 120]

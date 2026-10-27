@@ -58,8 +58,9 @@ jobs:
           set -euo pipefail
           # Scope: scripts/*.sh, roles/*/files/*.sh and the extensionless /bin/sh script in roles/baseline/files.
           # Jinja-templated wrappers (roles/*/templates/*.j2) are not plain shell: tests/serving-profile renders
-          # them (llama-server wrappers and watchdog, ollama-serve, litellm-serve) and shellchecks the output
-          # (-S warning) in the render step below. The roles/*/tests/*.sh helpers are test code and are not
+          # them (llama-server wrappers and watchdog, ollama-serve, litellm-serve; tests/inference-server does the same
+          # for the Ubuntu inference-server wrappers and watchdog) and shellchecks the output (-S warning) in
+          # the render step below. The roles/*/tests/*.sh helpers are test code and are not
           # linted here.
           # Severity warning and above: info/style notes (SC2029, SC2001, SC2016, SC1091) are not blocking.
           shellcheck --version
@@ -68,12 +69,12 @@ jobs:
           # the caller's variable through a bash nameref (`local -n`), which shellcheck cannot follow.
           shellcheck -x -S warning -e SC2154 scripts/k3s-health-gate.sh
 
-      - name: Offline render tests (data-services, serving-profile)
+      - name: Offline render tests (data-services, serving-profile, inference-server)
         run: |
           set -euo pipefail
           # Controller-local template renders with assertions; no host needed. tests/k3s-render is not run
           # here: it writes /etc/rancher and fails without root (it is a manual --check --diff render).
-          for t in data-services serving-profile; do
+          for t in data-services serving-profile inference-server; do
             echo "::group::tests/$t"
             ansible-playbook -i "tests/$t/inventory.yml" "tests/$t/render.yml"
             echo "::endgroup::"

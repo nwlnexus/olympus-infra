@@ -1,0 +1,222 @@
+---
+- name: Assert the platform and the instance/model lists agree
+  vars:
+    _files: "{{ inference_server_models | map(attribute='file') | list }}"
+    _names: "{{ inference_server_instances | map(attribute='name') | list }}"
+    _ports: "{{ inference_server_instances | map(attribute='port') | list }}"
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+      - inference_server_backend in inference_server_llama_builds
+      - inference_server_instances | length > 0
+      - _names | unique | length == _names | length
+      - _ports | unique | length == _ports | length
+      - inference_server_instances | map(attribute='model') | difference(_files) | length == 0
+      - inference_server_instances | selectattr('kind', 'in', ['chat', 'embed']) | list | length == inference_server_instances | length
+      - _files | intersect(inference_server_models_remove) | length == 0
+      - inference_server_bind_host not in ['', '0.0.0.0']
+    fail_msg: >-
+      inference-server needs Ubuntu/Debian, backend vulkan|rocm, unique instance names and ports,
+      kind chat|embed, every instance model listed in inference_server_models (and not in
+      inference_server_models_remove), and a single bind address (never 0.0.0.0).
+    quiet: true
+  tags: [inference_server_prepare]
+
+- name: Install packages
+  ansible.builtin.apt:
+    name: "{{ inference_server_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+  tags: [inference_server_prepare]
+
+# ROCm userspace is a host prerequisite (AMD apt repository), not part of the tarball.
+- name: Stat the ROCm runtime libraries (rocm backend)
+  ansible.builtin.stat:
+    path: "{{ inference_server_rocm_path }}/lib/{{ item }}"
+    get_checksum: false
+  loop: [libamdhip64.so.7, libhipblas.so.3, librocblas.so.5]
+  register: _inference_server_rocm_libs
+  when: inference_server_backend == 'rocm'
+  tags: [inference_server_prepare]
+
+- name: Assert the ROCm runtime is installed (rocm backend)
+  ansible.builtin.assert:
+    that: _inference_server_rocm_libs.results | map(attribute='stat.exists') | min
+    fail_msg: >-
+      backend rocm needs ROCm 7.x userspace under {{ inference_server_rocm_path }}
+      (libamdhip64.so.7, libhipblas.so.3, librocblas.so.5). Install it from AMD's apt repository, or use backend vulkan.
+    quiet: true
+  when: inference_server_backend == 'rocm'
+  tags: [inference_server_prepare]
+
+- name: Create the service account group
+  ansible.builtin.group:
+    name: "{{ inference_server_group }}"
+    system: true
+  become: true
+  tags: [inference_server_prepare]
+
+- name: Create the service account
+  ansible.builtin.user:
+    name: "{{ inference_server_user }}"
+    group: "{{ inference_server_group }}"
+    groups: "{{ inference_server_supplementary_groups }}"
+    append: true
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    home: "{{ inference_server_cache_dir }}"
+  become: true
+  tags: [inference_server_prepare]
+
+# ── llama.cpp release tarball (pinned tag, sha256 checked) ──────────────────────
+- name: Set the llama.cpp install paths
+  ansible.builtin.set_fact:
+    _inference_server_build: "{{ inference_server_llama_builds[inference_server_backend] }}"
+    _inference_server_release_dir: "{{ inference_server_install_root }}/{{ inference_server_llama_tag }}-{{ inference_server_backend }}"
+  tags: [inference_server_prepare]
+
+- name: Create the llama.cpp install root and download cache
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  loop:
+    - "{{ inference_server_install_root | dirname }}"
+    - "{{ inference_server_install_root }}"
+    - "{{ inference_server_install_root }}/downloads"
+  tags: [inference_server_prepare]
+
+- name: Stat the unpacked llama-server
+  ansible.builtin.stat:
+    path: "{{ _inference_server_release_dir }}/llama-server"
+    get_checksum: false
+  become: true
+  register: _inference_server_unpacked
+  tags: [inference_server_prepare]
+
+- name: Download the llama.cpp release tarball (sha256 checked)
+  ansible.builtin.get_url:
+    url: "{{ inference_server_llama_base_url }}/{{ inference_server_llama_tag }}/{{ _inference_server_build.asset }}"
+    dest: "{{ inference_server_install_root }}/downloads/{{ _inference_server_build.asset }}"
+    checksum: "sha256:{{ _inference_server_build.sha256 }}"
+    owner: root
+    mode: "0644"
+    timeout: "{{ inference_server_download_timeout }}"
+  become: true
+  when: not _inference_server_unpacked.stat.exists
+  tags: [inference_server_prepare]
+
+- name: Create the release directory
+  ansible.builtin.file:
+    path: "{{ _inference_server_release_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when: not _inference_server_unpacked.stat.exists
+  tags: [inference_server_prepare]
+
+- name: Unpack the tarball (top directory llama-<tag> becomes the release directory)
+  ansible.builtin.unarchive:
+    src: "{{ inference_server_install_root }}/downloads/{{ _inference_server_build.asset }}"
+    dest: "{{ _inference_server_release_dir }}"
+    remote_src: true
+    extra_opts: ["--strip-components=1"]
+    creates: "{{ _inference_server_release_dir }}/llama-server"
+    owner: root
+    group: root
+  become: true
+  when: not _inference_server_unpacked.stat.exists
+  tags: [inference_server_prepare]
+
+- name: Point `current` at the pinned build
+  ansible.builtin.file:
+    src: "{{ _inference_server_release_dir }}"
+    dest: "{{ inference_server_install_root }}/current"
+    state: link
+    force: true
+  become: true
+  register: _inference_server_link
+  tags: [inference_server_prepare]
+
+# ── Models ──────────────────────────────────────────────────────────────────────
+- name: Create the models directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  loop:
+    - "{{ inference_server_models_dir | dirname }}"
+    - "{{ inference_server_models_dir }}"
+  tags: [inference_server_prepare]
+
+- name: Stat the GGUF models
+  ansible.builtin.stat:
+    path: "{{ inference_server_models_dir }}/{{ item.file }}"
+    get_checksum: false
+  become: true
+  loop: "{{ inference_server_models }}"
+  loop_control:
+    label: "{{ item.file }}"
+  register: _inference_server_model_stat
+  tags: [inference_server_prepare]
+
+- name: Download missing GGUF models (pinned revision, sha256 checked)
+  ansible.builtin.get_url:
+    url: "{{ inference_server_hf_base_url }}/{{ item.item.repo }}/resolve/{{ item.item.revision }}/{{ item.item.file }}"
+    dest: "{{ inference_server_models_dir }}/{{ item.item.file }}"
+    checksum: "sha256:{{ item.item.sha256 }}"
+    tmp_dest: "{{ inference_server_models_dir }}"
+    owner: root
+    mode: "0644"
+    timeout: "{{ inference_server_model_download_timeout }}"
+  become: true
+  loop: "{{ _inference_server_model_stat.results }}"
+  loop_control:
+    label: "{{ item.item.file }}"
+  when: not item.stat.exists
+  tags: [inference_server_prepare]
+
+- name: Stat the GGUF models after download
+  ansible.builtin.stat:
+    path: "{{ inference_server_models_dir }}/{{ item.file }}"
+    get_checksum: "{{ inference_server_verify_checksums | bool }}"
+    checksum_algorithm: sha256
+  become: true
+  loop: "{{ inference_server_models }}"
+  loop_control:
+    label: "{{ item.file }}"
+  register: _inference_server_model_check
+  tags: [inference_server_prepare]
+
+- name: Assert every GGUF model has the pinned size (and sha256 when verifying)
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.size == (item.item.size | int)
+      - not (inference_server_verify_checksums | bool) or item.stat.checksum == item.item.sha256
+    fail_msg: "{{ item.item.file }}: missing, wrong size or wrong sha256 (want {{ item.item.size }} B, {{ item.item.sha256 }})"
+    quiet: true
+  loop: "{{ _inference_server_model_check.results }}"
+  loop_control:
+    label: "{{ item.item.file }}"
+  when: item.stat.exists or not ansible_check_mode
+  tags: [inference_server_prepare]
+
+- name: Remove retired GGUF model files
+  ansible.builtin.file:
+    path: "{{ inference_server_models_dir }}/{{ item }}"
+    state: absent
+  become: true
+  loop: "{{ inference_server_models_remove }}"
+  tags: [inference_server_prepare]

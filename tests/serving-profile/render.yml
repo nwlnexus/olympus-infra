@@ -83,7 +83,7 @@
           # coder-cloud stays out of the live list until litellm_coder_cloud_enabled
           - _aliases == ['coder-heavy', 'coder-light', 'memory-embed', 'memory-extract']
           - _by_alias['memory-embed'].litellm_params.model == 'ollama/nomic-embed-text'
-          - _by_alias['memory-extract'].litellm_params.model == 'ollama_chat/qwen3.6:27b-mlx'
+          - _by_alias['memory-extract'].litellm_params.model == 'ollama_chat/qwen2.5:7b-instruct'
           - _by_alias['coder-light'].litellm_params.model == 'ollama_chat/qwen2.5:7b-instruct'
           - _by_alias['coder-heavy'].litellm_params.model == 'ollama_chat/qwen3.6:27b-mlx'
           - _by_alias['memory-embed'].litellm_params.api_base == 'http://100.95.232.41:11434'

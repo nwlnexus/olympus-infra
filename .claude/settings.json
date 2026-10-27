@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(systemctl show *)",
+      "Bash(systemctl is-active *)",
+      "Bash(systemctl status *)",
+      "Bash(journalctl -u *)",
+      "Bash(journalctl --user -u *)",
+      "Bash(tmux ls)",
+      "Bash(tmux list-sessions)",
+      "Bash(shellcheck *)",
+      "Bash(actionlint)",
+      "Bash(actionlint *)",
+      "mcp__gitnexus__impact",
+      "mcp__gitnexus__detect_changes",
+      "mcp__gitnexus__query",
+      "mcp__gitnexus__context",
+      "mcp__gitnexus__list_repos",
+      "Bash(kubectl get *)",
+      "Bash(kubectl describe *)",
+      "Bash(kubectl logs *)"
+    ]
+  }
+}

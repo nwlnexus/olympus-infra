@@ -5,6 +5,10 @@ ollama_state: present
 # runners stay patched (0.20.2 shipped an MLX prefix-cache crash that broke
 # multi-turn agentic runs — verified fixed on 0.30.11, the version data-hub now runs).
 ollama_pkg_state: latest
+# With ollama_state absent: also uninstall the Homebrew package, and delete the run
+# user's ~/.ollama/models. Both default to false (absent only removes the daemon).
+ollama_remove_package: false
+ollama_purge_models: false
 
 # Models to have pulled. Names without a tag are treated as `:latest`.
 ollama_models: []

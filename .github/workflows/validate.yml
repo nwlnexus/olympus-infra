@@ -57,8 +57,10 @@ jobs:
         run: |
           set -euo pipefail
           # Scope: scripts/*.sh, roles/*/files/*.sh and the extensionless /bin/sh script in roles/baseline/files.
-          # Jinja-templated wrappers (roles/*/templates/*.j2) are not plain shell and are covered by the
-          # render tests below; the roles/*/tests/*.sh helpers are test code and are not linted here.
+          # Jinja-templated wrappers (roles/*/templates/*.j2) are not plain shell: tests/serving-profile renders
+          # them (llama-server wrappers and watchdog, ollama-serve, litellm-serve) and shellchecks the output
+          # (-S warning) in the render step below. The roles/*/tests/*.sh helpers are test code and are not
+          # linted here.
           # Severity warning and above: info/style notes (SC2029, SC2001, SC2016, SC1091) are not blocking.
           shellcheck --version
           shellcheck -x -S warning scripts/k3s-snapshot.sh roles/*/files/*.sh roles/baseline/files/olympus-cni-ipv6-drop

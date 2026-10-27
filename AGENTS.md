@@ -29,14 +29,15 @@ olympus-infra/
 │   ├── hermes-classify-include # Hermes dynamic role/include support
 │   ├── iscsi                 # iSCSI prerequisites for QNAP-backed storage
 │   ├── mem0-client           # Workstation OpenMemory MCP + Claude recall hook
-│   ├── ollama                # Ollama AI inference server (macOS + Linux)
+│   ├── ollama                # Ollama (retired on data-hub 2026-10-27; kept for rollback)
+│   ├── llama-server          # llama.cpp llama-server, one LaunchDaemon per model + watchdog (macOS)
 │   ├── qnap-csi-bootstrap    # QNAP CSI/Trident bootstrap on the k3s primary
 │   ├── homebrew              # Homebrew (macOS)
 │   ├── ddclient              # Dynamic DNS client
 │   ├── common                # Common OS setup (packages, sysctl, etc.)
 │   └── node-prereqs          # k3s node prerequisites
 ├── playbooks/
-│   ├── data-services.yml     # Push playbook for data-hub: Postgres + Ollama + LiteLLM
+│   ├── data-services.yml     # Push playbook for data-hub: Postgres + llama-server + LiteLLM
 │   └── pull/                 # ansible-pull playbooks (run daily on hosts)
 │       ├── compute-hub.yml
 │       ├── management-hub.yml # Retired context, kept for history
@@ -69,7 +70,7 @@ is not available to Linux containers. After the 2026-10-20 decommission
 
 | Service | Port | Notes |
 |---|---:|---|
-| Ollama + LiteLLM | 11434 / 4000 | The fleet's inference node; see "data-hub serving profile" |
+| llama-server + LiteLLM | 8081-8083 / 4000 | The fleet's inference node; see "data-hub serving profile" |
 | PostgreSQL | 5432 | Temporary, until WS9 of olympus-sdk#444 confirms nothing is left in `claude_mem` |
 
 `data-services` manages the `_postgres` account, the Postgres directories under
@@ -85,67 +86,113 @@ Operational constraints:
 
 - `data_services_tailscale_ip` is `100.95.232.41`; services bind to tailnet
   addresses or allow the Tailscale CGNAT range instead of public interfaces.
-- Every data-hub LaunchDaemon that binds the tailnet IP (Postgres, Ollama, LiteLLM)
+- Every data-hub LaunchDaemon that binds the tailnet IP (Postgres, llama-server, LiteLLM)
   starts through a wrapper that waits for that address and has `KeepAlive` plus
   `ThrottleInterval`. At the 2026-07-05 boot Postgres started before tailscaled and
   bound `127.0.0.1` only, unnoticed for 3.5 months.
 - Secrets are not stored in this public repo. The push wrapper in the private
   `olympus-sdk` repo passes `ds_pg_password` (only used to `initdb` a new data
   dir). `ds_redis_password` and `ds_ch_password` are no longer used.
-- `roles/ollama` is the only Ollama owner (see "data-hub serving profile" below).
+- `roles/llama-server` owns the model servers and `roles/ollama` only removes Ollama
+  (see "data-hub serving profile" below).
 
-### data-hub serving profile (Ollama + LiteLLM)
+### data-hub serving profile (llama-server + LiteLLM)
 
-data-hub is the fleet's inference node. `roles/ollama` and `roles/litellm` own it
-end to end; `playbooks/data-services.yml` runs them as a second play after
-`data-services`. Vars live in `inventory/group_vars/data_hub.yml` (the host is in
-the `data_hub` group in both `inventory/olympus.yml` and the pull inventory
-`inventory/data-hub.yml`; before 2026-10-20 the file was `data-hub.yml`, matched no
-group, and applied to nothing).
+data-hub is the fleet's inference node. `roles/llama-server` and `roles/litellm` own it
+end to end; `playbooks/data-services.yml` runs `ollama`, `llama-server`, `litellm` as a
+second play after `data-services`, and the hourly pull (`playbooks/pull/olympus.yml`)
+runs `ollama` then `llama-server` on Darwin. Vars live in `inventory/group_vars/data_hub.yml`
+(the host is in the `data_hub` group in both `inventory/olympus.yml` and the pull
+inventory `inventory/data-hub.yml`; before 2026-10-20 the file was `data-hub.yml`,
+matched no group, and applied to nothing).
 
-- **Ollama** (`homebrew.mxcl.ollama` LaunchDaemon, wrapper `/usr/local/bin/ollama-serve`,
-  runs as `ollama_run_user`): binds `100.95.232.41:11434` only, never `0.0.0.0`
-  (olympus-infra#1). The wrapper waits for that address before it execs, and launchd
-  `KeepAlive` retries, so a boot where tailscaled is late cannot leave it unbound.
-  `OLLAMA_KEEP_ALIVE=24h`, `NUM_PARALLEL=1`, `MAX_LOADED_MODELS=2`,
-  `CONTEXT_LENGTH=32768`, `FLASH_ATTENTION=1`. Models live in the run user's
-  `~/.ollama/models` (`OLLAMA_MODELS` is unset). Roster: `nomic-embed-text`,
-  `qwen3.6:27b-mlx`, `qwen2.5:7b-instruct`; `llama3.2:3b` is removed from disk if present.
+History: Ollama 0.30.11's MLX engine stopped completing generations for
+`qwen3.6:27b-mlx` on 2026-10-26 (also after a restart), while its `/api/tags` probe
+stayed green. The owner chose a hard cutover with no soak (olympus-sdk#588, plan
+`docs/plans/2026-10-27-data-hub-llama-server-cutover.md` in olympus-sdk).
+
+- **llama-server** (Homebrew `llama.cpp` >= 0.7.0, installed `present` and `brew pin`ned).
+  One process and LaunchDaemon per model, all resident; there is no model swapper,
+  because on-demand swapping is the scheduler layer that wedged Ollama.
+
+  | Instance | Port | Model | LiteLLM aliases |
+  |---|---:|---|---|
+  | `qwen36-27b` | 8081 | `Qwen3.6-27B-Q5_K_M.gguf` (`unsloth/Qwen3.6-27B-GGUF`) | `memory-extract`, `coder-heavy` |
+  | `qwen25-7b` | 8082 | `Qwen2.5-7B-Instruct-Q4_K_M.gguf` (`bartowski/...`) | `coder-light` |
+  | `nomic-embed` | 8083 | `nomic-embed-text-v1.5.f16.gguf` (768-dim) | `memory-embed` |
+
+  - Labels `com.olympus.llama-server.<name>`, wrappers `/usr/local/bin/llama-server-serve-<name>`,
+    logs `/var/log/llama-server-<name>.{log,err}` (rotated by `/etc/newsyslog.d/llama-server.conf`).
+    Each binds `100.95.232.41` only, never `0.0.0.0`, and has no API key (tailnet only,
+    parity with Ollama; LiteLLM is the client door). The wrapper waits for the tailnet
+    address like Postgres and LiteLLM, then `exec sudo -Hu nwilliams-lucas`.
+  - Arguments are per-instance lists in group_vars (`-np 1`, 32k context, `-fa on`,
+    `--jinja`, `--metrics`, `--no-webui`, `--timeout 900`; the 27B also
+    `--reasoning-format deepseek` and thinking off by default). A flag the installed
+    `llama-server --help` does not know goes in `llama_server_drop_flags`.
+  - Models live in `/opt/olympus/models/gguf` (run-user owned; `/opt/olympus` itself is
+    left as `data-services` made it). They are downloaded from Hugging Face at pinned
+    revisions with `get_url` and a sha256 (the LFS oid), only when missing; the size is
+    asserted on every run, the full sha256 only with `-e llama_server_verify_checksums=true`.
+  - Homebrew refuses to run as a user that does not own `/opt/homebrew` (the login user),
+    so the pull (as `ansible`) only asserts the binary and its version; install and pin
+    happen in the push. `--tags llama_server_prepare` runs only the asserts, package,
+    models directory, downloads and removals, without touching a LaunchDaemon.
+  - A changed wrapper or plist is reloaded (bootout, then a retried bootstrap); an
+    unloaded daemon is bootstrapped; a running, unchanged one is never touched. Plists
+    of instances that left the list are booted out and removed (never the watchdog).
+    After a (re)start the role waits for `/health` 200 and probes: a strict
+    `json_schema` chat request must return `{"ok": <bool>}`, an embedding must have 768
+    values. Unchanged runs skip the probes (`llama_server_probe_mode`), so an hourly pull
+    never queues behind a long extraction on a single slot.
+  - **Watchdog** (`com.olympus.llama-server-watchdog`, `/usr/local/bin/llama-server-watchdog`,
+    every 60 s, log `/var/log/llama-server-watchdog.log`): `/health` 503 means loading and
+    is fine for 10 minutes. A busy chat instance must show decode progress
+    (`llamacpp:requests_processing`, `llamacpp:n_decode_total` from `/metrics`, falling
+    back to `/slots`); an idle one must answer a 4-token completion; the embedder must
+    return 768 values. Three failed checks or three stalled minutes, at most once per
+    10-minute cooldown, mean `SIGKILL` and a launchd restart, logged as
+    `RESTART <name> reason=...` (also to syslog via `logger`).
+  - Timeouts: memory worker 300 s < LiteLLM 600 s < llama-server 900 s.
 - **LiteLLM** (`com.litellm.proxy` LaunchDaemon, wrapper `/usr/local/bin/litellm-serve`):
-  binds the tailnet IP on `:4000`, same wait-for-address guard. Aliases
-  `memory-embed` (nomic-embed-text), `memory-extract` and `coder-heavy`
-  (qwen3.6:27b-mlx), `coder-light` (qwen2.5:7b-instruct), `coder-cloud` (disabled
-  until an Anthropic key exists at `litellm_anthropic_key_op_ref`; then set
-  `litellm_coder_cloud_enabled: true`). The master key is read on the host with
-  `op read` using `/etc/olympus/op-service-account-token`; the config is mode 0600.
-  The role removes the old hand-made `~/Library/LaunchAgents/com.litellm.proxy.plist`.
-  Per-client virtual keys need LiteLLM's database and are not provisioned yet.
-- `roles/data-services` no longer installs Ollama (its `com.olympus.ollama` daemon is
-  gone; `roles/ollama` still boots out any stray copy).
+  binds the tailnet IP on `:4000`, same wait-for-address guard. `litellm_backend:
+  llama_server` renders each alias as `openai/<instance alias>` with `api_base
+  http://100.95.232.41:<port>/v1` and `api_key: not-used`; `memory-extract` and
+  `coder-heavy` send `extra_body.chat_template_kwargs.enable_thinking`
+  (`litellm_extract_thinking`, `litellm_coder_heavy_thinking`, both false). There is no
+  fallback alias. `coder-cloud` stays disabled until an Anthropic key exists at
+  `litellm_anthropic_key_op_ref` (then set `litellm_coder_cloud_enabled: true`). The
+  master key is read on the host with `op read` using `/etc/olympus/op-service-account-token`;
+  the config is mode 0600. `litellm_backend: ollama` renders the previous Ollama config
+  byte for byte (rollback).
+- **Ollama** is retired: `ollama_state: absent` with `ollama_remove_package: true` and
+  `ollama_purge_models: true` boots out `homebrew.mxcl.ollama`, uninstalls the package and
+  deletes `~nwilliams-lucas/.ollama/models`. Rollback is a push with olympus-sdk's
+  `infra/rollback/data-hub-serving-ollama.yml` (`ollama_state: present`,
+  `llama_server_state: absent`, `litellm_backend: ollama`, `litellm_extract_model:
+  qwen2.5:7b-instruct`): it reinstalls the pinned Ollama and re-pulls `nomic-embed-text`
+  and `qwen2.5:7b-instruct` (about 5 GB). A follow-up removes the Ollama role from the
+  playbooks once the cutover is verified. `roles/data-services` no longer installs Ollama.
 
-Residency budget (64 GiB unified memory; computed from model metadata, so confirm with
-`ollama ps` and `vm_stat` after the first warm):
+Residency budget (64 GiB unified memory; computed from the GGUF sizes, so confirm with
+`vm_stat` and the llama-server load logs after the first start):
 
 | Item | GiB |
 |---|---:|
-| `qwen3.6:27b-mlx` weights (nvfp4, 27.4B) | 17.7 |
+| `Qwen3.6-27B-Q5_K_M` weights | 18.2 |
 | ...KV cache at 32k, f16: 16 full-attention layers x 4 KV heads x 256 dim = 64 KiB/token | 2.0 |
 | ...linear-attention state (48 layers) plus compute buffers | 1.7 |
-| `nomic-embed-text` weights plus KV | 0.4 |
-| `qwen2.5:7b-instruct` weights (Q4_K_M) | 4.4 |
+| `Qwen2.5-7B-Instruct-Q4_K_M` weights | 4.4 |
 | ...KV cache at 32k, f16: 28 layers x 4 KV heads x 128 dim = 56 KiB/token | 1.75 |
 | ...compute buffers | 0.5 |
+| `nomic-embed-text-v1.5` f16 weights plus KV (8k ctx, 4 slots) and buffers | 0.5 |
 
-- Steady state, 27B plus embedder: about 21.8 GiB.
-- Worst allowed pair, 27B plus 7B: about 28.1 GiB (all three together would be about
-  28.5 GiB; `MAX_LOADED_MODELS=2` is a policy limit, not a memory one).
-- Against 64 GiB: macOS 8, Ollama/LiteLLM processes 0.5, Postgres until WS9 4.5, worst
-  pair 28.1, macOS CI runner (#391) budget 16 = 57.1 GiB, leaving about 6.9 GiB (about
-  11.4 once Postgres is gone). The default Metal working-set cap
-  (`iogpu.wired_limit_mb=0`, roughly 48 GiB) is well above the 28.1 GiB model peak.
-- With only two slots, an embed request while 27B and 7B are both warm evicts one of
-  them, and the reload costs seconds (7B) to tens of seconds (27B). Raising
-  `ollama_max_loaded_models` to 3 costs about 0.4 GiB if that thrash shows up.
+- All three resident: about 29 GiB, always (Ollama's MLX 27B alone took 30-45 GiB).
+- Against 64 GiB: macOS 8, LiteLLM and server processes 0.5, Postgres until WS9 4.5,
+  models 29, macOS CI runner (#391) budget 16 = 58 GiB, leaving about 6 GiB (about 10.5
+  once Postgres is gone). If that is tight, the 27B drops to Q4_K_M (16.8 GB, same pin).
+  The default Metal working-set cap (`iogpu.wired_limit_mb=0`, roughly 48 GiB) is well
+  above the model total.
 
 ### Linux node QUIC tuning
 

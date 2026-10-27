@@ -3,9 +3,10 @@
   community.general.homebrew:
     name: ollama
     # ollama_pkg_state (default `latest`) drives whether present installs stay
-    # pinned or track upstream. Absent when the role is disabled.
-    state: "{{ ollama_pkg_state if ollama_state == 'present' else 'absent' }}"
+    # pinned or track upstream. Removal (ollama_state absent) is a separate task below.
+    state: "{{ ollama_pkg_state }}"
   register: ollama_pkg
+  when: ollama_state == "present"
 
 # Legacy duplicate: an earlier data-services role installed a second LaunchDaemon
 # (com.olympus.ollama) that loops failing to bind :11434 (homebrew.mxcl.ollama,
@@ -81,12 +82,22 @@
     - ollama_state == "present"
     - ollama_plist is not changed and ollama_wrapper is not changed and ollama_pkg is not changed
 
+- name: Stat the Ollama LaunchDaemon plist (absent)
+  ansible.builtin.stat:
+    path: /Library/LaunchDaemons/homebrew.mxcl.ollama.plist
+    get_checksum: false
+  register: ollama_absent_plist
+  when: ollama_state == "absent"
+
+# Stat-gated so an absent run on a host without the daemon reports no change.
 - name: Remove Ollama LaunchDaemon
   ansible.builtin.command: launchctl bootout system /Library/LaunchDaemons/homebrew.mxcl.ollama.plist
   become: true
   failed_when: false
   changed_when: true
-  when: ollama_state == "absent"
+  when:
+    - ollama_state == "absent"
+    - ollama_absent_plist.stat.exists
 
 - name: Remove Ollama LaunchDaemon plist and wrapper
   ansible.builtin.file:
@@ -97,6 +108,26 @@
     - /Library/LaunchDaemons/homebrew.mxcl.ollama.plist
     - /usr/local/bin/ollama-serve
   when: ollama_state == "absent"
+
+# ollama_state absent only stops and removes the daemon unless these are set: the
+# package stays installed (ollama_remove_package: false) and the models stay on disk
+# (ollama_purge_models: false), so a rollback needs no reinstall or re-pull.
+- name: Uninstall Ollama via Homebrew
+  community.general.homebrew:
+    name: ollama
+    state: absent
+  when:
+    - ollama_state == "absent"
+    - ollama_remove_package | bool
+
+- name: Purge Ollama models
+  ansible.builtin.file:
+    path: "/Users/{{ ollama_run_user }}/.ollama/models"
+    state: absent
+  become: true
+  when:
+    - ollama_state == "absent"
+    - ollama_purge_models | bool
 
 - name: Wait for Ollama to be ready
   ansible.builtin.uri:

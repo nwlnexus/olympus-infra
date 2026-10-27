@@ -1,0 +1,31 @@
+#!/bin/bash
+# Managed by Ansible (roles/llama-server) — do not edit by hand.
+# Wrapper to run llama-server instance {{ _instance.name }} ({{ _instance.model }}) as
+# {{ llama_server_run_user }} from a root LaunchDaemon. --host is a single address
+# ({{ llama_server_bind_host }}), never 0.0.0.0: llama-server runs without an API key here.
+{% if llama_server_wait_for_address | bool %}
+
+# Wait for {{ llama_server_bind_host }} to exist (tailscaled may come up after launchd starts us at boot).
+# Exit non-zero on timeout so launchd's KeepAlive retries after ThrottleInterval.
+bind_ip="{{ llama_server_bind_host }}"
+waited=0
+until /sbin/ifconfig | /usr/bin/grep -q "inet ${bind_ip} "; do
+  if [ "$waited" -ge {{ llama_server_wait_timeout_seconds }} ]; then
+    echo "llama-server-serve-{{ _instance.name }}: ${bind_ip} not present after {{ llama_server_wait_timeout_seconds }}s (tailscaled down?); exiting for launchd to retry" >&2
+    exit 75
+  fi
+  sleep 2
+  waited=$((waited + 2))
+done
+{% endif %}
+
+exec sudo -Hu {{ llama_server_run_user }} {{ llama_server_bin }} \
+  --host {{ llama_server_bind_host }} \
+  --port {{ _instance.port }} \
+  -m {{ (llama_server_models_dir ~ '/' ~ _instance.model) | quote }} \
+  --alias {{ _instance.alias | quote }}{% for _arg in _instance.args | default([]) %}
+{% set _tokens = [_arg] if _arg is string else _arg %}
+{% if (_tokens[0] | string) not in llama_server_drop_flags %} \
+  {{ _tokens | map('string') | map('quote') | join(' ') }}{% endif %}
+{% endfor %}
+

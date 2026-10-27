@@ -137,7 +137,7 @@ if ((${#etcd_ok[@]} > 0)); then
   done
   first=${etcd_ok[0]}
   member_names=$(jq -r '[.members[] | "\(.name)=\(.ID)"] | join(" ")' <<<"${e_members[$first]}")
-  if [[ -z $bad ]]; then pass "etcd.members" "all servers see the expected 3 IDs ($member_names)"
+  if [[ -z $bad ]]; then pass "etcd.members" "all servers see the expected $(wc -w <<<"$want_ids") IDs ($member_names)"
   else fail "etcd.members" "member IDs differ from expected ($want_ids)"; detail "${bad%$'\n'}"; fi
   if [[ -z $learners ]]; then pass "etcd.learners" "no member is a learner"
   else fail "etcd.learners" "learner members present"; detail "${learners%$'\n'}"; fi

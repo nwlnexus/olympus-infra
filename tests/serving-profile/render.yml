@@ -266,7 +266,7 @@
           - "'extra_body' not in _by_alias['memory-embed'].litellm_params"
           - _cfg.model_list | map(attribute='litellm_params') | map(attribute='api_key') | unique | list == ['not-used']
           - "'ollama' not in (_cfg.model_list | map(attribute='litellm_params') | map(attribute='model') | join(' '))"
-          - _cfg.litellm_settings.request_timeout == 600
+          - _cfg.litellm_settings.request_timeout == 520
           - _cfg.general_settings.master_key == litellm_master_key
 
     - name: Thinking can be switched on per alias

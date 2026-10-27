@@ -136,6 +136,10 @@ litellm_bind_host: "{{ data_hub_tailscale_ip }}"
 litellm_port: 4000
 litellm_config_dest: /opt/litellm/config.yaml
 litellm_coder_cloud_enabled: false
+# LiteLLM gives up just before the memory extract worker (MEMORY_EXTRACT_TIMEOUT_SECONDS 540), so a slow
+# request is ended and closed by LiteLLM, never abandoned by the client with LiteLLM still holding the
+# connection (olympus-sdk#591: the next connect from the worker was then blackholed for ~130 s).
+litellm_request_timeout: 520
 # Aliases route to the llama-server instances above (openai/<alias> on :8081-8083).
 # No fallback alias: a failing memory-extract surfaces instead of degrading silently.
 litellm_backend: llama_server

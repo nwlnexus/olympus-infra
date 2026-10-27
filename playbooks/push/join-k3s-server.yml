@@ -219,7 +219,7 @@
              | map(attribute='metadata.name') | list }}
       ansible.builtin.assert:
         that:
-          - _not_ready | trim == ''
+          - (_not_ready | default('', true) | trim) == ''
           - _off_version | length == 0
         fail_msg: "not Ready: {{ _not_ready }}; servers not on {{ k3s_version }}: {{ _off_version }}"
 

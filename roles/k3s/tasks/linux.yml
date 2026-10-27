@@ -337,6 +337,10 @@
     - k3s_kubelet_args | default([]) | length > 0
     - (_k3s_config_stat.stat.exists | default(false)) or not ansible_check_mode
 
+# Leftover from the old *.skip mechanism; notifies a k3s restart when it changes
+# anything. Off for servers joining a live cluster (k3s_remove_disable_skip_files:
+# false in group_vars/agent_services.yml): nothing to remove there, and no restart
+# seconds after the first start.
 - name: Remove k3s disable skip files (allow bundled components to redeploy)
   ansible.builtin.file:
     path: "{{ item }}"
@@ -350,6 +354,7 @@
   when:
     - _k3s_state == 'present'
     - not (k3s_agent | default(false))
+    - k3s_remove_disable_skip_files | default(true) | bool
 
 # Cluster-wide delete: never on a server joining a live cluster
 # (k3s_cleanup_orphan_traefik_crds: false in group_vars/agent_services.yml).

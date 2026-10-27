@@ -14,7 +14,10 @@ servers with `playbooks/push/join-k3s-server.yml` only, and never re-run the rol
 existing server: the config is rewritten whole (token included) and a hand-added block
 (e.g. from `playbooks/k3s-disable-traefik.yml`) would be lost at the next restart.
 `k3s_cleanup_orphan_traefik_crds` (default true) deletes traefik.io CRDs cluster-wide
-from any server that runs the role; it is false for joining servers.
+from any server that runs the role; it is false for joining servers, and so is
+`k3s_remove_disable_skip_files` (its removal notifies a k3s restart).
+`tasks/node-labels.yml` retries for up to two minutes while a just-started node
+registers.
 etcd snapshots go to `k3s_etcd_snapshot_dir` (mount it first, e.g. QNAP NFS).
 `k3s_node_ip` (per host) pins `node-ip` as a marked block in config.yaml
 (`tasks/node-ip.yml`); k3s reads it only at start, so restart one server at a

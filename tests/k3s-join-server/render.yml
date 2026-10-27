@@ -39,6 +39,7 @@
           - not gv_agent_services.k3s_init
           - not gv_agent_services.k3s_agent
           - not gv_agent_services.k3s_cleanup_orphan_traefik_crds
+          - not gv_agent_services.k3s_remove_disable_skip_files
           - "'olympus.io/role=agent-services' in gv_agent_services.k3s_node_labels"
           - "'olympus.io/ci=true' in gv_agent_services.k3s_node_labels"
           - gv_agent_services.k3s_node_taints == ['olympus.io/role=agent-services:NoSchedule']

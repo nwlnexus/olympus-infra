@@ -63,8 +63,10 @@ for entry in $SERVERS; do server_names+=("${entry%%=*}"); server_targets+=("${en
 agent_names=() agent_targets=()
 for entry in $AGENTS; do agent_names+=("${entry%%=*}"); agent_targets+=("${entry#*=}"); done
 
+# accept-new: a node seen for the first time (e.g. a newly joined server) is
+# recorded instead of failing BatchMode; a CHANGED host key still fails.
 SSH_OPTS=(-n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5
-  -o ServerAliveCountMax=3 -o LogLevel=ERROR)
+  -o ServerAliveCountMax=3 -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new)
 rssh() { local target=$1; shift; ssh "${SSH_OPTS[@]}" "$target" "$@"; }
 
 checks=0 fails=0

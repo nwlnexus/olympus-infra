@@ -48,6 +48,8 @@ k3s_external_server: "compute-hub.nwlnexus.net"
 # The role deletes traefik.io CRDs it thinks are orphaned on every server run; on a
 # server joining a live cluster that would be a cluster-wide delete. Off here.
 k3s_cleanup_orphan_traefik_crds: false
+# No *.skip files on a fresh node, and their removal would notify a k3s restart.
+k3s_remove_disable_skip_files: false
 
 # Placement: applied at registration (config.yaml node-label/node-taint), so no pod
 # lands before the taint exists. One label key cannot hold two values, hence two keys.

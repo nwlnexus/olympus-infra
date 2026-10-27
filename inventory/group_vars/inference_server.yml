@@ -4,14 +4,14 @@
 # Linux twin of group_vars/data_hub.yml: same models, same three instances, same ports.
 #
 # These vars load for hosts in the `inference_server` inventory group (inventory/inference-server.yml
-# for ansible-pull, inventory/olympus.yml for push). The group is EMPTY until the owner names the
-# host after flashing (runbook: roles/inference-server/README.md), and the state below is `absent`,
-# so nothing runs against any host until both are done.
+# for ansible-pull, inventory/olympus.yml for push). The group holds a9-mega; nothing runs because
+# the state below is `absent` (runbook: roles/inference-server/README.md),
+# until a later PR flips it to `present` together with the tailnet address.
 
-# TODO(owner, after flashing): the A9's tailnet address. Placeholder, not an address.
+# TODO(owner, with the later `present` PR): the A9's tailnet address. Placeholder, not an address.
 inference_server_tailscale_ip: "TODO-a9-tailnet-ip"
 
-# Flip to `present` in the same PR that fills in the host name and address.
+# Flip to `present` in the PR that fills in the tailnet address below.
 inference_server_state: absent
 
 # ── ansible-pull (applies to the host once it is in the group) ─────────────────
@@ -20,11 +20,25 @@ ansible_pull_inventory: inventory/inference-server.yml
 ansible_pull_playbook: playbooks/pull/olympus.yml
 # TODO(owner): set to the A9's host name (same value as in inventory/inference-server.yml);
 # the pull inventory also defines `localhost`, which the implicit limit would match too.
-ansible_pull_limit: "TODO-a9-hostname"
+ansible_pull_limit: a9-mega
 
 # ── Tailscale ─────────────────────────────────────────────────────────────────
 tailscale_state: present
-tailscale_hostname: "TODO-a9-hostname"
+tailscale_hostname: a9-mega
+# Not a k8s node: only tag:inference (policy: olympus-tailnet; tagOwners admin + tag:infra-server).
+tailscale_tags: ["tag:inference"]
+tailscale_accept_dns: false
+tailscale_accept_routes: false
+tailscale_services: [ssh]
+tailscale_oauth_client_id: "{{ lookup('community.general.onepassword', 'ansible-tailscale-oauth', field='client-id', vault='Dev') }}"
+tailscale_oauth_client_secret: "{{ lookup('community.general.onepassword', 'ansible-tailscale-oauth', field='client-secret', vault='Dev') }}"
+
+# Not a k3s node: keeps the pull playbook from running 1password-connect / eso-bootstrap.
+k3s_primary: false
+# `common` is skipped fleet-wide, as on compute_hub.
+ansible_pull_skip_tags: common
+atlas_state: present
+baseline_unattended_auto_reboot: false
 
 # ── inference-server ──────────────────────────────────────────────────────────
 # llama.cpp b11795 official Ubuntu Vulkan build (default). `-e inference_server_backend=rocm`

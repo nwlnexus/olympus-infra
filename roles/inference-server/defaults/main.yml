@@ -95,7 +95,9 @@ inference_server_drop_flags: []
 # more than  slots(-np) + queue + headroom  are open. LiteLLM sees the reset at once and
 # fails over / retries instead of stacking requests behind a long generation.
 # Per-request timeouts are the `--timeout N` arg of each instance (read/write seconds).
-inference_server_connection_limit_enabled: true
+# OFF by default: the rule counts open TCP connections, not in-flight requests (idle keep-alive
+# connections from LiteLLM count too, so it can reset healthy traffic). Enable after measuring.
+inference_server_connection_limit_enabled: false
 inference_server_default_queue: 4
 # Connections reserved for the watchdog probes and metrics scrapes.
 inference_server_connection_headroom: 2

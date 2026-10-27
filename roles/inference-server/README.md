@@ -58,8 +58,10 @@ llama-server has no queue limit of its own: `-np` sets the slots, further reques
 HTTP pool can grow by up to 1024 threads (`tools/server/server-http.cpp` at b11795). So the cap is enforced by the kernel:
 `inference-server-limits.service` loads an nftables rule per instance port that resets (TCP RST) a new connection once more than
 `slots (-np) + queue + headroom` are open (queue default 4, per-instance `queue:` overrides; headroom 2 for watchdog probes and
-scrapes). Clients such as LiteLLM then see an immediate error instead of stacking behind a long generation. Disable with
-`inference_server_connection_limit_enabled: false`. The rules sit in their own table at hook priority -10, so ufw/nftables rules elsewhere are untouched.
+scrapes). Clients such as LiteLLM then see an immediate error instead of stacking behind a long generation. The cap is
+**off by default** (`inference_server_connection_limit_enabled: false`): it counts open TCP connections, not in-flight requests, so
+idle keep-alive connections count against it and it can reset healthy traffic. Measure the real connection pattern from LiteLLM first,
+then enable it with `inference_server_connection_limit_enabled: true`. The rules sit in their own table at hook priority -10, so ufw/nftables rules elsewhere are untouched.
 
 Per-request timeouts are the `--timeout N` read/write seconds of each instance (900 s chat, 120 s embed, as on data-hub:
 memory worker 300 s < LiteLLM 600 s < llama-server 900 s). The watchdog bounds probes with `inference_server_watchdog_probe_timeout`.
@@ -135,14 +137,18 @@ and watch for a GPU initialisation failure in `journalctl -u inference-server-qw
 Nothing in the repo targets the box until step 3. Steps 1-2 are on the A9, 3-8 are PR and operator steps.
 
 1. **Base OS and tailnet.** Install Ubuntu 26.04, create the `ansible` service user (key-only; the `bootstrap-user` role / push
-   playbooks do this for the other Linux hosts), then join the tailnet (`tailscale up --hostname <a9-host-name>`, with the usual
-   auth flow). Note the tailnet address (`tailscale ip -4`). Check the kernel: `uname -r` is at least the minimum AMD lists (see above).
-2. **BIOS.** Keep the dedicated VRAM reservation small (0.5 GB, per AMD); the TTM parameters provide the GPU memory.
+   playbooks do this for the other Linux hosts), then join the tailnet with the `tailscale` role only: run
+   `playbooks/push/bootstrap-host.yml --tags tailscale` (it comes from the separate PR `feat/567-new-onodes`; merge that first). The role
+   exchanges the 1Password OAuth client for a short-lived, tagged (`tag:inference`), pre-authorized key, and `tag:inference` must already
+   be in the olympus-tailnet policy. Never run `tailscale up` by hand (an untagged or wrongly tagged node is not covered by the ACLs).
+   Note the tailnet address (`tailscale ip -4`). Check the kernel: `uname -r` is at least the minimum AMD lists (see above).
+2. **BIOS (precondition, before step 1).** Set the UMA frame buffer to the minimum (0.5 GB, per AMD) so the OS sees about 120+ GB
+   (`free -g` at least 120); the TTM parameters provide the GPU memory.
 3. **Fill in the inventory** (one PR to this repo; the host name and address are the only values to add):
    - `inventory/inference-server.yml`: replace `hosts: {}` with the host (`ansible_host: 127.0.0.1`, `ansible_connection: local`).
-   - `inventory/olympus.yml`, group `inference_server`: add the host with `ansible_host: <tailnet IP>` (push runs).
-   - `inventory/group_vars/inference_server.yml`: set `inference_server_tailscale_ip`, `ansible_pull_limit` and `tailscale_hostname`
-     (all marked `TODO`) and flip `inference_server_state` to `present`. Merge only after `validate` is green.
+   - `inventory/olympus.yml`, group `inference_server`: add `a9-mega` with `ansible_host: 192.168.253.15` (LAN address, push runs).
+   - `inventory/group_vars/inference_server.yml`: set `inference_server_tailscale_ip` (marked `TODO`) and flip `inference_server_state` to `present`
+     (a later PR, once the tailnet address is known; `ansible_pull_limit` and `tailscale_hostname` are already `a9-mega`). Merge only after `validate` is green.
 4. **Prepare: the prepare tag** (installs packages, downloads llama.cpp and ~24.5 GB of GGUF, no unit touched). On the A9 as the
    `ansible` user, the same way the scheduled pull runs (the `always`-tagged pre-tasks need `/etc/olympus/op-service-account-token`
    and a Hermes token or `hermes-disabled` flag, as on every host; `baseline` and `ansible-pull` install the schedule on the first full run):

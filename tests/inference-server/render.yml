@@ -28,6 +28,8 @@
       ansible.builtin.set_fact:
         inference_server_tailscale_ip: "192.0.2.10"
         inference_server_state: present
+        # the shipped default is off; the cap templates are rendered and checked with it on
+        inference_server_connection_limit_enabled: true
 
     - name: Create output dir
       ansible.builtin.file:
@@ -36,7 +38,7 @@
         mode: "0700"
 
     # ── The shipped inventory keeps the host out of every play ─────────────────
-    - name: Shipped inventory has no host and state absent until the owner fills the TODOs
+    - name: Shipped inventory names a9-mega, state stays absent and the tailnet IP is a TODO
       vars:
         _shipped: "{{ lookup('ansible.builtin.file', '../../inventory/group_vars/inference_server.yml') | from_yaml }}"
         _pull: "{{ lookup('ansible.builtin.file', '../../inventory/inference-server.yml') | from_yaml }}"
@@ -45,9 +47,21 @@
         that:
           - _shipped.inference_server_state == 'absent'
           - _shipped.inference_server_tailscale_ip is match('^TODO')
-          - _shipped.ansible_pull_limit is match('^TODO')
-          - _pull.all.children.inference_server.hosts == {}
-          - _push.all.children.inference_server.hosts == {}
+          - _shipped.ansible_pull_limit == 'a9-mega'
+          - _shipped.tailscale_hostname == 'a9-mega'
+          - _shipped.tailscale_tags == ['tag:inference']
+          - not _shipped.tailscale_accept_dns
+          - not _shipped.tailscale_accept_routes
+          - _shipped.tailscale_services == ['ssh']
+          - _shipped.k3s_primary == false
+          - _shipped.ansible_pull_skip_tags == 'common'
+          - _shipped.atlas_state == 'present'
+          - _shipped.baseline_unattended_auto_reboot == false
+          - "'onepassword' in _shipped.tailscale_oauth_client_id"
+          - "'onepassword' in _shipped.tailscale_oauth_client_secret"
+          - "_pull.all.children.inference_server.hosts == {'a9-mega': {'ansible_host': '127.0.0.1', 'ansible_connection': 'local'}}"
+          - "_push.all.children.inference_server.hosts == {'a9-mega': {'ansible_host': '192.168.253.15'}}"
+          - (lookup('ansible.builtin.file', _role ~ '/defaults/main.yml') | from_yaml).inference_server_connection_limit_enabled == false
           - (lookup('ansible.builtin.file', _role ~ '/defaults/main.yml') | from_yaml).inference_server_state == 'absent'
 
     # ── Pins and lists ─────────────────────────────────────────────────────────

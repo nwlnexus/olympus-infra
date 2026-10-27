@@ -1,18 +1,13 @@
 ---
-# Pull inventory for the GEEKOM A9 inference host (ansible-pull, local connection).
-# The group is EMPTY on purpose: nothing targets any host until the owner names it after
-# flashing. Runbook: roles/inference-server/README.md. Then replace `hosts: {}` with
-#
-#       hosts:
-#         <a9-host-name>:
-#           ansible_host: 127.0.0.1  # ansible-pull runs locally on the host
-#           ansible_connection: local
-#
-# and fill the TODO values in inventory/group_vars/inference_server.yml.
+# Pull inventory for the GEEKOM A9 inference host a9-mega (ansible-pull, local connection).
+# Runbook: roles/inference-server/README.md. Vars: inventory/group_vars/inference_server.yml.
 all:
   children:
     # Group that inventory/group_vars/inference_server.yml targets.
     inference_server:
-      hosts: {}
+      hosts:
+        a9-mega:
+          ansible_host: 127.0.0.1  # ansible-pull runs locally on the host
+          ansible_connection: local
   vars:
     ansible_python_interpreter: /usr/bin/python3

@@ -57,12 +57,11 @@ all:
         data-hub:
 
     # ── Inference (GEEKOM A9 - llama-server, NOT a k8s node) ─────────────────
-    # Empty until the owner names the host after flashing (roles/inference-server/README.md);
-    # vars: inventory/group_vars/inference_server.yml. Then add, under `hosts:`:
-    #     <a9-host-name>:
-    #       ansible_host: <tailnet IP>   # kept out of this public repo until filled in by the owner
+    # a9-mega: LAN address for push runs; vars: inventory/group_vars/inference_server.yml.
     inference_server:
-      hosts: {}
+      hosts:
+        a9-mega:
+          ansible_host: 192.168.253.15
       vars:
         ansible_connection: ssh
         ansible_user: ansible

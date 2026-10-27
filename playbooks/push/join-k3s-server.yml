@@ -426,11 +426,14 @@
     - name: Health gate before the join
       ansible.builtin.command:
         argv: ["{{ _gate }}"]
-      environment:
-        K3S_GATE_STAGE: "{{ _members_before | length }}-servers"
-        K3S_GATE_NEW_ETCD_IDS: >-
+      vars:
+        # An empty render comes back as None: pass it through default('', true).
+        _new_ids_before: >-
           {% for m in _members_before %}{% if (m.peerURLs | first | regex_replace('^https?://([^:]+):.*$', '\\1'))
           in _agent_services_ips %}{{ m.ID }} {% endif %}{% endfor %}
+      environment:
+        K3S_GATE_STAGE: "{{ _members_before | length }}-servers"
+        K3S_GATE_NEW_ETCD_IDS: "{{ _new_ids_before | default('', true) | trim }}"
       delegate_to: localhost
       become: false
       register: _gate_before
@@ -598,7 +601,7 @@
               - _node.status.conditions | selectattr('type', 'equalto', 'EtcdIsVoter') | map(attribute='status') | list == ['True']
               - _labels['olympus.io/role'] | default('') == 'agent-services'
               - _labels['olympus.io/ci'] | default('') == 'true'
-              - "'olympus.io/role=agent-services:NoSchedule;' in _taints"
+              - "'olympus.io/role=agent-services:NoSchedule;' in (_taints | default('', true))"
               - _kubelet.podPidsLimit | default(0) | int == 4096
               - _node.status.allocatable.memory != _node.status.capacity.memory
               - _node.status.nodeInfo.kubeletVersion == k3s_version
@@ -612,11 +615,13 @@
         - name: Health gate after the join
           ansible.builtin.command:
             argv: ["{{ _gate }}"]
-          environment:
-            K3S_GATE_STAGE: "{{ (_members_before | length) + 1 }}-servers"
-            K3S_GATE_NEW_ETCD_IDS: >-
+          vars:
+            _new_ids_after: >-
               {% for m in (_members_after_raw.stdout | from_json).members %}{% if (m.peerURLs | first
               | regex_replace('^https?://([^:]+):.*$', '\\1')) in _agent_services_ips %}{{ m.ID }} {% endif %}{% endfor %}
+          environment:
+            K3S_GATE_STAGE: "{{ (_members_before | length) + 1 }}-servers"
+            K3S_GATE_NEW_ETCD_IDS: "{{ _new_ids_after | default('', true) | trim }}"
           delegate_to: localhost
           become: false
           register: _gate_after

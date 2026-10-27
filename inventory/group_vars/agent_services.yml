@@ -1,0 +1,124 @@
+---
+# agent_services — the two HW9 onodes (onode-0636e4, onode-062caa; olympus-sdk#567).
+#
+# Owner decision 2026-10-27: they join as k3s HA SERVERS (embedded etcd grows from 3
+# to 5 members: quorum 3, tolerates 2 failures), but they are a separate pool: the
+# label olympus.io/role=agent-services plus the NoSchedule taint keep everything off
+# them except workloads pinned there (ARC runners, memory, inference; decision H10).
+#
+# Why a group of its own and not compute_hub:
+#   - compute_hub carries cluster-scoped one-shot roles (1password-connect,
+#     eso-bootstrap, cloudflared-k8s, qnap-csi-bootstrap, the kubeconfig export to
+#     1Password) whose only guard in the pull playbook is `k3s_primary | default(true)`,
+#     the label olympus.io/role=compute-hub, and ddclient. None of that belongs here,
+#     and none of it is defined below (so a missing host var cannot turn it on).
+#   - "compute_hub = the three original etcd members" is assumed elsewhere: the
+#     health gate, the canary (onode-0314ac), the olympus-gitops placements that use
+#     `olympus.io/role DoesNotExist`, `make label-onodes` (retired).
+#   - Plays that must reach every server use the parent group k3s_servers
+#     (compute_hub + agent_services; playbooks/push/kube-vip.yml).
+#
+# The k3s server vars below MUST match compute_hub's where they are cluster-wide
+# (k3s_vip, k3s_token_op_ref, k3s_disable, k3s_tls_san, k3s_kubelet_args): a server
+# that joins without `disable: [traefik]` would deploy k3s's bundled Traefik next to
+# the Flux-managed one. playbooks/push/join-k3s-server.yml compares the existing
+# servers' config.yaml keys with these before it joins.
+#
+# Secrets are read at runtime from 1Password; the service account token must be on
+# each node at /etc/olympus/op-service-account-token (playbooks/push/bootstrap-host.yml).
+
+ansible_user: ansible
+
+# --- k3s HA server (joining; never cluster-init) ---
+k3s_state: present
+k3s_ha: true
+k3s_primary: false   # also gates every cluster-scoped role in playbooks/pull/olympus.yml
+k3s_init: false
+k3s_agent: false
+k3s_disable: [traefik]
+k3s_vip: "192.168.253.2"
+k3s_token_op_ref: "op://Dev/compute-hub-k3s-token/password"
+k3s_tls_san:
+  - "192.168.253.2"
+  - "compute-hub.nwlnexus.net"
+k3s_kubeconfig_users:
+  - ansible
+k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
+k3s_external_server: "compute-hub.nwlnexus.net"
+# The role deletes traefik.io CRDs it thinks are orphaned on every server run; on a
+# server joining a live cluster that would be a cluster-wide delete. Off here.
+k3s_cleanup_orphan_traefik_crds: false
+
+# Placement: applied at registration (config.yaml node-label/node-taint), so no pod
+# lands before the taint exists. One label key cannot hold two values, hence two keys.
+k3s_node_labels:
+  - "olympus.io/role=agent-services"
+  - "olympus.io/ci=true"
+k3s_node_taints:
+  - "olympus.io/role=agent-services:NoSchedule"
+
+# Same kubelet reserve, eviction and per-pod PID cap as compute_hub. The join
+# template renders this block before k3s first starts, so no restart is needed.
+k3s_kubelet_args:
+  - "system-reserved=cpu=1,memory=2Gi"
+  - "kube-reserved=memory=1Gi"
+  - "eviction-hard=memory.available<1Gi,nodefs.available<10%,imagefs.available<10%"
+  - "pod-max-pids=4096"
+
+# --- Tailscale (tagged device, no key expiry, no personal login) ---
+tailscale_state: present
+tailscale_ephemeral: false
+tailscale_accept_routes: false
+tailscale_accept_dns: false
+tailscale_tags:
+  - "tag:infra-server"
+  - "tag:k8s"
+tailscale_services:
+  - ssh
+tailscale_oauth_client_id: "{{ lookup('community.general.onepassword', 'ansible-tailscale-oauth', field='client-id', vault='Dev') }}"
+tailscale_oauth_client_secret: "{{ lookup('community.general.onepassword', 'ansible-tailscale-oauth', field='client-secret', vault='Dev') }}"
+
+# --- Not on these nodes ---
+# No public per-node DNS record (compute_hub's ddclient). Opt in per host if wanted.
+ddclient_state: absent
+
+# --- ansible-pull ---
+ansible_pull_state: present
+ansible_pull_legacy_users:
+  - ansible
+ansible_pull_inventory: inventory/agent-services.yml
+ansible_pull_playbook: playbooks/pull/olympus.yml
+ansible_pull_limit: "$(hostname -s)"
+# Same as compute_hub: `common` is kept out of the hourly run (see compute_hub.yml).
+ansible_pull_skip_tags: common
+
+# --- baseline ---
+# etcd members: never let unattended-upgrades reboot them. Five members tolerate two
+# down, but pending reboots land on several nodes at 03:00 together.
+baseline_unattended_auto_reboot: false
+baseline_k8s_node_network: true
+# The LAN NIC is eno1 (enp2s0 is unplugged); netplan renders it as 10-netplan-eno1.
+# playbooks/push/bootstrap-host.yml asserts the file exists before writing the drop-in.
+baseline_network_ignore_carrier_loss_networks:
+  - 10-netplan-eno1
+baseline_node_hardening: true
+# Only what `common` would have set that the cluster actually runs (pre-flight
+# 2026-10-27: onode-0312ce has rmem/wmem_max 7500000 and inotify instances 128; the
+# new hosts ship 4194304). QUIC (cloudflared) buffers; inotify left at the default
+# to match the existing servers.
+baseline_sysctls:
+  net.core.rmem_max: "7500000"
+  net.core.wmem_max: "7500000"
+# Root LV is 100G of a 512 GB NVMe (VG free ~374G); owner approved growing it for ARC
+# images and caches. Grow-only, online (baseline role, tasks/root-lv.yml).
+baseline_root_lv_size: 250g
+
+# --- node-prereqs (nfs-common for qnap-nfs PVCs, open-iscsi, multipath) ---
+node_prereqs_state: present
+
+# --- iSCSI: QNAP Trident CSI does discovery/CHAP/login; Ansible sets the initiator name ---
+iscsi_state: present
+iscsi_mode: csi_node
+
+# --- Atlas ---
+atlas_state: present

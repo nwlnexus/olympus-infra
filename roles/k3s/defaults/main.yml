@@ -71,3 +71,8 @@ k3s_node_taints: []
 k3s_etcd_snapshot_dir: ""
 k3s_etcd_snapshot_schedule: "0 */6 * * *"
 k3s_etcd_snapshot_retention: 20
+
+# Servers only: delete traefik.io CRDs that are not labelled as Helm-managed (left
+# over from a user-managed Traefik install). This is a CLUSTER-WIDE delete from
+# whichever server runs the role; set false on servers joining a live cluster.
+k3s_cleanup_orphan_traefik_crds: true

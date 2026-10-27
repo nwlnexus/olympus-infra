@@ -1,0 +1,214 @@
+---
+# Bring a new Ubuntu host under Olympus management (HW9/HW10, olympus-sdk#567, #568):
+# runbook docs/runbooks/2026-10-27-hw9-hw10-hosts.md in olympus-sdk, phases A-C.
+#
+#   A  bootstrap-user, baseline     ansible user + sudo, op token, SSH key, hardening,
+#                                   k8s node networking, sysctls, root LV
+#   B  tailscale                    tagged device from the OAuth client (no key expiry)
+#   C  iscsi, node-prereqs (onodes), atlas, ansible-pull
+#
+# Hosts: agent_services (the two HW9 onodes) and inference_server (the A9, group from
+# olympus-infra PR #96; a pattern that matches nothing only warns). It never installs
+# or joins k3s: the onodes join with playbooks/push/join-k3s-server.yml afterwards.
+#
+# Run from olympus-infra on ai-agent-host, `op` signed in as the owner, one phase at a
+# time, always --check --diff first. AP="uv tool run --from ansible-core ansible-playbook".
+# Always `-i inventory/olympus.yml` (ansible.cfg's inventory/ also loads pull inventories).
+#
+# Phase A, first run (no ansible user yet: connect as the owner):
+#   $AP -i inventory/olympus.yml playbooks/push/bootstrap-host.yml \
+#     --limit onode-0636e4,onode-062caa,a9-mega --tags bootstrap-user,baseline -b \
+#     -e ansible_user=nwilliams-lucas -e ansible_ssh_private_key_file=~/.ssh/id_ed25519 \
+#     -e @<(op read 'op://Dev/olympus-edge-service-account/credential' \
+#           | jq -Rn '{op_service_account_token: input}') --check --diff
+#   then without --check --diff. Verify: ssh -i ~/.ssh/ansible ansible@<ip> 'sudo -n true && id'
+# Phase B (as ansible; A9 only after the tailnet ACL PR adds tag:inference):
+#   $AP -i inventory/olympus.yml playbooks/push/bootstrap-host.yml --limit <hosts> --tags tailscale
+# Phase C:
+#   $AP ... --limit onode-0636e4,onode-062caa --tags iscsi,node-prereqs
+#   $AP ... --limit <hosts> --tags atlas,ansible-pull -e ansible_pull_timer_state=stopped
+#   (watch one pull per host, then rerun --tags ansible-pull to arm the timer)
+#
+# Every phase first asserts that the host's hostname is its inventory name.
+
+- name: Bootstrap a new Olympus host
+  hosts: agent_services:inference_server
+  gather_facts: true
+  become: true
+
+  pre_tasks:
+    - name: The host is the one the inventory names
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['hostname'] == inventory_hostname
+          - ansible_facts['os_family'] == 'Debian'
+        fail_msg: >-
+          {{ ansible_host }} reports hostname {{ ansible_facts['hostname'] }}
+          ({{ ansible_facts['distribution'] }}), expected {{ inventory_hostname }} on Ubuntu.
+          Wrong IP or an unrenamed install; stopping.
+        quiet: true
+      tags: [always]
+
+    - name: Never on a k3s node that is already in the cluster
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      register: _bootstrap_k3s_bin
+      tags: [always]
+
+    - name: Stop if k3s is already installed
+      ansible.builtin.assert:
+        that: not _bootstrap_k3s_bin.stat.exists or (bootstrap_allow_k3s_node | default(false) | bool)
+        fail_msg: >-
+          k3s is installed on {{ inventory_hostname }}. This playbook is for new hosts;
+          on a cluster member pass -e bootstrap_allow_k3s_node=true deliberately (it never
+          touches k3s itself).
+        quiet: true
+      tags: [always]
+
+    # baseline's carrier-loss drop-ins name netplan's generated .network files.
+    - name: Look for netplan's generated network files (k8s nodes)
+      ansible.builtin.stat:
+        path: "/run/systemd/network/{{ item }}.network"
+      loop: "{{ baseline_network_ignore_carrier_loss_networks | default([]) }}"
+      register: _bootstrap_netfiles
+      when: baseline_k8s_node_network | default(false) | bool
+      tags: [always]
+
+    - name: The carrier-loss drop-ins target files that exist
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: >-
+          /run/systemd/network/{{ item.item }}.network does not exist on {{ inventory_hostname }}
+          (ls /run/systemd/network/); fix baseline_network_ignore_carrier_loss_networks.
+        quiet: true
+      loop: "{{ _bootstrap_netfiles.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.item }}"
+      tags: [always]
+
+  tasks:
+    # ── A: ansible user, op token, Hermes flag ─────────────────────────────────
+    - name: Bootstrap the ansible user
+      ansible.builtin.import_role:
+        name: bootstrap-user
+      tags: [bootstrap-user]
+
+    - name: Look for a Hermes token
+      ansible.builtin.stat:
+        path: /etc/olympus/hermes-token
+      register: _bootstrap_hermes_token
+      tags: [bootstrap-user]
+
+    # The pull playbook fails unless one of the two files exists. Until the owner
+    # issues a Hermes token (TOFU), mark Hermes as disabled; remove the flag when the
+    # token is placed.
+    - name: Mark Hermes disabled until a token is issued
+      ansible.builtin.copy:
+        dest: /etc/olympus/hermes-disabled
+        content: "Hermes token not issued yet (bootstrap-host.yml). Remove when /etc/olympus/hermes-token is placed.\n"
+        owner: root
+        group: ansible
+        mode: "0640"
+        force: false
+      when:
+        - not _bootstrap_hermes_token.stat.exists
+        - hermes_token_op_item | default('') == ''
+      tags: [bootstrap-user]
+
+    - name: Baseline (op CLI, SSH key, hardening, networking, sysctls, root LV)
+      ansible.builtin.import_role:
+        name: baseline
+      tags: [baseline]
+
+    # ── B: tailnet ─────────────────────────────────────────────────────────────
+    - name: Tailscale (tagged device)
+      ansible.builtin.include_role:
+        name: tailscale
+        apply:
+          tags: [tailscale]
+      when: tailscale_state is defined
+      tags: [tailscale]
+
+    # ── C: storage prerequisites (k3s nodes only) ──────────────────────────────
+    # The install image gave every new host the SAME initiator name. The iscsi role
+    # writes iqn.2004-04.net.olympus:<hostname> and restarts iscsid; that must happen
+    # before Trident ever logs in, so refuse to change it under a live session.
+    - name: List iSCSI sessions
+      ansible.builtin.command: iscsiadm -m session
+      register: _bootstrap_iscsi_sessions
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: iscsi_state is defined
+      tags: [iscsi]
+
+    - name: No iSCSI session is open before the initiator name changes
+      ansible.builtin.assert:
+        that: _bootstrap_iscsi_sessions.rc != 0 or (_bootstrap_iscsi_sessions.stdout | trim) == ''
+        fail_msg: "iSCSI sessions are open on {{ inventory_hostname }}; not changing the initiator name under them."
+        quiet: true
+      when: iscsi_state is defined
+      tags: [iscsi]
+
+    - name: iSCSI initiator (hostname-based IQN)
+      ansible.builtin.include_role:
+        name: iscsi
+        apply:
+          tags: [iscsi]
+      when: iscsi_state is defined
+      tags: [iscsi]
+
+    - name: Restart iscsid now if the initiator name changed
+      ansible.builtin.meta: flush_handlers
+      tags: [iscsi]
+
+    - name: Read the initiator name
+      ansible.builtin.slurp:
+        src: /etc/iscsi/initiatorname.iscsi
+      register: _bootstrap_iqn
+      when:
+        - iscsi_state is defined
+        - not ansible_check_mode
+      tags: [iscsi]
+
+    - name: The initiator name is this host's own
+      ansible.builtin.assert:
+        that: (_bootstrap_iqn.content | b64decode | trim) == 'InitiatorName=iqn.2004-04.net.olympus:' ~ ansible_facts['hostname']
+        fail_msg: "{{ inventory_hostname }}: {{ _bootstrap_iqn.content | b64decode | trim }}"
+        quiet: true
+      when:
+        - iscsi_state is defined
+        - not ansible_check_mode
+      tags: [iscsi]
+
+    - name: iscsid is running
+      ansible.builtin.command: systemctl is-active iscsid
+      changed_when: false
+      when:
+        - iscsi_state is defined
+        - not ansible_check_mode
+      tags: [iscsi]
+
+    - name: k3s node prerequisites (nfs-common, open-iscsi, multipath, modules)
+      ansible.builtin.include_role:
+        name: node-prereqs
+        apply:
+          tags: [node-prereqs]
+      when: node_prereqs_state is defined
+      tags: [node-prereqs]
+
+    # ── C: atlas, ansible-pull ─────────────────────────────────────────────────
+    - name: Atlas
+      ansible.builtin.include_role:
+        name: atlas
+        apply:
+          tags: [atlas]
+      when: atlas_state is defined
+      tags: [atlas]
+
+    - name: ansible-pull (timer; pass -e ansible_pull_timer_state=stopped for the first run)
+      ansible.builtin.include_role:
+        name: ansible-pull
+        apply:
+          tags: [ansible-pull]
+      tags: [ansible-pull]

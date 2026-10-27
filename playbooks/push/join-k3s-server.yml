@@ -1,0 +1,491 @@
+---
+# Join ONE new k3s HA server (embedded etcd member) to the olympus cluster through
+# the kube-vip VIP. HW9, olympus-sdk#567: onode-0636e4 then onode-062caa, growing
+# etcd 3 -> 4 -> 5. Runbook: docs/runbooks/2026-10-27-hw9-hw10-hosts.md (olympus-sdk).
+#
+# Only hosts in agent_services, one per run (--limit is required), never cluster-init.
+# The existing servers are only READ (etcd member list/status, config keys, kubectl),
+# except for one `k3s etcd-snapshot save` on the reference server before the join.
+#
+# Prerequisites: bootstrap-host.yml phases A-C done on the node (ansible user, op
+# token at /etc/olympus/op-service-account-token, op CLI, tailnet, iscsi with its own
+# IQN, node-prereqs); scripts/k3s-health-gate.sh passes.
+#
+# Run from olympus-infra on ai-agent-host (AP="uv tool run --from ansible-core ansible-playbook"):
+#
+#   $AP -i inventory/olympus.yml playbooks/push/join-k3s-server.yml --limit onode-0636e4 \
+#     -e k3s_join_expected_members=3 --check --diff
+#   $AP -i inventory/olympus.yml playbooks/push/join-k3s-server.yml --limit onode-0636e4 \
+#     -e k3s_join_expected_members=3
+#   ... then the same for onode-062caa with -e k3s_join_expected_members=4.
+#
+# Check mode runs every pre-check (read-only) and the health gate, then renders the
+# role without installing anything; post-checks are skipped.
+#
+# Vars:
+#   k3s_join_expected_members  etcd member count before this join (asserted when set)
+#   k3s_join_reference_server  existing server used for kubectl/etcd reads and the
+#                              snapshot (default onode-0312ce: not cluster-init, not
+#                              the fleet canary)
+#   k3s_join_health_gate       run scripts/k3s-health-gate.sh before and after
+#                              (default true; K3S_GATE_STAGE=<N>-servers)
+#
+# Any failure stops the play. If the join itself fails, the play prints the rollback
+# (delete the node, remove a lingering etcd member, k3s-uninstall.sh on THIS node).
+
+- name: Join a k3s HA server (embedded etcd)
+  hosts: agent_services
+  gather_facts: true
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  max_fail_percentage: 0
+
+  vars:
+    _ref: "{{ k3s_join_reference_server | default('onode-0312ce') }}"
+    _etcd_tls: /var/lib/rancher/k3s/server/tls/etcd
+    _etcd_curl: >-
+      curl -sS --max-time 5 --cacert {{ _etcd_tls }}/server-ca.crt
+      --cert {{ _etcd_tls }}/server-client.crt --key {{ _etcd_tls }}/server-client.key
+    # node IP -> inventory name, for every server the inventory knows
+    _server_by_ip: >-
+      {{ dict(groups['k3s_servers'] | map('extract', hostvars, 'k3s_node_ip') | zip(groups['k3s_servers'])) }}
+    _gate: "{{ playbook_dir }}/../../scripts/k3s-health-gate.sh"
+    _agent_services_ips: "{{ groups['agent_services'] | map('extract', hostvars, 'k3s_node_ip') | list }}"
+
+  pre_tasks:
+    # ── Guards: which host, which mode ───────────────────────────────────────────
+    - name: Exactly one target, from agent_services only
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all | length == 1
+          - inventory_hostname in groups['agent_services']
+          - inventory_hostname not in groups['compute_hub']
+          - inventory_hostname not in (groups['k3s_agents'] | default([]))
+          - _ref in groups['compute_hub']
+          - _ref != inventory_hostname
+        fail_msg: >-
+          Run with --limit <one agent_services host> (got {{ ansible_play_hosts_all }}); the
+          reference server ({{ _ref }}) must be an existing compute_hub server.
+        quiet: true
+
+    - name: Joining-server vars only (never cluster-init, never an agent)
+      ansible.builtin.assert:
+        that:
+          - k3s_state | default('present') == 'present'
+          - k3s_ha | default(false) | bool
+          - not (k3s_primary | default(false) | bool)
+          - not (k3s_init | default(false) | bool)
+          - not (k3s_agent | default(false) | bool)
+          - not (k3s_cleanup_orphan_traefik_crds | default(true) | bool)
+          - k3s_vip == '192.168.253.2'
+          - k3s_token_op_ref | default('') != ''
+          - k3s_node_ip | default('') != ''
+          - k3s_node_ip in ansible_facts['all_ipv4_addresses']
+          - k3s_version is match('^v[0-9]+\\.[0-9]+\\.[0-9]+\\+k3s[0-9]+$')
+          - ansible_facts['hostname'] == inventory_hostname
+        fail_msg: "{{ inventory_hostname }} does not have joining-server vars (see group_vars/agent_services.yml)."
+        quiet: true
+
+    - name: Look for an existing k3s install on the target
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /usr/local/bin/k3s
+        - /var/lib/rancher/k3s/server/db
+        - /etc/rancher/k3s/config.yaml
+      register: _k3s_existing
+
+    - name: The target has never run k3s
+      ansible.builtin.assert:
+        that: _k3s_existing.results | selectattr('stat.exists') | list | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} already has {{ _k3s_existing.results | selectattr('stat.exists')
+          | map(attribute='item') | list }}. Not joining over a previous install; roll it back first
+          (runbook phase D rollback).
+        quiet: true
+
+    - name: The VIP answers on 6443 from the target
+      ansible.builtin.wait_for:
+        host: "{{ k3s_vip }}"
+        port: 6443
+        timeout: 15
+
+    - name: The op CLI and service-account token are on the target
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: [/usr/bin/op, /etc/olympus/op-service-account-token]
+      register: _op_files
+      failed_when: not _op_files.stat.exists
+
+    # The k3s role reads the cluster token with `environment: "{{ _op_env }}"`, a var
+    # nothing else defines any more (removed in f304f23).
+    - name: Read the op service-account token
+      ansible.builtin.slurp:
+        src: /etc/olympus/op-service-account-token
+      register: _op_sat
+      no_log: true
+
+    - name: Set _op_env for the k3s role
+      ansible.builtin.set_fact:
+        _op_env:
+          OP_SERVICE_ACCOUNT_TOKEN: "{{ _op_sat.content | b64decode | trim }}"
+      no_log: true
+
+    # ── The existing cluster, read-only ─────────────────────────────────────────
+    - name: The target is not a Kubernetes node yet
+      ansible.builtin.command:
+        argv: [k3s, kubectl, get, node, "{{ inventory_hostname }}", -o, name]
+      delegate_to: "{{ _ref }}"
+      register: _node_exists
+      changed_when: false
+      check_mode: false
+      failed_when: _node_exists.rc == 0 or 'NotFound' not in _node_exists.stderr
+
+    - name: Read the nodes
+      ansible.builtin.command:
+        argv: [k3s, kubectl, get, nodes, -o, json]
+      delegate_to: "{{ _ref }}"
+      register: _nodes_before
+      changed_when: false
+      check_mode: false
+
+    - name: Every node is Ready and every server runs {{ k3s_version }}
+      vars:
+        _items: "{{ (_nodes_before.stdout | from_json)['items'] }}"
+        # space-separated names (a string: a Jinja loop does not yield a list)
+        _not_ready: >-
+          {% for n in _items %}{% if n.status.conditions | selectattr('type', 'equalto', 'Ready')
+          | selectattr('status', 'equalto', 'True') | list | length == 0 %}{{ n.metadata.name }} {% endif %}{% endfor %}
+        _servers: >-
+          {{ _items | selectattr('metadata.labels', 'contains', 'node-role.kubernetes.io/control-plane') | list }}
+        _off_version: >-
+          {{ _servers | rejectattr('status.nodeInfo.kubeletVersion', 'equalto', k3s_version)
+             | map(attribute='metadata.name') | list }}
+      ansible.builtin.assert:
+        that:
+          - _not_ready | trim == ''
+          - _off_version | length == 0
+        fail_msg: "not Ready: {{ _not_ready }}; servers not on {{ k3s_version }}: {{ _off_version }}"
+
+    - name: apiserver reports etcd healthy
+      ansible.builtin.command:
+        argv: [k3s, kubectl, get, --raw, /healthz/etcd]
+      delegate_to: "{{ _ref }}"
+      register: _healthz_etcd
+      changed_when: false
+      check_mode: false
+      failed_when: _healthz_etcd.stdout | trim != 'ok'
+
+    - name: Read the etcd member list
+      ansible.builtin.shell: "{{ _etcd_curl }} -X POST -d '{}' https://127.0.0.1:2382/v3/cluster/member/list"
+      delegate_to: "{{ _ref }}"
+      register: _members_before_raw
+      changed_when: false
+      check_mode: false
+
+    - name: Record the members before the join
+      ansible.builtin.set_fact:
+        _members_before: "{{ (_members_before_raw.stdout | from_json).members }}"
+        _member_ips_before: >-
+          {{ (_members_before_raw.stdout | from_json).members
+             | map(attribute='peerURLs') | map('first')
+             | map('regex_replace', '^https?://([^:]+):.*$', '\1') | list }}
+
+    - name: The member list is what the inventory expects
+      vars:
+        _unknown: "{{ _member_ips_before | reject('in', _server_by_ip.keys() | list) | list }}"
+        _missing_hub: >-
+          {{ groups['compute_hub'] | map('extract', hostvars, 'k3s_node_ip')
+             | reject('in', _member_ips_before) | list }}
+        _learners: "{{ _members_before | selectattr('isLearner', 'defined') | selectattr('isLearner') | map(attribute='name') | list }}"
+      ansible.builtin.assert:
+        that:
+          - _unknown | length == 0
+          - _missing_hub | length == 0
+          - _learners | length == 0
+          - k3s_node_ip not in _member_ips_before
+          - (k3s_join_expected_members is not defined) or (_members_before | length == k3s_join_expected_members | int)
+        fail_msg: >-
+          etcd members (peer IPs) {{ _member_ips_before }}; unknown (lingering?) {{ _unknown }};
+          compute_hub missing {{ _missing_hub }}; learners {{ _learners }}; target IP
+          {{ k3s_node_ip }}; expected {{ k3s_join_expected_members | default('n/a') }} members.
+
+    - name: Every member answers, agrees on the leader and has no alarm
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ _etcd_curl }} -X POST -d '{}' https://127.0.0.1:2382/v3/maintenance/status | tr -d '\n'; echo
+        {{ _etcd_curl }} -X POST -d '{"action":"GET"}' https://127.0.0.1:2382/v3/maintenance/alarm | tr -d '\n'; echo
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ _server_by_ip[item] }}"
+      loop: "{{ _member_ips_before }}"
+      register: _member_status_before
+      changed_when: false
+      check_mode: false
+
+    - name: Members are healthy (one leader, no alarms)
+      vars:
+        _status: "{{ _member_status_before.results | map(attribute='stdout_lines') | map('first') | map('from_json') | list }}"
+        _alarms: "{{ _member_status_before.results | map(attribute='stdout_lines') | map('last') | map('from_json') | map(attribute='alarms', default=[]) | flatten }}"
+      ansible.builtin.assert:
+        that:
+          - _status | map(attribute='leader', default='none') | unique | length == 1
+          - "'none' not in (_status | map(attribute='leader', default='none') | list)"
+          - _status | selectattr('errors', 'defined') | list | length == 0
+          - _alarms | length == 0
+        fail_msg: "leaders {{ _status | map(attribute='leader', default='none') | list }}; alarms {{ _alarms }}"
+
+    # A joining server takes its own config, and k3s does not enforce `disable`
+    # (or kubelet-arg, etcd-snapshot-*) across servers. Compare the existing
+    # server's config KEYS (never values: the file holds the token) with what the
+    # role will write here.
+    - name: Read the reference server's config keys
+      ansible.builtin.shell: |
+        set -o pipefail
+        ls -A /etc/rancher/k3s/config.yaml.d 2>/dev/null | sed 's/^/DROPIN /'
+        python3 - <<'PY'
+        import json, yaml
+        c = yaml.safe_load(open('/etc/rancher/k3s/config.yaml')) or {}
+        d = c.get('disable', [])
+        k = c.get('kubelet-arg', [])
+        print(json.dumps({'keys': sorted(c), 'disable': d if isinstance(d, list) else [d],
+                          'kubelet-arg': k if isinstance(k, list) else [k]}))
+        PY
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ _ref }}"
+      register: _ref_cfg
+      changed_when: false
+      check_mode: false
+
+    - name: The new server's config covers every setting the existing server has
+      vars:
+        _ref_json: "{{ _ref_cfg.stdout_lines | reject('match', '^DROPIN ') | last | from_json }}"
+        _dropins: "{{ _ref_cfg.stdout_lines | select('match', '^DROPIN ') | list }}"
+        _identity: [cluster-init, server, token, node-ip, node-name, node-label, node-taint, tls-san]
+        _new_keys: >-
+          {{ ['server', 'token', 'write-kubeconfig-mode', 'node-ip', 'tls-san', 'disable',
+              'node-label', 'node-taint', 'kubelet-arg']
+             + (['etcd-snapshot-dir', 'etcd-snapshot-schedule-cron', 'etcd-snapshot-retention']
+                if k3s_etcd_snapshot_dir | default('') != '' else []) }}
+        _uncovered: "{{ _ref_json['keys'] | difference(_identity) | difference(_new_keys) }}"
+      ansible.builtin.assert:
+        that:
+          - _dropins | length == 0
+          - _uncovered | length == 0
+          - _ref_json['disable'] | sort == k3s_disable | sort
+          - _ref_json['kubelet-arg'] | sort == k3s_kubelet_args | sort
+        fail_msg: >-
+          {{ _ref }} config differs from what this join writes: drop-ins {{ _dropins }};
+          settings not covered {{ _uncovered }}; disable {{ _ref_json['disable'] }} vs
+          {{ k3s_disable }}; kubelet-arg {{ _ref_json['kubelet-arg'] }} vs {{ k3s_kubelet_args }}.
+          Align group_vars/agent_services.yml (or the role) before joining.
+
+    - name: Health gate before the join
+      ansible.builtin.command:
+        argv: ["{{ _gate }}"]
+      environment:
+        K3S_GATE_STAGE: "{{ _members_before | length }}-servers"
+        K3S_GATE_NEW_ETCD_IDS: >-
+          {% for m in _members_before %}{% if (m.peerURLs | first | regex_replace('^https?://([^:]+):.*$', '\\1'))
+          in _agent_services_ips %}{{ m.ID }} {% endif %}{% endfor %}
+      delegate_to: localhost
+      become: false
+      register: _gate_before
+      changed_when: false
+      check_mode: false
+      when: k3s_join_health_gate | default(true) | bool
+
+    - name: Show the health gate (before)
+      ansible.builtin.debug:
+        var: _gate_before.stdout_lines
+      when: _gate_before.stdout_lines is defined
+
+    - name: Snapshot etcd on the reference server
+      ansible.builtin.command:
+        argv: [k3s, etcd-snapshot, save, --name, "pre-join-{{ inventory_hostname }}"]
+      delegate_to: "{{ _ref }}"
+      register: _snapshot
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Show the snapshot
+      ansible.builtin.debug:
+        var: _snapshot.stdout_lines
+      when: _snapshot.stdout_lines is defined
+
+  tasks:
+    - name: Join and verify
+      block:
+        - name: Install k3s as a joining HA server
+          ansible.builtin.include_role:
+            name: k3s
+          vars:
+            k3s_cleanup_orphan_traefik_crds: false
+
+        - name: Wait for the node to be Ready
+          ansible.builtin.command:
+            argv: [k3s, kubectl, get, node, "{{ inventory_hostname }}", -o,
+                   'jsonpath={.status.conditions[?(@.type=="Ready")].status}']
+          delegate_to: "{{ _ref }}"
+          register: _ready
+          until: _ready.stdout == 'True'
+          retries: 60
+          delay: 10
+          changed_when: false
+          when: not ansible_check_mode
+
+        - name: Wait for the new member to be a voting member
+          ansible.builtin.shell: "{{ _etcd_curl }} -X POST -d '{}' https://127.0.0.1:2382/v3/cluster/member/list"
+          delegate_to: "{{ _ref }}"
+          register: _members_after_raw
+          # A new member joins as a learner and k3s promotes it once it has caught up.
+          until: >-
+            _members_after_raw.rc == 0 and
+            ((_members_after_raw.stdout | from_json).members
+             | selectattr('peerURLs', 'contains', 'https://' ~ k3s_node_ip ~ ':2380')
+             | rejectattr('isLearner', 'true') | list | length == 1)
+          retries: 30
+          delay: 10
+          changed_when: false
+          when: not ansible_check_mode
+
+        - name: Member count is one more, with no learner and nothing unknown
+          vars:
+            _after: "{{ (_members_after_raw.stdout | from_json).members }}"
+            _ips: >-
+              {{ _after | map(attribute='peerURLs') | map('first')
+                 | map('regex_replace', '^https?://([^:]+):.*$', '\1') | list }}
+          ansible.builtin.assert:
+            that:
+              - _after | length == (_members_before | length) + 1
+              - _after | selectattr('isLearner', 'defined') | selectattr('isLearner') | list | length == 0
+              - _ips | reject('in', _server_by_ip.keys() | list) | list | length == 0
+              - k3s_node_ip in _ips
+            fail_msg: "members after: {{ _ips }} (before: {{ _member_ips_before }})"
+          when: not ansible_check_mode
+
+        - name: Every member (new one included) answers, one leader, no alarm
+          ansible.builtin.shell: |
+            set -o pipefail
+            {{ _etcd_curl }} -X POST -d '{}' https://127.0.0.1:2382/v3/maintenance/status | tr -d '\n'; echo
+            {{ _etcd_curl }} -X POST -d '{"action":"GET"}' https://127.0.0.1:2382/v3/maintenance/alarm | tr -d '\n'; echo
+          args:
+            executable: /bin/bash
+          delegate_to: "{{ _server_by_ip[item] }}"
+          loop: "{{ _member_ips_before + [k3s_node_ip] }}"
+          register: _member_status_after
+          changed_when: false
+          when: not ansible_check_mode
+
+        - name: Members are healthy after the join
+          vars:
+            _status: "{{ _member_status_after.results | map(attribute='stdout_lines') | map('first') | map('from_json') | list }}"
+            _alarms: "{{ _member_status_after.results | map(attribute='stdout_lines') | map('last') | map('from_json') | map(attribute='alarms', default=[]) | flatten }}"
+          ansible.builtin.assert:
+            that:
+              - _status | map(attribute='leader', default='none') | unique | length == 1
+              - "'none' not in (_status | map(attribute='leader', default='none') | list)"
+              - _status | selectattr('errors', 'defined') | list | length == 0
+              - _alarms | length == 0
+            fail_msg: "leaders {{ _status | map(attribute='leader', default='none') | list }}; alarms {{ _alarms }}"
+          when: not ansible_check_mode
+
+        - name: Read the new node and the apiservers' etcd health
+          ansible.builtin.shell: |
+            set -o pipefail
+            k3s kubectl get node {{ inventory_hostname }} -o json | tr -d '\n'; echo
+            k3s kubectl get --raw /healthz/etcd; echo
+            k3s kubectl get --raw /api/v1/nodes/{{ inventory_hostname }}/proxy/configz | tr -d '\n'; echo
+            k3s kubectl -n kube-system get pods -l app.kubernetes.io/name=kube-vip-ds \
+              --field-selector spec.nodeName={{ inventory_hostname }} -o jsonpath='{.items[*].status.phase}'; echo
+          args:
+            executable: /bin/bash
+          delegate_to: "{{ _ref }}"
+          register: _node_after
+          until: _node_after.rc == 0 and (_node_after.stdout_lines[3] | default('')) == 'Running'
+          retries: 18
+          delay: 10
+          changed_when: false
+          when: not ansible_check_mode
+
+        - name: Local apiserver on the new server is ready
+          ansible.builtin.command:
+            argv: [k3s, kubectl, get, --raw, /readyz]
+          register: _readyz_new
+          changed_when: false
+          failed_when: _readyz_new.stdout | trim != 'ok'
+          when: not ansible_check_mode
+
+        - name: Control-plane, voter, labels, taint, reserve and PID cap are in place
+          vars:
+            _node: "{{ _node_after.stdout_lines[0] | from_json }}"
+            _labels: "{{ _node.metadata.labels }}"
+            # "key=value:Effect;" per taint, as one string
+            _taints: >-
+              {% for t in _node.spec.taints | default([]) %}{{ t.key }}={{ t.value | default('') }}:{{ t.effect }};{% endfor %}
+            _kubelet: "{{ (_node_after.stdout_lines[2] | from_json).kubeletconfig }}"
+          ansible.builtin.assert:
+            that:
+              - _labels['node-role.kubernetes.io/control-plane'] | default('') == 'true'
+              - _labels['node-role.kubernetes.io/etcd'] | default('') == 'true'
+              - _node.status.conditions | selectattr('type', 'equalto', 'EtcdIsVoter') | map(attribute='status') | list == ['True']
+              - _labels['olympus.io/role'] | default('') == 'agent-services'
+              - _labels['olympus.io/ci'] | default('') == 'true'
+              - "'olympus.io/role=agent-services:NoSchedule;' in _taints"
+              - _kubelet.podPidsLimit | default(0) | int == 4096
+              - _node.status.allocatable.memory != _node.status.capacity.memory
+              - _node.status.nodeInfo.kubeletVersion == k3s_version
+              - _node_after.stdout_lines[1] | trim == 'ok'
+            fail_msg: >-
+              labels {{ _labels }}; taints {{ _taints }}; podPidsLimit {{ _kubelet.podPidsLimit | default('unset') }};
+              allocatable {{ _node.status.allocatable.memory }} / capacity {{ _node.status.capacity.memory }};
+              version {{ _node.status.nodeInfo.kubeletVersion }}; /healthz/etcd {{ _node_after.stdout_lines[1] }}
+          when: not ansible_check_mode
+
+        - name: Health gate after the join
+          ansible.builtin.command:
+            argv: ["{{ _gate }}"]
+          environment:
+            K3S_GATE_STAGE: "{{ (_members_before | length) + 1 }}-servers"
+            K3S_GATE_NEW_ETCD_IDS: >-
+              {% for m in (_members_after_raw.stdout | from_json).members %}{% if (m.peerURLs | first
+              | regex_replace('^https?://([^:]+):.*$', '\\1')) in _agent_services_ips %}{{ m.ID }} {% endif %}{% endfor %}
+          delegate_to: localhost
+          become: false
+          register: _gate_after
+          changed_when: false
+          when:
+            - not ansible_check_mode
+            - k3s_join_health_gate | default(true) | bool
+
+        - name: Show the health gate (after)
+          ansible.builtin.debug:
+            var: _gate_after.stdout_lines
+          when: _gate_after.stdout_lines is defined
+
+        - name: Joined
+          ansible.builtin.debug:
+            msg:
+              - "{{ inventory_hostname }} joined as an etcd member; members now {{ (_members_before | length) + 1 }}."
+              - "New member ID(s) for the gate: see K3S_GATE_NEW_ETCD_IDS above / member list."
+              - "Do not stay at 4 members longer than needed (quorum 3 of 4 still tolerates only 1 failure)."
+          when: not ansible_check_mode
+
+      rescue:
+        - name: Join failed; rollback (this node only, never the existing servers)
+          ansible.builtin.debug:
+            msg:
+              - "Join of {{ inventory_hostname }} failed at: {{ ansible_failed_task.name | default('?') }}"
+              - "Rollback, in order, from ai-agent-host:"
+              - "  ssh ansible@{{ hostvars[_ref].ansible_host }} 'sudo -n k3s kubectl delete node {{ inventory_hostname }}'   (k3s then removes its etcd member)"
+              - "  ssh ansible@{{ hostvars[_ref].ansible_host }} 'E={{ _etcd_tls }}; sudo -n curl -sS --cacert $E/server-ca.crt --cert $E/server-client.crt --key $E/server-client.key -X POST -d {} https://127.0.0.1:2382/v3/cluster/member/list'"
+              - "  if a member with peerURL https://{{ k3s_node_ip }}:2380 is still listed, remove it by its ID (hex or decimal as listed):"
+              - "  ssh ansible@{{ hostvars[_ref].ansible_host }} 'E={{ _etcd_tls }}; sudo -n curl -sS --cacert $E/server-ca.crt --cert $E/server-client.crt --key $E/server-client.key -X POST -d \"{\\\"ID\\\": <id>}\" https://127.0.0.1:2382/v3/cluster/member/remove'"
+              - "  ssh ansible@{{ ansible_host }} 'sudo -n /usr/local/bin/k3s-uninstall.sh'"
+              - "  then scripts/k3s-health-gate.sh (K3S_GATE_STAGE={{ _members_before | length }}-servers) must pass."
+
+        - name: Stop
+          ansible.builtin.fail:
+            msg: "Join of {{ inventory_hostname }} failed; see the rollback above."

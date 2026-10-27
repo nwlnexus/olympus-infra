@@ -30,7 +30,8 @@
 # The node-ip task hides its diff (it would print the cluster token).
 
 - name: k3s node network resilience
-  hosts: compute_hub:k3s_agents
+  # agent_services: the HW9 servers (olympus-sdk#567); same rules, one node at a time.
+  hosts: compute_hub:k3s_agents:agent_services
   gather_facts: true
   serial: 1
 

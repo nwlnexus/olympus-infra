@@ -2,13 +2,38 @@
 # node-prereqs role — installs packages, kernel modules, and basic hardening
 # required for k3s HA nodes with QNAP iSCSI (Trident) and NFS storage.
 
+# linux-modules-extra-<kernel> exists for Ubuntu 24.04's kernels but not for 26.04's
+# 7.0 kernels, where iscsi_tcp ships in the base modules package (pre-flight
+# 2026-10-27: no candidate on the HW9 onodes). Install it only when apt has one.
+- name: Refresh the apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+  when: node_prereqs_state == 'present'
+
+- name: Check for a linux-modules-extra package for the running kernel
+  ansible.builtin.command:
+    argv: [apt-cache, policy, "linux-modules-extra-{{ ansible_facts['kernel'] }}"]
+  register: _node_prereqs_modules_extra
+  changed_when: false
+  check_mode: false
+  when: node_prereqs_state == 'present'
+
 - name: Install prerequisite packages
   ansible.builtin.apt:
-    name: "{{ _node_prereqs_packages + (node_prereqs_extra_packages | default([])) }}"
+    name: >-
+      {{ _node_prereqs_packages
+         + (['linux-modules-extra-' ~ ansible_facts['kernel']] if _node_prereqs_has_modules_extra else [])
+         + (node_prereqs_extra_packages | default([])) }}
     state: "{{ 'present' if node_prereqs_state == 'present' else 'absent' }}"
     update_cache: true
   become: true
   vars:
+    # Kernel modules for iSCSI on kernels that split them out (see above).
+    _node_prereqs_has_modules_extra: >-
+      {{ (_node_prereqs_modules_extra.stdout | default('')) is search('Candidate: (?!\\(none\\))\\S')
+         if node_prereqs_state == 'present' else false }}
     _node_prereqs_packages:
       # iSCSI — required by the QNAP CSI driver (Trident)
       - open-iscsi
@@ -18,8 +43,6 @@
       - lvm2
       # iSCSI multipath — for QNAP iSCSI multi-path I/O
       - multipath-tools
-      # Kernel modules for iSCSI (module names vary; package covers the running kernel)
-      - "linux-modules-extra-{{ ansible_facts['kernel'] }}"
       # Basic tooling
       - curl
       - wget

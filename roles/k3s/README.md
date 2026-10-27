@@ -7,6 +7,14 @@
 | Single-node (legacy) | neither `k3s_ha` nor `k3s_agent` |
 
 Labels apply at first join (config.yaml) and are reconciled on servers via kubectl.
+A secondary (joining) server's config comes from `templates/config-server-join.yaml.j2`:
+it also renders `tls-san`, `disable` and the marked `kubelet-arg` block, so a new server
+matches the existing ones and starts with its kubelet arguments (no restart). Join new
+servers with `playbooks/push/join-k3s-server.yml` only, and never re-run the role on an
+existing server: the config is rewritten whole (token included) and a hand-added block
+(e.g. from `playbooks/k3s-disable-traefik.yml`) would be lost at the next restart.
+`k3s_cleanup_orphan_traefik_crds` (default true) deletes traefik.io CRDs cluster-wide
+from any server that runs the role; it is false for joining servers.
 etcd snapshots go to `k3s_etcd_snapshot_dir` (mount it first, e.g. QNAP NFS).
 `k3s_node_ip` (per host) pins `node-ip` as a marked block in config.yaml
 (`tasks/node-ip.yml`); k3s reads it only at start, so restart one server at a

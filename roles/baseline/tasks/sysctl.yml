@@ -1,0 +1,13 @@
+---
+# Opt-in kernel parameters (baseline_sysctls). One file, so the values survive a
+# reboot and `common`'s own sysctl list is not needed on hosts that skip it.
+- name: Set baseline kernel parameters
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/90-olympus-baseline.conf
+    state: present
+    reload: true
+  loop: "{{ baseline_sysctls | dict2items }}"
+  become: true
+  tags: [baseline, baseline-sysctl]

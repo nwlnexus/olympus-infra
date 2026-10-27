@@ -37,6 +37,25 @@ all:
         ansible_ssh_private_key_file: ~/.ssh/ansible
         ansible_python_interpreter: /usr/bin/python3
 
+    # ── k3s control-plane, second pool (HW9, olympus-sdk#567) ────────────────
+    # Two onodes (Ryzen 7 6800U, local NVMe, Ubuntu 26.04) that join as HA
+    # SERVERS (embedded etcd grows 3 -> 5) but carry the agent-services label +
+    # NoSchedule taint, so only workloads pinned to them (ARC, memory,
+    # inference) run there. A group of its own, NOT compute_hub: see the header
+    # of group_vars/agent_services.yml. Joined one at a time with
+    # playbooks/push/join-k3s-server.yml; never with cluster-init.
+    agent_services:
+      hosts:
+        onode-0636e4:
+          ansible_host: 192.168.253.11
+        onode-062caa:
+          ansible_host: 192.168.253.12
+      vars:
+        ansible_connection: ssh
+        ansible_user: ansible
+        ansible_ssh_private_key_file: ~/.ssh/ansible
+        ansible_python_interpreter: /usr/bin/python3
+
     # ── Data tier (data-hub — macOS data services, NOT a k8s node) ────────────
     data_services:
       hosts:
@@ -65,3 +84,12 @@ all:
         ansible_user: ansible
         ansible_ssh_private_key_file: ~/.ssh/ansible
         ansible_python_interpreter: /usr/bin/python3
+
+    # ── Every k3s server (etcd member) ──────────────────────────────────────
+    # Parent group only, no group_vars: used where a play must reach ALL
+    # servers at once (playbooks/push/kube-vip.yml writes a manifest that must
+    # be byte-identical on every server).
+    k3s_servers:
+      children:
+        compute_hub:
+        agent_services:

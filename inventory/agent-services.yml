@@ -1,0 +1,21 @@
+---
+# agent_services — pull inventory for the two HW9 onodes (olympus-sdk#567).
+# Used by ansible-pull with --limit $(hostname -s):
+#   ansible-pull -U <repo> -i inventory/agent-services.yml \
+#     playbooks/pull/olympus.yml --limit $(hostname -s)
+# Loads group_vars/agent_services.yml and host_vars/<hostname>.yml. The pull
+# playbook never runs the k3s role; the join is push-only
+# (playbooks/push/join-k3s-server.yml).
+
+all:
+  children:
+    agent_services:
+      hosts:
+        onode-0636e4:
+          ansible_host: 127.0.0.1   # ansible-pull runs locally on each node
+          ansible_connection: local
+        onode-062caa:
+          ansible_host: 127.0.0.1
+          ansible_connection: local
+      vars:
+        ansible_python_interpreter: /usr/bin/python3

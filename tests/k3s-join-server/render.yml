@@ -1,0 +1,135 @@
+---
+# Offline checks for the HW9 server join (olympus-sdk#567); no host, no root, no secrets.
+#   ansible-playbook -i tests/k3s-join-server/inventory.yml tests/k3s-join-server/render.yml
+#
+# 1. group_vars/agent_services.yml matches compute_hub on every cluster-wide k3s value,
+#    and cannot become a cluster-init / primary node.
+# 2. roles/k3s/templates/config-server-join.yaml.j2 renders a joining-server config
+#    (no cluster-init; VIP; disable traefik; tls-san; labels; taint; kubelet args).
+# 3. The marked node-ip and kubelet-arg blocks are byte-identical to what
+#    tasks/node-ip.yml and tasks/kubelet-args.yml write, so blockinfile is a no-op
+#    and k3s needs no restart after the join.
+- name: k3s join-server render checks
+  hosts: localhost
+  gather_facts: false
+  vars:
+    repo: "{{ playbook_dir }}/../.."
+    out_dir: "{{ lookup('env', 'RUNNER_TEMP') | default(lookup('env', 'TMPDIR'), true) | default('/tmp', true) }}/k3s-join-server-test"
+  tasks:
+    - name: Load compute_hub and agent_services group vars
+      ansible.builtin.include_vars:
+        file: "{{ repo }}/inventory/group_vars/{{ item }}.yml"
+        name: "gv_{{ item }}"
+      loop: [compute_hub, agent_services]
+
+    - name: Cluster-wide k3s values match compute_hub
+      ansible.builtin.assert:
+        that: gv_agent_services[item] == gv_compute_hub[item]
+        fail_msg: "{{ item }} differs: agent_services={{ gv_agent_services[item] }} compute_hub={{ gv_compute_hub[item] }}"
+        quiet: true
+      loop: [k3s_ha, k3s_vip, k3s_token_op_ref, k3s_disable, k3s_tls_san, k3s_kubelet_args,
+             k3s_external_server, k3s_kubeconfig_path, tailscale_tags, tailscale_accept_dns,
+             tailscale_accept_routes, tailscale_services, ansible_pull_skip_tags,
+             baseline_unattended_auto_reboot, baseline_k8s_node_network, iscsi_mode, atlas_state]
+
+    - name: agent_services is a joining server with no cluster-scoped roles
+      ansible.builtin.assert:
+        that:
+          - not gv_agent_services.k3s_primary
+          - not gv_agent_services.k3s_init
+          - not gv_agent_services.k3s_agent
+          - not gv_agent_services.k3s_cleanup_orphan_traefik_crds
+          - "'olympus.io/role=agent-services' in gv_agent_services.k3s_node_labels"
+          - "'olympus.io/ci=true' in gv_agent_services.k3s_node_labels"
+          - gv_agent_services.k3s_node_taints == ['olympus.io/role=agent-services:NoSchedule']
+          - gv_agent_services.ansible_pull_inventory == 'inventory/agent-services.yml'
+          - "'onepassword_connect_state' not in gv_agent_services"
+          - "'eso_bootstrap_state' not in gv_agent_services"
+          - "'qnap_csi_state' not in gv_agent_services"
+          - "'cloudflared_k8s_state' not in gv_agent_services"
+          - "'k3s_kubeconfig_op_item' not in gv_agent_services"
+
+    - name: Create the output directory
+      ansible.builtin.file:
+        path: "{{ out_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Render the joining-server config
+      ansible.builtin.template:
+        src: "{{ repo }}/roles/k3s/templates/config-server-join.yaml.j2"
+        dest: "{{ out_dir }}/config.yaml"
+        mode: "0600"
+      vars:
+        _k3s_token: "test-token"
+        k3s_node_ip: "192.168.253.11"
+        _k3s_full_tls_san: "{{ gv_agent_services.k3s_tls_san + ['100.64.0.1', 'onode-0636e4.example.ts.net'] }}"
+        k3s_vip: "{{ gv_agent_services.k3s_vip }}"
+        k3s_disable: "{{ gv_agent_services.k3s_disable }}"
+        k3s_node_labels: "{{ gv_agent_services.k3s_node_labels }}"
+        k3s_node_taints: "{{ gv_agent_services.k3s_node_taints }}"
+        k3s_kubelet_args: "{{ gv_agent_services.k3s_kubelet_args }}"
+
+    - name: Read the rendered config
+      ansible.builtin.slurp:
+        src: "{{ out_dir }}/config.yaml"
+      register: _cfg_raw
+
+    - name: The config is a joining server with the cluster's settings
+      vars:
+        cfg: "{{ _cfg_raw.content | b64decode | from_yaml }}"
+      ansible.builtin.assert:
+        that:
+          - "'cluster-init' not in cfg"
+          - cfg.server == 'https://192.168.253.2:6443'
+          - cfg.token == 'test-token'
+          - cfg['node-ip'] == '192.168.253.11'
+          - cfg.disable == ['traefik']
+          - "'192.168.253.2' in cfg['tls-san']"
+          - "'compute-hub.nwlnexus.net' in cfg['tls-san']"
+          - "'100.64.0.1' in cfg['tls-san']"
+          - cfg['node-label'] == gv_agent_services.k3s_node_labels
+          - cfg['node-taint'] == gv_agent_services.k3s_node_taints
+          - cfg['kubelet-arg'] == gv_agent_services.k3s_kubelet_args
+          - cfg['write-kubeconfig-mode'] == '0600'
+
+    # Same marker and block as roles/k3s/tasks/node-ip.yml and kubelet-args.yml.
+    - name: node-ip blockinfile is a no-op on the rendered file
+      ansible.builtin.blockinfile:
+        path: "{{ out_dir }}/config.yaml"
+        marker: "# {mark} ANSIBLE MANAGED - k3s_node_ip"
+        block: |
+          node-ip: "192.168.253.11"
+        insertafter: EOF
+        create: false
+      register: _bi_nodeip
+
+    - name: kubelet-arg blockinfile is a no-op on the rendered file
+      ansible.builtin.blockinfile:
+        path: "{{ out_dir }}/config.yaml"
+        marker: "# {mark} ANSIBLE MANAGED - k3s_kubelet_args"
+        block: |
+          kubelet-arg:
+          {% for arg in gv_agent_services.k3s_kubelet_args %}
+            - "{{ arg }}"
+          {% endfor %}
+        insertafter: EOF
+        create: false
+      register: _bi_kubelet
+
+    - name: Neither marked block changed
+      ansible.builtin.assert:
+        that:
+          - not _bi_nodeip.changed
+          - not _bi_kubelet.changed
+
+    - name: The role task files still use the markers this test mirrors
+      ansible.builtin.assert:
+        that:
+          - lookup('file', repo ~ '/roles/k3s/tasks/node-ip.yml') is search('ANSIBLE MANAGED - k3s_node_ip')
+          - lookup('file', repo ~ '/roles/k3s/tasks/kubelet-args.yml') is search('ANSIBLE MANAGED - k3s_kubelet_args')
+
+    - name: Remove the output directory
+      ansible.builtin.file:
+        path: "{{ out_dir }}"
+        state: absent

@@ -16,7 +16,7 @@
 #     --tags kube-vip
 #
 # k3s applies the new file within ~15 s. Then check:
-#   kubectl -n kube-system get ds kube-vip-ds        # one pod per server
+#   kubectl -n kube-system get ds kube-vip-ds        # one pod per server (5 after HW9)
 #   kubectl -n kube-system get lease plndr-cp-lock   # one holder
 #   curl -sk -o /dev/null -w '%{http_code}' https://192.168.253.2:6443/readyz  # 401
 #
@@ -34,7 +34,10 @@
 # `kubectl -n kube-system delete pod kube-vip`.
 
 - name: kube-vip manifest on all k3s servers
-  hosts: compute_hub
+  # k3s_servers = compute_hub + agent_services (every etcd member). Before an
+  # agent_services node has joined, writing the file there is harmless: the k3s role
+  # writes the same file before it installs k3s.
+  hosts: k3s_servers
   gather_facts: false
 
   tasks:

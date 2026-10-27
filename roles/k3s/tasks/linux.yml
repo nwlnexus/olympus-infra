@@ -156,43 +156,21 @@
     - not (k3s_agent | default(false))
 
 - name: Write k3s config — secondary (join via VIP, HA)
-  ansible.builtin.copy:
+  ansible.builtin.template:
+    src: config-server-join.yaml.j2
     dest: /etc/rancher/k3s/config.yaml
-    content: |
-      server: "https://{{ k3s_vip }}:6443"
-      token: "{{ _k3s_token }}"
-      write-kubeconfig-mode: "0600"
-      {% if k3s_node_ip | default('') != '' %}
-      # BEGIN ANSIBLE MANAGED - k3s_node_ip
-      node-ip: "{{ k3s_node_ip }}"
-      # END ANSIBLE MANAGED - k3s_node_ip
-      {% endif %}
-      {% if k3s_node_labels | default([]) | length > 0 %}
-      node-label:
-      {% for l in k3s_node_labels %}
-        - "{{ l }}"
-      {% endfor %}
-      {% endif %}
-      {% if k3s_node_taints | default([]) | length > 0 %}
-      node-taint:
-      {% for t in k3s_node_taints %}
-        - "{{ t }}"
-      {% endfor %}
-      {% endif %}
-      {% if k3s_etcd_snapshot_dir | default('') != '' %}
-      etcd-snapshot-dir: "{{ k3s_etcd_snapshot_dir }}"
-      etcd-snapshot-schedule-cron: "{{ k3s_etcd_snapshot_schedule }}"
-      etcd-snapshot-retention: {{ k3s_etcd_snapshot_retention }}
-      {% endif %}
     owner: root
     group: root
     mode: "0600"
   become: true
   no_log: true
+  # The diff would print the whole file, cluster token included.
+  diff: false
   when:
     - _k3s_state == 'present'
     - k3s_ha | default(false)
     - not (k3s_primary | default(false))
+    - not (k3s_init | default(false))
     - not (k3s_agent | default(false))
 
 # ── Agent (worker) join ──────────────────────────────────────────────────────
@@ -332,6 +310,15 @@
     - not (k3s_ha | default(false))
     - not (k3s_agent | default(false))
 
+# In check mode on a fresh node the config file was not written, and the
+# blockinfile tasks below (create: false) would fail on the missing file.
+- name: Check for the k3s config file
+  ansible.builtin.stat:
+    path: /etc/rancher/k3s/config.yaml
+  register: _k3s_config_stat
+  become: true
+  when: _k3s_state == 'present'
+
 # ── node-ip block (all modes) ────────────────────────────────────────────────
 # The templates above already render it; this keeps it in place on nodes whose
 # config.yaml was written by hand or by an older role version.
@@ -340,6 +327,7 @@
   when:
     - _k3s_state == 'present'
     - k3s_node_ip | default('') != ''
+    - (_k3s_config_stat.stat.exists | default(false)) or not ansible_check_mode
 
 # ── kubelet-arg block (all modes) ────────────────────────────────────────────
 - name: Set kubelet arguments in k3s config
@@ -347,6 +335,7 @@
   when:
     - _k3s_state == 'present'
     - k3s_kubelet_args | default([]) | length > 0
+    - (_k3s_config_stat.stat.exists | default(false)) or not ansible_check_mode
 
 - name: Remove k3s disable skip files (allow bundled components to redeploy)
   ansible.builtin.file:
@@ -362,6 +351,8 @@
     - _k3s_state == 'present'
     - not (k3s_agent | default(false))
 
+# Cluster-wide delete: never on a server joining a live cluster
+# (k3s_cleanup_orphan_traefik_crds: false in group_vars/agent_services.yml).
 - name: Remove orphaned Traefik CRDs from prior user-managed install
   ansible.builtin.shell: |
     set -o pipefail
@@ -381,6 +372,7 @@
   when:
     - _k3s_state == 'present'
     - not (k3s_agent | default(false))
+    - k3s_cleanup_orphan_traefik_crds | default(true) | bool
   ignore_errors: true
 
 - name: Flush handlers (apply k3s config restart if needed)

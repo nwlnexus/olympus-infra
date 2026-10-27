@@ -1,0 +1,40 @@
+---
+# Grow the root LV and its filesystem online (lvextend -r) to baseline_root_lv_size.
+# Grow-only (shrink: false): a host whose LV is already that big or bigger is left
+# alone. Skips with a message when / is not on LVM.
+
+- name: Find the device behind /
+  ansible.builtin.command: findmnt -no SOURCE /
+  register: _baseline_root_src
+  changed_when: false
+  check_mode: false
+  tags: [baseline, baseline-root-lv]
+
+- name: Look up the root VG and LV
+  ansible.builtin.command:
+    argv: [lvs, --noheadings, --separator, "|", -o, "vg_name,lv_name", "{{ _baseline_root_src.stdout | trim }}"]
+  register: _baseline_root_lv
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  become: true
+  tags: [baseline, baseline-root-lv]
+
+- name: Report a root filesystem that is not on LVM
+  ansible.builtin.debug:
+    msg: "baseline_root_lv_size is set but / ({{ _baseline_root_src.stdout | trim }}) is not an LVM volume; skipping."
+  when: _baseline_root_lv.rc != 0 or '|' not in _baseline_root_lv.stdout
+  tags: [baseline, baseline-root-lv]
+
+- name: Grow the root LV and filesystem
+  community.general.lvol:
+    vg: "{{ (_baseline_root_lv.stdout | trim).split('|')[0] }}"
+    lv: "{{ (_baseline_root_lv.stdout | trim).split('|')[1] }}"
+    size: "{{ baseline_root_lv_size }}"
+    resizefs: true
+    shrink: false
+  become: true
+  when:
+    - _baseline_root_lv.rc == 0
+    - "'|' in _baseline_root_lv.stdout"
+  tags: [baseline, baseline-root-lv]

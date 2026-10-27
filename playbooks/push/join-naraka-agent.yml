@@ -33,6 +33,20 @@
   become: true
 
   pre_tasks:
+    # This play uninstalls whatever k3s runs on its target. k3s_agents is meant to
+    # hold more agents later; never let it reach anything but naraka-01.
+    - name: Only naraka-01
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == 'naraka-01'
+          - ansible_play_hosts_all == ['naraka-01']
+          - inventory_hostname not in (groups['k3s_servers'] | default([]))
+        fail_msg: >-
+          join-naraka-agent.yml is for naraka-01 only (play hosts: {{ ansible_play_hosts_all }}).
+          New servers join with playbooks/push/join-k3s-server.yml.
+        quiet: true
+      tags: [always]
+
     - name: Snapshot etcd on primary onode before join (precaution)
       ansible.builtin.command:
         cmd: k3s etcd-snapshot save --name "pre-naraka-join-{{ ansible_date_time.iso8601_basic_short }}"

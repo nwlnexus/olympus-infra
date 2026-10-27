@@ -37,3 +37,11 @@ data_services_retired_daemons:
   - com.olympus.redis
   # NFS mount of the QNAP archive share (/Volumes/ai-hub-data); the share is gone.
   - com.olympus.nfs._Volumes_ai-hub-data
+
+# data-hub uses its wired connection only: Wi-Fi is powered off and its network service
+# disabled (tasks/macos-network.yml). The play refuses if the default route is on Wi-Fi.
+data_services_wifi_disabled: true
+
+# Cloudflare WARP conflicts with tailscaled (second root VPN daemon; may claim the
+# tailnet range 100.64.0.0/10). Removed from the host when true.
+data_services_remove_warp: true

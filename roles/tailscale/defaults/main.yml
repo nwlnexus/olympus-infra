@@ -34,8 +34,8 @@ tailscale_tags:
   - "tag:server"
 
 # macOS watchdog: restarts tailscaled when it is logged in (BackendState Running)
-# but has lost its control-plane connection (Self.Online false) — seen on
-# data-hub, where it stayed that way for days. Installed as a LaunchDaemon by
+# but has lost its control-plane connection (Self.Online false, or Health reporting
+# a stale network map) — both seen on data-hub, where they lasted for days. Installed as a LaunchDaemon by
 # tasks/macos.yml. A stopped or logged-out node is never restarted.
 tailscale_watchdog_enabled: true
 tailscale_watchdog_interval_seconds: 300   # how often it checks

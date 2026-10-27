@@ -1,0 +1,204 @@
+name: automerge
+
+# Label-driven auto-merge (olympus-sdk#576, spec decision H19 layer 4). A PR labelled `automerge` that is
+# not a draft and targets the default branch is squash-merged, and its branch deleted, once every required
+# status check of the base branch's rulesets has passed. Anything else exits quietly with a log line.
+#
+# The org default GITHUB_TOKEN is read-only, so the merge uses a GitHub App installation token. The App ID
+# lives in the variable AUTOMERGE_APP_ID and its private key in the secret AUTOMERGE_APP_PRIVATE_KEY (both
+# set by the owner at org level). When a labelled PR is ready and either is unset, the job fails with a
+# message naming them; unlabelled PRs never need them.
+#
+# Required checks: read from `GET /repos/{repo}/rules/branches/{base}` (repository and org rulesets). If
+# the base has no required checks, every check run and commit status reported on the head commit (except
+# this workflow's own job) must have passed instead. A strict ("up to date") rule on a PR that is behind
+# gets an update-branch, and the merge happens on the next run.
+#
+# The same file lives in olympus-sdk, olympus-infra, olympus-gitops, agent-skills and nix-darwin-hm;
+# only the `workflow_run.workflows` list differs (the workflows whose completion should re-check).
+on:
+  pull_request:
+    types: [labeled, synchronize, ready_for_review]
+  # No workflow_run trigger: this repository has no CI workflows yet. Add one (listing the workflows
+  # whose completion should re-check) when it gets some.
+  check_suite:
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  statuses: read
+
+concurrency:
+  group: automerge-${{ github.event.pull_request.number || github.event.workflow_run.head_sha || github.event.check_suite.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  automerge:
+    name: automerge
+    if: >-
+      (github.event_name == 'pull_request'
+        && contains(github.event.pull_request.labels.*.name, 'automerge')
+        && !github.event.pull_request.draft)
+      || (github.event_name == 'workflow_run'
+        && github.event.workflow_run.event == 'pull_request'
+        && github.event.workflow_run.conclusion == 'success')
+      || (github.event_name == 'check_suite'
+        && github.event.check_suite.conclusion == 'success')
+    # Pure API caller (bash, gh, jq); shares the small poller pool where one is configured.
+    runs-on: ${{ fromJSON(vars.RUNNER_GATE || '"ubuntu-latest"') }}
+    timeout-minutes: 10
+    steps:
+      - name: Find labelled PRs for this event
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          WR_PRS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+          WR_SHA: ${{ github.event.workflow_run.head_sha }}
+          CS_PRS: ${{ toJSON(github.event.check_suite.pull_requests) }}
+          CS_SHA: ${{ github.event.check_suite.head_sha }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            pull_request) candidates=$PR_NUMBER ;;
+            workflow_run) sha=$WR_SHA; candidates=$(printf '%s' "$WR_PRS" | jq -r '.[]?.number') ;;
+            check_suite) sha=$CS_SHA; candidates=$(printf '%s' "$CS_PRS" | jq -r '.[]?.number') ;;
+            *) echo "automerge: event $EVENT is not handled"; exit 0 ;;
+          esac
+          if [ -z "$candidates" ] && [ -n "${sha:-}" ]; then
+            candidates=$(gh api "repos/$REPO/commits/$sha/pulls" --jq '.[] | select(.state == "open") | .number')
+          fi
+          default=$(gh api "repos/$REPO" --jq .default_branch)
+          prs=""
+          for n in $candidates; do
+            pr=$(gh api "repos/$REPO/pulls/$n")
+            why=$(printf '%s' "$pr" | jq -r --arg d "$default" --arg repo "$REPO" '
+              if .state != "open" then "is \(.state)"
+              elif (.head.repo.full_name // "") != $repo then "comes from a fork"
+              elif .draft then "is a draft"
+              elif ([.labels[].name] | index("automerge") | not) then "has no automerge label"
+              elif .base.ref != $d then "targets \(.base.ref), not \($d)"
+              else "" end')
+            if [ -n "$why" ]; then echo "automerge: #$n $why; skipping"; else prs="$prs $n"; fi
+          done
+          prs=${prs# }
+          if [ -z "$prs" ]; then echo "automerge: no labelled, ready PR for this $EVENT event; nothing to do"; fi
+          echo "prs=$prs" >> "$GITHUB_OUTPUT"
+
+      - name: Check the GitHub App configuration
+        if: steps.find.outputs.prs != ''
+        env:
+          APP_ID: ${{ vars.AUTOMERGE_APP_ID }}
+          HAS_KEY: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY != '' }}
+        run: |
+          missing=""
+          [ -n "$APP_ID" ] || missing="variable AUTOMERGE_APP_ID"
+          [ "$HAS_KEY" = true ] || missing="${missing:+$missing and }secret AUTOMERGE_APP_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error title=automerge not configured::The $missing is not set for this repository. The org GITHUB_TOKEN is read-only, so automerge needs a GitHub App token: set AUTOMERGE_APP_ID (org variable) and AUTOMERGE_APP_PRIVATE_KEY (org secret), see nwlnexus/olympus-sdk#576."
+            exit 1
+          fi
+
+      - name: Mint the App token
+        id: app
+        if: steps.find.outputs.prs != ''
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.AUTOMERGE_APP_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-checks: read
+          permission-statuses: read
+
+      - name: Merge PRs whose required checks passed
+        if: steps.find.outputs.prs != ''
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          PRS: ${{ steps.find.outputs.prs }}
+          SELF_JOB: automerge
+        run: |
+          set -euo pipefail
+          rc=0
+          for n in $PRS; do
+            pr=$(gh api "repos/$REPO/pulls/$n")
+            state=$(printf '%s' "$pr" | jq -r .state)
+            draft=$(printf '%s' "$pr" | jq -r .draft)
+            labelled=$(printf '%s' "$pr" | jq -r '[.labels[].name] | index("automerge") != null')
+            if [ "$state" != open ] || [ "$draft" = true ] || [ "$labelled" != true ]; then
+              echo "automerge: #$n changed (state=$state draft=$draft labelled=$labelled); skipping"; continue
+            fi
+            sha=$(printf '%s' "$pr" | jq -r .head.sha)
+            base=$(printf '%s' "$pr" | jq -r .base.ref)
+            head_ref=$(printf '%s' "$pr" | jq -r .head.ref)
+            head_repo=$(printf '%s' "$pr" | jq -r '.head.repo.full_name // ""')
+
+            rules=$(gh api "repos/$REPO/rules/branches/$base")
+            required=$(printf '%s' "$rules" | jq -c '[.[] | select(.type == "required_status_checks")
+              | .parameters.required_status_checks[] | {context, app: (.integration_id // null)}] | unique')
+            strict=$(printf '%s' "$rules" | jq -r '[.[] | select(.type == "required_status_checks")
+              | .parameters.strict_required_status_checks_policy] | any')
+            runs=$(gh api --paginate "repos/$REPO/commits/$sha/check-runs?per_page=100" \
+              --jq '.check_runs[] | {name, app: .app.id, status, conclusion}' | jq -s .)
+            statuses=$(gh api "repos/$REPO/commits/$sha/status" --jq '[.statuses[] | {context, state}]')
+
+            if [ "$required" = "[]" ]; then
+              echo "automerge: #$n base $base has no required checks in its rulesets; gating on every reported check"
+              verdict=$(jq -rn --argjson runs "$runs" --argjson st "$statuses" --arg self "$SELF_JOB" '
+                ([$runs[] | select(.name != $self)]) as $r
+                | if ([$r[] | select(.status != "completed")] | length) > 0
+                    or ([$st[] | select(.state == "pending")] | length) > 0 then "pending"
+                  elif ([$r[] | select(.conclusion as $c | ["success","neutral","skipped"] | index($c) | not)] | length) > 0
+                    or ([$st[] | select(.state != "success")] | length) > 0 then "failed"
+                  else "passed" end')
+            else
+              echo "automerge: #$n base $base requires $(printf '%s' "$required" | jq -r '[.[].context] | join(", ")') (strict=$strict)"
+              verdict=$(jq -rn --argjson req "$required" --argjson runs "$runs" --argjson st "$statuses" '
+                [ $req[] as $q
+                  | ([$runs[] | select(.name == $q.context and ($q.app == null or .app == $q.app))] | first) as $run
+                  | ([$st[] | select(.context == $q.context)] | first) as $s
+                  | if $run != null then
+                      (if $run.status != "completed" then "pending"
+                       elif (["success","neutral","skipped"] | index($run.conclusion)) then "passed"
+                       else "failed" end)
+                    elif $s != null then
+                      (if $s.state == "success" then "passed" elif $s.state == "pending" then "pending" else "failed" end)
+                    else "pending" end ]
+                | if index("failed") then "failed" elif index("pending") then "pending" else "passed" end')
+            fi
+            if [ "$verdict" != passed ]; then
+              echo "automerge: #$n checks on ${sha:0:12} are $verdict; not merging"; continue
+            fi
+
+            mstate=$(printf '%s' "$pr" | jq -r .mergeable_state)
+            if [ "$strict" = true ] && [ "$mstate" = behind ]; then
+              echo "automerge: #$n is behind $base and the rule is strict; updating the branch (merge follows on the next run)"
+              gh api -X PUT "repos/$REPO/pulls/$n/update-branch" -f expected_head_sha="$sha" --silent \
+                || echo "automerge: #$n update-branch failed; leaving it"
+              continue
+            fi
+            if [ "$mstate" = dirty ]; then
+              echo "automerge: #$n has merge conflicts; not merging"; continue
+            fi
+
+            if gh api -X PUT "repos/$REPO/pulls/$n/merge" -f merge_method=squash -f sha="$sha" --silent; then
+              echo "automerge: #$n squash-merged at ${sha:0:12}"
+            elif [ "$(gh api "repos/$REPO/pulls/$n" --jq .merged)" = true ]; then
+              echo "automerge: #$n was merged by another run"
+            else
+              echo "::error::automerge: #$n merge was refused (see the API error above)"; rc=1; continue
+            fi
+            if [ "$head_repo" = "$REPO" ]; then
+              if gh api -X DELETE "repos/$REPO/git/refs/heads/$head_ref" --silent 2>/dev/null; then
+                echo "automerge: deleted branch $head_ref"
+              else
+                echo "automerge: branch $head_ref already gone"
+              fi
+            fi
+          done
+          exit "$rc"

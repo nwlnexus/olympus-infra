@@ -356,8 +356,7 @@
     - not (k3s_agent | default(false))
     - k3s_remove_disable_skip_files | default(true) | bool
 
-# Cluster-wide delete: never on a server joining a live cluster
-# (k3s_cleanup_orphan_traefik_crds: false in group_vars/agent_services.yml).
+# Cluster-wide delete: opt-in only (k3s_cleanup_orphan_traefik_crds, default false).
 - name: Remove orphaned Traefik CRDs from prior user-managed install
   ansible.builtin.shell: |
     set -o pipefail
@@ -377,7 +376,7 @@
   when:
     - _k3s_state == 'present'
     - not (k3s_agent | default(false))
-    - k3s_cleanup_orphan_traefik_crds | default(true) | bool
+    - k3s_cleanup_orphan_traefik_crds | default(false) | bool
   ignore_errors: true
 
 - name: Flush handlers (apply k3s config restart if needed)

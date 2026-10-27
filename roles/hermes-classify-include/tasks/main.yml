@@ -1,4 +1,17 @@
 ---
+- name: Refuse push-only roles from a Hermes classification
+  ansible.builtin.assert:
+    that: _denied | length == 0
+    fail_msg: >-
+      Hermes asked for {{ _denied }}, which never run from ansible-pull
+      (hermes_classify_denied_roles). Nothing from this classification was included.
+    quiet: true
+  vars:
+    _denied: >-
+      {{ hermes_extra_roles | default([]) | map('basename')
+         | select('in', hermes_classify_denied_roles | default(['k3s', 'bootstrap-user'])) | list }}
+  tags: [hermes-classify]
+
 - name: Include Hermes-supplied roles
   ansible.builtin.include_role:
     name: "{{ item }}"

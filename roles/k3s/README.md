@@ -13,8 +13,8 @@ matches the existing ones and starts with its kubelet arguments (no restart). Jo
 servers with `playbooks/push/join-k3s-server.yml` only, and never re-run the role on an
 existing server: the config is rewritten whole (token included) and a hand-added block
 (e.g. from `playbooks/k3s-disable-traefik.yml`) would be lost at the next restart.
-`k3s_cleanup_orphan_traefik_crds` (default true) deletes traefik.io CRDs cluster-wide
-from any server that runs the role; it is false for joining servers, and so is
+`k3s_cleanup_orphan_traefik_crds` (default false, opt-in) deletes traefik.io CRDs
+cluster-wide from any server that runs the role; joining servers also set
 `k3s_remove_disable_skip_files` (its removal notifies a k3s restart).
 `tasks/node-labels.yml` retries for up to two minutes while a just-started node
 registers.

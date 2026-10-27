@@ -81,7 +81,7 @@
           - not (k3s_primary | default(false) | bool)
           - not (k3s_init | default(false) | bool)
           - not (k3s_agent | default(false) | bool)
-          - not (k3s_cleanup_orphan_traefik_crds | default(true) | bool)
+          - not (k3s_cleanup_orphan_traefik_crds | default(false) | bool)
           - k3s_vip == '192.168.253.2'
           - k3s_token_op_ref | default('') != ''
           - k3s_node_ip | default('') != ''

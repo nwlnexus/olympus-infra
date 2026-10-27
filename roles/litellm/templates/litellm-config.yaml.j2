@@ -1,5 +1,29 @@
 # Managed by Ansible (roles/litellm) — do not edit by hand. Contains secrets (mode 0600).
 #
+{% if litellm_backend == 'llama_server' %}
+{% macro llama_entry(alias, instance_name, thinking=none) %}
+{% set _inst = litellm_llama_server_instances | selectattr('name', 'equalto', instance_name) | first %}
+  - model_name: {{ alias }}
+    litellm_params:
+      model: openai/{{ _inst.alias }}
+      api_base: http://{{ litellm_llama_server_host }}:{{ _inst.port }}/v1
+      api_key: not-used
+{% if thinking is not none %}
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: {{ thinking | bool | lower }}
+{% endif %}
+{% endmacro %}
+# Aliases are the only names clients use. Local aliases route to llama-server, one
+# instance per model on {{ litellm_llama_server_host }} (OpenAI-compatible, tailnet/loopback only).
+model_list:
+  # memory pipeline: embeddings (768-dim) and fact/entity extraction
+{{ llama_entry('memory-embed', litellm_llama_embed_instance) }}
+{{ llama_entry('memory-extract', litellm_llama_extract_instance, litellm_extract_thinking) }}
+  # coding executor (olympus-sdk #197): small/fast and large local models
+{{ llama_entry('coder-light', litellm_llama_coder_light_instance) }}
+{{ llama_entry('coder-heavy', litellm_llama_coder_heavy_instance, litellm_coder_heavy_thinking) }}
+{% else %}
 # Aliases are the only names clients use. Everything routes to the local Ollama
 # ({{ litellm_ollama_api_base }}), which is not reachable without going through here
 # once its bind address is the tailnet/loopback only.
@@ -26,6 +50,7 @@ model_list:
       model: ollama_chat/{{ litellm_coder_heavy_model }}
       api_base: {{ litellm_ollama_api_base }}
 
+{% endif %}
 {% if litellm_coder_cloud_enabled | bool %}
   # cloud fallback for the coding executor (real API spend)
   - model_name: coder-cloud

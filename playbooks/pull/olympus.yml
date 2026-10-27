@@ -106,6 +106,15 @@
         - ollama_state is defined
         - ansible_facts['os_family'] == 'Darwin'
 
+    # After ollama (the serving profile replaces it on data-hub). Default state absent;
+    # data-hub opts in. Homebrew install/pin is skipped here (pull runs as `ansible`,
+    # not the Homebrew owner): the role only asserts the binary and its version.
+    - role: llama-server
+      tags: [llama-server]
+      when:
+        - llama_server_state is defined
+        - ansible_facts['os_family'] == 'Darwin'
+
     # ddclient last in opt-in block: role uses meta:end_host when CF token unavailable;
     # placing it last ensures ansible-pull and other critical roles always complete.
     - role: ddclient

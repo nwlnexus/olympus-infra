@@ -1,7 +1,9 @@
 ---
-# Renders the data-hub serving-profile templates (Ollama wrapper/plist, LiteLLM
-# config/wrapper/plist) with the real inventory/group_vars/data_hub.yml and asserts
-# the properties the profile depends on. Runs on the controller; no host needed.
+# Renders the data-hub serving-profile templates (llama-server wrappers/plists/watchdog,
+# LiteLLM config/wrapper/plist, and the retired Ollama wrapper/plist that a rollback
+# still uses) with the real inventory/group_vars/data_hub.yml and asserts the properties
+# the profile depends on. Runs on the controller; no host needed. When shellcheck is on
+# PATH (it is on GitHub-hosted runners) the rendered shell scripts are linted too.
 #
 #   ansible-playbook -i tests/serving-profile/inventory.yml tests/serving-profile/render.yml
 - name: Render data-hub serving profile
@@ -11,12 +13,15 @@
   # Ansible precedence for a host in the data_hub group.
   vars_files:
     - ../../roles/ollama/defaults/main.yml
+    - ../../roles/llama-server/defaults/main.yml
     - ../../roles/litellm/defaults/main.yml
     - ../../inventory/group_vars/data_hub.yml
   vars:
     litellm_master_key: "test-master-key-not-a-secret"
     litellm_anthropic_api_key: ""
     _out: "{{ lookup('ansible.builtin.env', 'TMPDIR', default='/tmp') }}/serving-profile-render"
+    _names: "{{ llama_server_instances | map(attribute='name') | list }}"
+    _by_name: "{{ dict(_names | zip(llama_server_instances)) }}"
   tasks:
     - name: Create output dir
       ansible.builtin.file:
@@ -24,12 +29,64 @@
         state: directory
         mode: "0700"
 
-    - name: Render templates
+    # ── Pins and lists ─────────────────────────────────────────────────────────
+    - name: Model pins are well formed and match the instances
+      vars:
+        _files: "{{ llama_server_models | map(attribute='file') | list }}"
+        _used: "{{ llama_server_instances | map(attribute='model') | unique | list }}"
+        _ports: "{{ llama_server_instances | map(attribute='port') | list }}"
+      ansible.builtin.assert:
+        that:
+          - llama_server_state == 'present'
+          - ollama_state == 'absent'
+          - ollama_remove_package | bool
+          - ollama_purge_models | bool
+          - _files | unique | length == _files | length
+          - _used | difference(_files) | length == 0
+          - _files | difference(_used) | length == 0
+          - _files | intersect(llama_server_models_remove) | length == 0
+          - llama_server_models | rejectattr('sha256', 'match', '^[0-9a-f]{64}$') | list | length == 0
+          - llama_server_models | rejectattr('revision', 'match', '^[0-9a-f]{40}$') | list | length == 0
+          - llama_server_models | rejectattr('file', 'match', '^[A-Za-z0-9._-]+\.gguf$') | list | length == 0
+          - llama_server_models | map(attribute='size') | select('integer') | select('gt', 0) | list | length == llama_server_models | length
+          - _names | sort == ['nomic-embed', 'qwen25-7b', 'qwen36-27b']
+          - _ports | sort == [8081, 8082, 8083]
+          - _ports | unique | length == _ports | length
+          - _by_name['qwen36-27b'].model == 'Qwen3.6-27B-Q5_K_M.gguf'
+          - _by_name['nomic-embed'].kind == 'embed'
+          - _by_name['nomic-embed'].embed_dim == 768
+          - llama_server_bind_host == '100.95.232.41'
+
+    # ── Render ─────────────────────────────────────────────────────────────────
+    - name: Render llama-server wrappers
+      ansible.builtin.template:
+        src: ../../roles/llama-server/templates/llama-server-serve.j2
+        dest: "{{ _out }}/llama-server-serve-{{ _instance.name }}"
+        mode: "0600"
+      loop: "{{ llama_server_instances }}"
+      loop_control:
+        loop_var: _instance
+        label: "{{ _instance.name }}"
+
+    - name: Render llama-server plists
+      ansible.builtin.template:
+        src: ../../roles/llama-server/templates/llama-server.plist.j2
+        dest: "{{ _out }}/llama-server-{{ _instance.name }}.plist"
+        mode: "0600"
+      loop: "{{ llama_server_instances }}"
+      loop_control:
+        loop_var: _instance
+        label: "{{ _instance.name }}"
+
+    - name: Render the remaining templates
       ansible.builtin.template:
         src: "{{ item.src }}"
         dest: "{{ _out }}/{{ item.dest }}"
         mode: "0600"
       loop:
+        - {src: ../../roles/llama-server/templates/llama-server-watchdog.j2, dest: llama-server-watchdog}
+        - {src: ../../roles/llama-server/templates/llama-server-watchdog.plist.j2, dest: llama-server-watchdog.plist}
+        - {src: ../../roles/llama-server/templates/newsyslog-llama-server.conf.j2, dest: newsyslog-llama-server.conf}
         - {src: ../../roles/ollama/templates/ollama-serve.j2, dest: ollama-serve}
         - {src: ../../roles/ollama/templates/ollama.plist.j2, dest: ollama.plist}
         - {src: ../../roles/litellm/templates/litellm-config.yaml.j2, dest: litellm-config.yaml}
@@ -41,7 +98,11 @@
     - name: Slurp rendered files
       ansible.builtin.slurp:
         src: "{{ _out }}/{{ item }}"
-      loop: [ollama-serve, ollama.plist, litellm-config.yaml, litellm-serve, litellm.plist]
+      loop: >-
+        {{ (_names | map('regex_replace', '^', 'llama-server-serve-') | list)
+           + (_names | map('regex_replace', '^(.*)$', 'llama-server-\1.plist') | list)
+           + ['llama-server-watchdog', 'llama-server-watchdog.plist', 'newsyslog-llama-server.conf',
+              'ollama-serve', 'ollama.plist', 'litellm-config.yaml', 'litellm-serve', 'litellm.plist'] }}
       register: _r
 
     - name: Index rendered content by file name
@@ -51,7 +112,114 @@
       loop_control:
         label: "{{ item.item }}"
 
-    - name: Ollama binds the tailnet IP only, with the serving-profile env
+    # ── llama-server ───────────────────────────────────────────────────────────
+    - name: llama-server wrappers bind the tailnet IP only, wait for it and drop to the run user
+      vars:
+        _w: "{{ _txt['llama-server-serve-' ~ item.name] }}"
+      ansible.builtin.assert:
+        that:
+          - "'ifconfig' in _w"
+          - "'exec sudo -Hu nwilliams-lucas /opt/homebrew/bin/llama-server' in _w"
+          - "'--host 100.95.232.41' in _w"
+          - "'0.0.0.0' not in _w.split('exec sudo')[1]"
+          - "('--port ' ~ item.port) in _w"
+          - "('-m /opt/olympus/models/gguf/' ~ item.model) in _w"
+          - "('--alias ' ~ item.alias) in _w"
+          - "'--metrics' in _w"
+          - "'--no-webui' in _w"
+          - "'--api-key' not in _w"
+          # one flag per line, every line but the last continued
+          - _w.split('exec sudo')[1].strip().splitlines()[:-1] | reject('match', '.* \\\\$') | list | length == 0
+          - not (_w.split('exec sudo')[1].strip().splitlines()[-1] is match('.*\\\\$'))
+      loop: "{{ llama_server_instances }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: llama-server instance arguments match the serving table (27B, 7B, embed)
+      ansible.builtin.assert:
+        that:
+          - "'-c 32768' in _txt['llama-server-serve-qwen36-27b']"
+          - "'-np 1' in _txt['llama-server-serve-qwen36-27b']"
+          - "'-ngl 999' in _txt['llama-server-serve-qwen36-27b']"
+          - "'-fa on' in _txt['llama-server-serve-qwen36-27b']"
+          - "'--jinja' in _txt['llama-server-serve-qwen36-27b']"
+          - "'--reasoning-format deepseek' in _txt['llama-server-serve-qwen36-27b']"
+          - >-
+            "--chat-template-kwargs '{\"enable_thinking\":false}'" in _txt['llama-server-serve-qwen36-27b']
+          - "'-n 8192' in _txt['llama-server-serve-qwen36-27b']"
+          - "'--cache-ram 0' in _txt['llama-server-serve-qwen36-27b']"
+          - "'--timeout 900' in _txt['llama-server-serve-qwen36-27b']"
+          - "'-c 32768' in _txt['llama-server-serve-qwen25-7b']"
+          - "'-np 1' in _txt['llama-server-serve-qwen25-7b']"
+          - "'--jinja' in _txt['llama-server-serve-qwen25-7b']"
+          - "'--timeout 900' in _txt['llama-server-serve-qwen25-7b']"
+          - "'--reasoning-format' not in _txt['llama-server-serve-qwen25-7b']"
+          - "'--embeddings' in _txt['llama-server-serve-nomic-embed']"
+          - "'--pooling mean' in _txt['llama-server-serve-nomic-embed']"
+          - "'-c 8192' in _txt['llama-server-serve-nomic-embed']"
+          - "'-np 4' in _txt['llama-server-serve-nomic-embed']"
+          - "'-b 8192' in _txt['llama-server-serve-nomic-embed']"
+          - "'-ub 2048' in _txt['llama-server-serve-nomic-embed']"
+          - "'--timeout 120' in _txt['llama-server-serve-nomic-embed']"
+
+    - name: A flag listed in llama_server_drop_flags disappears from every wrapper
+      vars:
+        _instance: "{{ _by_name['qwen36-27b'] }}"
+        llama_server_drop_flags: ['--cache-ram', '--reasoning-format']
+        _w: "{{ lookup('ansible.builtin.template', '../../roles/llama-server/templates/llama-server-serve.j2') }}"
+      ansible.builtin.assert:
+        that:
+          - "'--cache-ram' not in _w"
+          - "'--reasoning-format' not in _w"
+          - "'deepseek' not in _w"
+          - "'--metrics' in _w"
+          - _w.split('exec sudo')[1].strip().splitlines()[:-1] | reject('match', '.* \\\\$') | list | length == 0
+
+    - name: llama-server plists carry the label, KeepAlive, throttle and per-instance logs
+      vars:
+        _p: "{{ _txt['llama-server-' ~ item ~ '.plist'] }}"
+      ansible.builtin.assert:
+        that:
+          - "('<string>com.olympus.llama-server.' ~ item ~ '</string>') in _p"
+          - "('<string>/usr/local/bin/llama-server-serve-' ~ item ~ '</string>') in _p"
+          - "'<key>KeepAlive</key>' in _p"
+          - "'<key>ThrottleInterval</key>\n    <integer>10</integer>' in _p"
+          - "('<string>/var/log/llama-server-' ~ item ~ '.log</string>') in _p"
+          - "('<string>/var/log/llama-server-' ~ item ~ '.err</string>') in _p"
+      loop: "{{ _names }}"
+
+    - name: Watchdog checks every instance every 60 s with the configured metric names
+      vars:
+        _s: "{{ _txt['llama-server-watchdog'] }}"
+        _p: "{{ _txt['llama-server-watchdog.plist'] }}"
+      ansible.builtin.assert:
+        that:
+          - "\"METRIC_PROCESSING='llamacpp:requests_processing'\" in _s"
+          - "\"METRIC_DECODE_TOTAL='llamacpp:n_decode_total'\" in _s"
+          - "\"HOST='100.95.232.41'\" in _s"
+          - "\"'qwen36-27b|8081|chat|qwen3.6-27b|0'\" in _s"
+          - "\"'qwen25-7b|8082|chat|qwen2.5-7b-instruct|0'\" in _s"
+          - "\"'nomic-embed|8083|embed|nomic-embed-text|768'\" in _s"
+          - "'FAIL_THRESHOLD=3' in _s"
+          - "'STALL_THRESHOLD=3' in _s"
+          - "'COOLDOWN=600' in _s"
+          - "'/slots' in _s"
+          - "'launchctl kill SIGKILL' in _s"
+          - "'RESTART $1 reason=' in _s"
+          - "'<string>com.olympus.llama-server-watchdog</string>' in _p"
+          - "'<key>StartInterval</key>\n    <integer>60</integer>' in _p"
+          - "'/var/log/llama-server-watchdog.log' in _p"
+          # the instance-prune glob (com.olympus.llama-server.*.plist) must never match the watchdog
+          - not ('com.olympus.llama-server-watchdog.plist' is match('^com\\.olympus\\.llama-server\\..*\\.plist$'))
+
+    - name: newsyslog rotates the llama-server logs
+      ansible.builtin.assert:
+        that:
+          - "'/var/log/llama-server-*.log' in _txt['newsyslog-llama-server.conf']"
+          - "'/var/log/llama-server-*.err' in _txt['newsyslog-llama-server.conf']"
+
+    # ── Ollama (rollback path only) ────────────────────────────────────────────
+    - name: Ollama binds the tailnet IP only, with the serving-profile env (rollback)
       ansible.builtin.assert:
         that:
           - "'OLLAMA_HOST=100.95.232.41:11434' in _txt['ollama-serve']"
@@ -64,6 +232,7 @@
           - "'ifconfig' in _txt['ollama-serve']"
           - "'<key>KeepAlive</key>' in _txt['ollama.plist']"
 
+    # ── LiteLLM ────────────────────────────────────────────────────────────────
     - name: LiteLLM binds the tailnet IP only and waits for it
       ansible.builtin.assert:
         that:
@@ -73,20 +242,63 @@
           - "'pipx run' not in _txt['litellm-serve']"
           - "'<key>KeepAlive</key>' in _txt['litellm.plist']"
 
-    - name: LiteLLM config parses and has exactly the agreed aliases
+    - name: LiteLLM config routes every alias to its llama-server instance
       vars:
         _cfg: "{{ _txt['litellm-config.yaml'] | from_yaml }}"
         _aliases: "{{ _cfg.model_list | map(attribute='model_name') | sort }}"
         _by_alias: "{{ dict(_cfg.model_list | map(attribute='model_name') | zip(_cfg.model_list)) }}"
       ansible.builtin.assert:
         that:
+          - litellm_backend == 'llama_server'
           # coder-cloud stays out of the live list until litellm_coder_cloud_enabled
           - _aliases == ['coder-heavy', 'coder-light', 'memory-embed', 'memory-extract']
-          - _by_alias['memory-embed'].litellm_params.model == 'ollama/nomic-embed-text'
+          - _by_alias['memory-embed'].litellm_params.model == 'openai/nomic-embed-text'
+          - _by_alias['memory-embed'].litellm_params.api_base == 'http://100.95.232.41:8083/v1'
+          - _by_alias['memory-extract'].litellm_params.model == 'openai/qwen3.6-27b'
+          - _by_alias['memory-extract'].litellm_params.api_base == 'http://100.95.232.41:8081/v1'
+          - _by_alias['memory-extract'].litellm_params.extra_body.chat_template_kwargs.enable_thinking == false
+          - _by_alias['coder-heavy'].litellm_params.model == 'openai/qwen3.6-27b'
+          - _by_alias['coder-heavy'].litellm_params.api_base == 'http://100.95.232.41:8081/v1'
+          - _by_alias['coder-heavy'].litellm_params.extra_body.chat_template_kwargs.enable_thinking == false
+          - _by_alias['coder-light'].litellm_params.model == 'openai/qwen2.5-7b-instruct'
+          - _by_alias['coder-light'].litellm_params.api_base == 'http://100.95.232.41:8082/v1'
+          - "'extra_body' not in _by_alias['coder-light'].litellm_params"
+          - "'extra_body' not in _by_alias['memory-embed'].litellm_params"
+          - _cfg.model_list | map(attribute='litellm_params') | map(attribute='api_key') | unique | list == ['not-used']
+          - "'ollama' not in (_cfg.model_list | map(attribute='litellm_params') | map(attribute='model') | join(' '))"
+          - _cfg.litellm_settings.request_timeout == 600
+          - _cfg.general_settings.master_key == litellm_master_key
+
+    - name: Thinking can be switched on per alias
+      vars:
+        litellm_coder_heavy_thinking: true
+        _cfg: >-
+          {{ lookup('ansible.builtin.template', '../../roles/litellm/templates/litellm-config.yaml.j2')
+             | from_yaml }}
+        _by_alias: "{{ dict(_cfg.model_list | map(attribute='model_name') | zip(_cfg.model_list)) }}"
+      ansible.builtin.assert:
+        that:
+          - _by_alias['coder-heavy'].litellm_params.extra_body.chat_template_kwargs.enable_thinking == true
+          - _by_alias['memory-extract'].litellm_params.extra_body.chat_template_kwargs.enable_thinking == false
+
+    - name: Rollback render (ollama backend + stopgap) routes memory-extract to the Ollama 7B
+      vars:
+        litellm_backend: ollama
+        litellm_extract_model: "qwen2.5:7b-instruct"
+        _cfg: >-
+          {{ lookup('ansible.builtin.template', '../../roles/litellm/templates/litellm-config.yaml.j2')
+             | from_yaml }}
+        _aliases: "{{ _cfg.model_list | map(attribute='model_name') | sort }}"
+        _by_alias: "{{ dict(_cfg.model_list | map(attribute='model_name') | zip(_cfg.model_list)) }}"
+      ansible.builtin.assert:
+        that:
+          - _aliases == ['coder-heavy', 'coder-light', 'memory-embed', 'memory-extract']
           - _by_alias['memory-extract'].litellm_params.model == 'ollama_chat/qwen2.5:7b-instruct'
-          - _by_alias['coder-light'].litellm_params.model == 'ollama_chat/qwen2.5:7b-instruct'
-          - _by_alias['coder-heavy'].litellm_params.model == 'ollama_chat/qwen3.6:27b-mlx'
+          - _by_alias['memory-extract'].litellm_params.api_base == 'http://100.95.232.41:11434'
+          - _by_alias['memory-embed'].litellm_params.model == 'ollama/nomic-embed-text'
           - _by_alias['memory-embed'].litellm_params.api_base == 'http://100.95.232.41:11434'
+          - _by_alias['coder-light'].litellm_params.model == 'ollama_chat/qwen2.5:7b-instruct'
+          - "'api_key' not in _by_alias['memory-extract'].litellm_params"
           - _cfg.general_settings.master_key == litellm_master_key
 
     - name: coder-cloud appears once enabled
@@ -99,6 +311,27 @@
       ansible.builtin.assert:
         that:
           - "'coder-cloud' in (_cfg.model_list | map(attribute='model_name') | list)"
+
+    # ── shellcheck the rendered shell scripts ──────────────────────────────────
+    - name: Look for shellcheck
+      ansible.builtin.command: shellcheck --version
+      register: _shellcheck
+      changed_when: false
+      failed_when: false
+
+    - name: shellcheck the rendered wrappers and watchdog
+      ansible.builtin.command:
+        argv: >-
+          {{ ['shellcheck', '-s', 'bash', '-S', 'warning']
+             + (_names | map('regex_replace', '^', _out ~ '/llama-server-serve-') | list)
+             + [_out ~ '/llama-server-watchdog', _out ~ '/ollama-serve', _out ~ '/litellm-serve'] }}
+      changed_when: false
+      when: _shellcheck.rc == 0
+
+    - name: Note that shellcheck was skipped
+      ansible.builtin.debug:
+        msg: "shellcheck not on PATH: rendered scripts were not linted"
+      when: _shellcheck.rc != 0
 
     - name: Clean up
       ansible.builtin.file:

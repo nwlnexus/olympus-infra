@@ -110,6 +110,20 @@
     quiet: true
   when: litellm_state == "present"
 
+- name: Assert every alias maps to a llama-server instance (llama_server backend)
+  vars:
+    _names: "{{ litellm_llama_server_instances | map(attribute='name') | list }}"
+  ansible.builtin.assert:
+    that:
+      - litellm_backend in ['ollama', 'llama_server']
+      - litellm_backend != 'llama_server' or litellm_llama_embed_instance in _names
+      - litellm_backend != 'llama_server' or litellm_llama_extract_instance in _names
+      - litellm_backend != 'llama_server' or litellm_llama_coder_light_instance in _names
+      - litellm_backend != 'llama_server' or litellm_llama_coder_heavy_instance in _names
+    fail_msg: "litellm_backend must be ollama or llama_server, and each litellm_llama_*_instance must name an entry of llama_server_instances ({{ _names }})."
+    quiet: true
+  when: litellm_state == "present"
+
 - name: Ensure LiteLLM config directory exists
   ansible.builtin.file:
     path: "{{ litellm_config_dest | dirname }}"

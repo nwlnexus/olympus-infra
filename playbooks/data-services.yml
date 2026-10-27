@@ -2,12 +2,12 @@
 # Push-based setup for data-hub (the Mac Studio).
 #
 #   play 1  data-services  Postgres (temporary), service users and /opt/olympus dirs
-#   play 2  serving        Ollama + LiteLLM: the fleet's inference node
+#   play 2  serving        Ollama (retired), llama-server + LiteLLM: the fleet's inference node
 #
 # Two plays because the plays need different privilege:
 #   - data-services does its own `become` per task and needs a root play for dscl/launchctl
-#   - ollama and litellm install Homebrew/pipx packages as the login user (Homebrew
-#     refuses to run as root) and use `become` only on the tasks that need it
+#   - ollama, llama-server and litellm install Homebrew/pipx packages as the login user
+#     (Homebrew refuses to run as root) and use `become` only on the tasks that need it
 #
 # Secrets: ds_pg_password (initdb of a brand-new data dir only) is passed as an
 # extra var by the push wrapper. LiteLLM's keys are read on the host from 1Password
@@ -17,7 +17,11 @@
 #   make data-services
 # or:
 #   ansible-playbook -i ../olympus-infra/inventory/olympus.yml --limit data_services \
-#     ../olympus-infra/playbooks/data-services.yml [--check --diff] [--tags ollama,litellm]
+#     ../olympus-infra/playbooks/data-services.yml [--check --diff] [--tags ollama,llama-server,litellm]
+#
+# `--tags llama_server_prepare` only installs/pins llama.cpp and downloads/verifies the
+# GGUF models (no LaunchDaemon is touched). llama-server runs before litellm, so a model
+# that does not serve fails the play before LiteLLM is repointed.
 
 - name: Configure data-hub data services
   hosts: data-hub
@@ -27,7 +31,7 @@
   roles:
     - data-services
 
-- name: Configure data-hub serving profile (Ollama + LiteLLM)
+- name: Configure data-hub serving profile (llama-server + LiteLLM)
   hosts: data-hub
   become: false
   gather_facts: true
@@ -36,5 +40,7 @@
   roles:
     - role: ollama
       tags: [ollama]
+    - role: llama-server
+      tags: [llama-server]
     - role: litellm
       tags: [litellm]

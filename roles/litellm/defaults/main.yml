@@ -30,6 +30,29 @@ litellm_extract_model: "qwen3.6:27b-mlx"
 litellm_coder_light_model: "qwen2.5:7b-instruct"
 litellm_coder_heavy_model: "qwen3.6:27b-mlx"
 
+# ── Backend ───────────────────────────────────────────────────────────────────
+# Which local server the aliases route to:
+#   ollama        the Ollama mappings above (litellm_*_model on litellm_ollama_api_base)
+#   llama_server  one llama-server instance per model (roles/llama-server), as
+#                 OpenAI-compatible endpoints: model `openai/<instance alias>`,
+#                 api_base http://<host>:<instance port>/v1
+litellm_backend: ollama
+
+# llama_server backend: instances come from roles/llama-server's list (same vars), and
+# each alias names the instance that serves it.
+litellm_llama_server_instances: "{{ llama_server_instances | default([]) }}"
+litellm_llama_server_host: >-
+  {{ '127.0.0.1' if (llama_server_bind_host | default('127.0.0.1')) in ['', '0.0.0.0']
+     else (llama_server_bind_host | default('127.0.0.1')) }}
+litellm_llama_embed_instance: nomic-embed
+litellm_llama_extract_instance: qwen36-27b
+litellm_llama_coder_light_instance: qwen25-7b
+litellm_llama_coder_heavy_instance: qwen36-27b
+# Sent per request as chat_template_kwargs.enable_thinking (Qwen3 templates). Off: the
+# extractor needs a plain JSON body, and with thinking on the body came back empty.
+litellm_extract_thinking: false
+litellm_coder_heavy_thinking: false
+
 # coder-cloud: placeholder provider entry, rendered only when enabled. Enable it
 # once an Anthropic key exists at litellm_anthropic_key_op_ref.
 litellm_coder_cloud_enabled: false

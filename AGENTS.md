@@ -258,6 +258,8 @@ Pull playbooks run daily via ansible-pull on each host. Keep them idempotent and
 fast; avoid slow package/service mutations unless the role is explicitly
 opted-in by a `<role>_state` variable.
 
+To merge without a merge command, label the PR `automerge` (`gh pr edit <n> --add-label automerge`) and `.github/workflows/automerge.yml` squash-merges it once the base branch's required checks pass (GitHub App credentials: olympus-sdk#576).
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 

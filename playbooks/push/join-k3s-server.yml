@@ -512,8 +512,11 @@
           until: >-
             _members_after_raw.rc == 0 and
             ((_members_after_raw.stdout | from_json).members
+             | selectattr('peerURLs', 'contains', 'https://' ~ k3s_node_ip ~ ':2380') | list | length == 1) and
+            # etcd's JSON omits isLearner when it is false: a missing field means a voter.
+            ((_members_after_raw.stdout | from_json).members
              | selectattr('peerURLs', 'contains', 'https://' ~ k3s_node_ip ~ ':2380')
-             | rejectattr('isLearner', 'true') | list | length == 1)
+             | selectattr('isLearner', 'defined') | selectattr('isLearner') | list | length == 0)
           retries: 30
           delay: 10
           changed_when: false

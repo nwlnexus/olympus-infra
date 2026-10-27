@@ -53,10 +53,19 @@ olympus-infra/
 
 | Host | OS | Role |
 |---|---|---|
-| olympus | Ubuntu on onode-030c31/0312ce/0314ac plus naraka-01 | Single k3s HA cluster: control-plane on the onodes, naraka-01 as agent/ingress node |
+| olympus | Ubuntu on onode-030c31/0312ce/0314ac, onode-0636e4/062caa, plus naraka-01 | Single k3s HA cluster: control-plane (embedded etcd) on the five onodes, naraka-01 as agent/ingress node |
 | data-hub | macOS (Apple Silicon) | Native data tier and model host; **not** a k8s node |
 | styx | Linux (Ubuntu 26.04; bond0) | PXE provisioning host, Plex, iSCSI + NFS mounts; **not** a k8s node |
 | management-hub | Retired | Historical context only; do not add new services here |
+
+### k3s server pools (inventory/olympus.yml)
+
+| Group | Hosts | Notes |
+|---|---|---|
+| `compute_hub` | onode-030c31 (cluster-init), onode-0312ce, onode-0314ac | Default compute pool, untainted. Carries the cluster-scoped one-shot roles (1Password Connect, ESO, cloudflared-k8s, Trident bootstrap) on the primary. |
+| `agent_services` | onode-0636e4 (.11), onode-062caa (.12) | HW9 (olympus-sdk#567): etcd members too (5 in all), but labelled `olympus.io/role=agent-services`, `olympus.io/ci=true` and tainted `olympus.io/role=agent-services:NoSchedule`; only ARC, memory and inference are pinned there. Bootstrapped with `playbooks/push/bootstrap-host.yml`, joined one at a time with `playbooks/push/join-k3s-server.yml`. Pull inventory `inventory/agent-services.yml`. |
+| `k3s_servers` | parent of both | Every etcd member; `playbooks/push/kube-vip.yml` targets it. |
+| `k3s_agents` | naraka-01 | `join-naraka-agent.yml` refuses any other host. |
 
 The old `compute-hub`/`management-hub` split has converged into the single
 `olympus` cluster. Ansible changes should target the live `olympus` inventory

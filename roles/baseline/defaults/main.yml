@@ -81,3 +81,13 @@ baseline_node_hardening: false
 # module is reloaded by hand while no VM is running (see the task comment).
 baseline_kvm_amd_nested_off: false
 baseline_node_hardening_ssh_dropin: 00-olympus-baseline.conf
+
+# Extra kernel parameters, {name: value}, written to /etc/sysctl.d/90-olympus-baseline.conf
+# and applied. Empty = no file, nothing changed. For hosts whose hourly pull skips
+# `common` (ansible_pull_skip_tags) but need some of its sysctls.
+baseline_sysctls: {}
+
+# Grow the root logical volume (and its filesystem, online) to this size, e.g. "250g".
+# Grow-only: never shrinks, a no-op once the LV is at least this big. Empty = off.
+# Only for a root filesystem on LVM (Ubuntu's default ubuntu-vg/ubuntu-lv).
+baseline_root_lv_size: ""

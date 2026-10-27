@@ -71,3 +71,13 @@ k3s_node_taints: []
 k3s_etcd_snapshot_dir: ""
 k3s_etcd_snapshot_schedule: "0 */6 * * *"
 k3s_etcd_snapshot_retention: 20
+
+# Servers only: remove the old traefik/servicelb *.yaml.skip files (and restart k3s
+# if one was removed). false on servers joining a live cluster.
+k3s_remove_disable_skip_files: true
+
+# Servers only: delete traefik.io CRDs that are not labelled as Helm-managed (left
+# over from a user-managed Traefik install). This is a CLUSTER-WIDE delete from
+# whichever server runs the role (Traefik is Flux-managed now), so it is opt-in:
+# set true only for a one-off cleanup, on purpose.
+k3s_cleanup_orphan_traefik_crds: false

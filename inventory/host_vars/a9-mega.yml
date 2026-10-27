@@ -1,0 +1,10 @@
+---
+# a9-mega — GEEKOM A9 inference host (HW10, olympus-sdk#568). NOT a k3s node.
+# Group and role vars: group_vars/inference_server.yml (PR #96). This file only
+# holds what the HW9 bootstrap (playbooks/push/bootstrap-host.yml) needs.
+# LAN IP: 192.168.253.15 (enp196s0)
+
+# Root LV is 100G on a 2 TB disk (VG free ~1.76T) and the GGUFs live under
+# /opt/olympus/models on root. Owner approved the extension (2026-10-27).
+# Grow-only, online (lvextend -r); baseline role, tasks/root-lv.yml.
+baseline_root_lv_size: 500g

@@ -3,3 +3,10 @@
 # Roles to be loaded dynamically. Typically supplied via --extra-vars
 # (the ansible-pull wrapper writes /run/olympus/99-roles.yml).
 hermes_extra_roles: []
+# Roles a Hermes classification may never run through the hourly pull: they
+# restart or reconfigure the cluster (k3s) or mutate the service user
+# (bootstrap-user); both are push-only with a human watching. Matched on the
+# role name's last path component.
+hermes_classify_denied_roles:
+  - k3s
+  - bootstrap-user

@@ -1,0 +1,60 @@
+{# k3s config.yaml for an HA server that JOINS the existing etcd through the VIP
+   (k3s_ha, not k3s_primary). Never renders cluster-init.
+
+   Keys that must match the servers already in the cluster (k3s does not check
+   them all): `disable` (a server without `disable: [traefik]` deploys the bundled
+   Traefik next to the Flux-managed one) and `tls-san` (kube-vip can move the VIP
+   to this server, so its serving cert needs the VIP and the FQDN).
+
+   The node-ip and kubelet-arg blocks carry the same markers and content that
+   tasks/node-ip.yml and tasks/kubelet-args.yml (blockinfile) write, so those tasks
+   are no-ops afterwards and k3s starts with the kubelet arguments the first time
+   (no restart after the join). tests/k3s-join-server checks that. Do not also run
+   playbooks/k3s-disable-traefik.yml on a node written by this template: it would
+   append a second `disable:` key. #}
+server: "https://{{ k3s_vip }}:6443"
+token: "{{ _k3s_token }}"
+write-kubeconfig-mode: "0600"
+{% if k3s_node_ip | default('') != '' %}
+# BEGIN ANSIBLE MANAGED - k3s_node_ip
+node-ip: "{{ k3s_node_ip }}"
+# END ANSIBLE MANAGED - k3s_node_ip
+{% endif %}
+{% set _sans = _k3s_full_tls_san | default(k3s_tls_san | default([])) %}
+{% if _sans | length > 0 %}
+tls-san:
+{% for san in _sans %}
+  - "{{ san }}"
+{% endfor %}
+{% endif %}
+{% if k3s_disable | default([]) | length > 0 %}
+disable:
+{% for item in k3s_disable %}
+  - "{{ item }}"
+{% endfor %}
+{% endif %}
+{% if k3s_node_labels | default([]) | length > 0 %}
+node-label:
+{% for l in k3s_node_labels %}
+  - "{{ l }}"
+{% endfor %}
+{% endif %}
+{% if k3s_node_taints | default([]) | length > 0 %}
+node-taint:
+{% for t in k3s_node_taints %}
+  - "{{ t }}"
+{% endfor %}
+{% endif %}
+{% if k3s_etcd_snapshot_dir | default('') != '' %}
+etcd-snapshot-dir: "{{ k3s_etcd_snapshot_dir }}"
+etcd-snapshot-schedule-cron: "{{ k3s_etcd_snapshot_schedule }}"
+etcd-snapshot-retention: {{ k3s_etcd_snapshot_retention }}
+{% endif %}
+{% if k3s_kubelet_args | default([]) | length > 0 %}
+# BEGIN ANSIBLE MANAGED - k3s_kubelet_args
+kubelet-arg:
+{% for arg in k3s_kubelet_args %}
+  - "{{ arg }}"
+{% endfor %}
+# END ANSIBLE MANAGED - k3s_kubelet_args
+{% endif %}

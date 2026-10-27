@@ -64,6 +64,20 @@
   when: baseline_node_hardening | bool
   tags: [baseline, baseline-node-hardening]
 
+- name: baseline — extra kernel parameters
+  ansible.builtin.include_tasks: sysctl.yml
+  when:
+    - baseline_state == "present"
+    - baseline_sysctls | length > 0
+  tags: [baseline, baseline-sysctl]
+
+- name: baseline — grow the root LV
+  ansible.builtin.include_tasks: root-lv.yml
+  when:
+    - baseline_state == "present"
+    - baseline_root_lv_size | default('') != ''
+  tags: [baseline, baseline-root-lv]
+
 - name: baseline — disable nested virtualization (kvm_amd)
   ansible.builtin.copy:
     dest: /etc/modprobe.d/olympus-kvm-nested.conf

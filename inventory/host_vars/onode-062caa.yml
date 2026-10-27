@@ -1,0 +1,14 @@
+---
+# onode-062caa — k3s HA server (embedded etcd member), agent-services pool (HW9,
+# olympus-sdk#567). Ryzen 7 6800U, 18 GiB, NVMe, Ubuntu 26.04.1. Most vars:
+# group_vars/agent_services.yml.
+# LAN IP: 192.168.253.12 (eno1)
+
+k3s_primary: false
+k3s_init: false   # joins the existing etcd through the VIP; never cluster-init
+
+# Pinned as node-ip in /etc/rancher/k3s/config.yaml. Must match the DHCP
+# reservation for this node on the router (and the address on eno1).
+k3s_node_ip: "192.168.253.12"
+
+tailscale_hostname: onode-062caa

@@ -1,4 +1,7 @@
 ---
+# Right after a first start the kubelet may not have registered the Node yet
+# (NotFound): retry for up to two minutes. Labels and taints are also in
+# config.yaml, which applies them at registration.
 - name: Reconcile node labels (kubectl, server)
   ansible.builtin.command: >
     kubectl label node {{ ansible_facts['hostname'] }}
@@ -8,6 +11,9 @@
     KUBECONFIG: "{{ k3s_kubeconfig_path }}"
   become: true
   register: _label_res
+  until: _label_res.rc == 0 or 'not labeled' in (_label_res.stderr | default('') + _label_res.stdout | default(''))
+  retries: 12
+  delay: 10
   changed_when: "'labeled' in (_label_res.stdout | default(''))"
   failed_when:
     - _label_res.rc != 0
@@ -22,6 +28,9 @@
     KUBECONFIG: "{{ k3s_kubeconfig_path }}"
   become: true
   register: _taint_res
+  until: _taint_res.rc == 0 or 'already has' in (_taint_res.stderr | default(''))
+  retries: 12
+  delay: 10
   changed_when: "'tainted' in (_taint_res.stdout | default(''))"
   failed_when:
     - _taint_res.rc != 0

@@ -19,8 +19,9 @@ name: automerge
 on:
   pull_request:
     types: [labeled, synchronize, ready_for_review]
-  # No workflow_run trigger: this repository has no CI workflows yet. Add one (listing the workflows
-  # whose completion should re-check) when it gets some.
+  workflow_run:
+    workflows: [validate]
+    types: [completed]
   check_suite:
     types: [completed]
 

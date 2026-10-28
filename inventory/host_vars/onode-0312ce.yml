@@ -16,3 +16,8 @@ ddclient_extra_fqdns:
 # Node hardening (baseline role, tasks/node-hardening.yml); rolled out one node at a
 # time: naraka-01, onode-0314ac, then this node, then onode-030c31.
 baseline_node_hardening: true
+
+# Second KVM CI node (olympus-sdk#460; label node-restriction.kubernetes.io/kvm-ci=true
+# is applied by the owner with kubectl): nested virtualization off (security review
+# #394 m6). Takes effect when kvm_amd next loads; reload by hand while no VM is running.
+baseline_kvm_amd_nested_off: true

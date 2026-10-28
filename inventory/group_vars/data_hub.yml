@@ -1,6 +1,6 @@
 ---
 # data-hub — Mac Studio M1 Max (64 GB, 10-core, 927 GB NVMe)
-# Role: the fleet's inference node (llama-server behind LiteLLM) plus, temporarily,
+# Role: an inference node (llama-server, fallback behind the A9 via the cluster LiteLLM) plus, temporarily,
 #       Postgres (retired after WS9 of olympus-sdk#444) and the macOS CI runner (#391).
 #       NOT a k8s node — Apple Silicon Metal cannot be passed to Linux containers.
 #
@@ -128,9 +128,12 @@ llama_server_instances:
       - [--timeout, 120]
 
 # ── LiteLLM ───────────────────────────────────────────────────────────────────
-# Aliases memory-embed, memory-extract, coder-light, coder-heavy, coder-cloud.
-# Bound to the tailnet address; every request needs the master key (1Password).
-litellm_state: present
+# RETIRED (olympus-sdk#569, HW11): routing moved to the cluster LiteLLM (olympus-gitops
+# clusters/olympus/inference), which uses this host's llama-servers as the fallback behind the A9.
+# `absent` boots out the LaunchDaemon com.litellm.proxy, uninstalls the pipx package and removes the
+# plist, /usr/local/bin/litellm-serve and /opt/litellm. The settings below are kept only for the
+# serving-profile render test and a rollback (set `present` again); a follow-up removes them.
+litellm_state: absent
 litellm_run_user: nwilliams-lucas
 litellm_bind_host: "{{ data_hub_tailscale_ip }}"
 litellm_port: 4000

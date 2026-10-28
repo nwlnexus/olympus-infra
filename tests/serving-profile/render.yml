@@ -203,6 +203,9 @@
           - "'FAIL_THRESHOLD=3' in _s"
           - "'STALL_THRESHOLD=3' in _s"
           - "'COOLDOWN=600' in _s"
+          # probes bind their source to HOST (data-hub cannot reach its own tailnet IP otherwise)
+          - "'/usr/bin/curl --interface \"$HOST\"' in _s"
+          - "'CURL=curl_probe' in _s"
           - "'/slots' in _s"
           - "'launchctl kill SIGKILL' in _s"
           - "'RESTART $1 reason=' in _s"

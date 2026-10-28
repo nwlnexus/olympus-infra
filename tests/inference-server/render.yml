@@ -294,6 +294,9 @@
           - "'unit=\"inference-server-${name}.service\"' in _s"
           - "'RESTART $1 reason=' in _s"
           - "'launchctl' not in _s"
+          # every absolute tool path is a real directory path (a /usrawk-style typo made every probe fail on the A9)
+          - _s is not search('/usr[^/]')
+          - _s is not search('/bin[a-z]')
           - "'OnUnitActiveSec=60s' in _t"
           - "'ExecStart=/usr/local/bin/inference-server-watchdog' in _txt['inference-server-watchdog.service']"
           - "'Type=oneshot' in _txt['inference-server-watchdog.service']"

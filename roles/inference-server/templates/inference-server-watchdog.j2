@@ -64,7 +64,7 @@ write_state() {
 
 # metric_value <metrics text> <name>: first sample of <name> (with or without labels).
 metric_value() {
-  printf '%s\n' "$1" | /usrawk -v m="$2" '$1 == m || index($1, m "{") == 1 { print $2; exit }'
+  printf '%s\n' "$1" | /usr/bin/awk -v m="$2" '$1 == m || index($1, m "{") == 1 { print $2; exit }'
 }
 
 chat_probe() { # <port> <alias>
@@ -72,7 +72,7 @@ chat_probe() { # <port> <alias>
   body=$(printf '{"model":"%s","messages":[{"role":"user","content":"ok"}],"max_tokens":4,"temperature":0}' "$2")
   out=$("$CURL" -sS -m "$PROBE_TIMEOUT" -H 'Content-Type: application/json' -d "$body" \
     "http://${HOST}:$1/v1/chat/completions" 2>/dev/null) || return 1
-  printf '%s' "$out" | /usrgrep -q '"choices"'
+  printf '%s' "$out" | /usr/bin/grep -q '"choices"'
 }
 
 embed_probe() { # <port> <alias> <dim>
@@ -80,8 +80,8 @@ embed_probe() { # <port> <alias> <dim>
   body=$(printf '{"model":"%s","input":"ok"}' "$2")
   out=$("$CURL" -sS -m "$PROBE_TIMEOUT" -H 'Content-Type: application/json' -d "$body" \
     "http://${HOST}:$1/v1/embeddings" 2>/dev/null) || return 1
-  n=$(printf '%s' "$out" | /usrtr -d ' \n' \
-    | /usrsed -n 's/.*"embedding":\[\([^]]*\)\].*/\1/p' | /usrawk -F, '{ print NF }')
+  n=$(printf '%s' "$out" | /usr/bin/tr -d ' \n' \
+    | /usr/bin/sed -n 's/.*"embedding":\[\([^]]*\)\].*/\1/p' | /usr/bin/awk -F, '{ print NF }')
   [ "${n:-0}" = "$3" ]
 }
 
@@ -93,16 +93,16 @@ check_chat() {
   decode=$(metric_value "$metrics" "$METRIC_DECODE_TOTAL")
   if [ -z "$processing" ] || [ -z "$decode" ]; then
     # Fallback: /slots (busy slots; sum of tokens decoded by the running tasks).
-    slots=$("$CURL" -sS -m 10 "http://${HOST}:$1/slots" 2>/dev/null | /usrtr -d ' \n') || slots=""
-    if printf '%s' "$slots" | /usrgrep -q '"id"'; then
-      processing=$(printf '%s' "$slots" | /usrgrep -o '"is_processing":true' | /usrwc -l | /usrtr -d ' ')
-      decode=$(printf '%s' "$slots" | /usrgrep -o '"n_decoded":[0-9]*' \
-        | /usrawk -F: '{ s += $2 } END { print "slots" s + 0 }')
+    slots=$("$CURL" -sS -m 10 "http://${HOST}:$1/slots" 2>/dev/null | /usr/bin/tr -d ' \n') || slots=""
+    if printf '%s' "$slots" | /usr/bin/grep -q '"id"'; then
+      processing=$(printf '%s' "$slots" | /usr/bin/grep -o '"is_processing":true' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+      decode=$(printf '%s' "$slots" | /usr/bin/grep -o '"n_decoded":[0-9]*' \
+        | /usr/bin/awk -F: '{ s += $2 } END { print "slots" s + 0 }')
     else
       processing="" decode=""
     fi
   fi
-  if [ -n "$processing" ] && /usrawk -v p="$processing" 'BEGIN { exit !(p + 0 > 0) }'; then
+  if [ -n "$processing" ] && /usr/bin/awk -v p="$processing" 'BEGIN { exit !(p + 0 > 0) }'; then
     fail=0
     if [ -n "$decode" ] && [ "$decode" = "$last_decode" ]; then
       stall=$((stall + 1))

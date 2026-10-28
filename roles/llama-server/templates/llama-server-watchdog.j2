@@ -22,7 +22,12 @@ FAIL_THRESHOLD={{ llama_server_watchdog_fail_threshold }}
 STALL_THRESHOLD={{ llama_server_watchdog_stall_threshold }}
 COOLDOWN={{ llama_server_watchdog_cooldown_seconds }}
 PROBE_TIMEOUT={{ llama_server_watchdog_probe_timeout }}
-CURL=/usr/bin/curl
+# Probes bind their source address to HOST: on data-hub, a connection to its own tailnet
+# address with the source left to macOS fails with EADDRNOTAVAIL ("Can't assign requested
+# address") since 2026-10-28 ~04:00Z, so every probe read health=000 and the watchdog
+# restarted all instances every cooldown. Binding the source works (curl --interface).
+curl_probe() { /usr/bin/curl --interface "$HOST" "$@"; }
+CURL=curl_probe
 
 # name|port|kind|alias|embed_dim
 INSTANCES=(

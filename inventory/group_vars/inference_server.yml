@@ -125,3 +125,8 @@ inference_server_instances:
       - --metrics
       - --no-webui
       - [--timeout, 120]
+
+# --- iSCSI: none on the inference host ---
+# The iscsi role defaults to state present / host_mount with an empty portal,
+# which fails target discovery ("Cannot resolve host"). The A9 has no SAN volume.
+iscsi_state: absent

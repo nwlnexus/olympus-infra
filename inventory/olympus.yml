@@ -3,11 +3,11 @@
 # Used by push playbooks: playbooks/push/join-naraka-agent.yml, etc.
 # The k3s role vars come from group_vars/compute_hub.yml and group_vars/management-hub.yml.
 #
-# Control-plane: 3 onodes (NVMe, HA etcd, kube-vip VIP 192.168.253.2)
+# Control-plane: 5 onodes (HA etcd, kube-vip VIP 192.168.253.2); 2 of them in agent_services
 # Agent: naraka-01 (128 GB RAM, ingress entry point)
 # Data tier: data-hub (macOS, native LaunchDaemons — NOT a k8s node)
-# Inference: GEEKOM A9 (Ubuntu, tailnet host, NOT a k8s node) - group empty until the owner names it
-# Provisioning: styx (PXE/Packer — NOT a k8s node)
+# Inference: GEEKOM A9 a9-mega (Ubuntu, tailnet host, NOT a k8s node)
+# styx (PXE/Packer) was decommissioned in October 2026 and is no longer listed.
 
 all:
   children:
@@ -81,17 +81,6 @@ all:
       hosts:
         a9-mega:
           ansible_host: 192.168.253.15
-      vars:
-        ansible_connection: ssh
-        ansible_user: ansible
-        ansible_ssh_private_key_file: ~/.ssh/ansible
-        ansible_python_interpreter: /usr/bin/python3
-
-    # ── Provisioning (styx — PXE/Packer, NOT a k8s node) ────────────────────
-    provisioning:
-      hosts:
-        styx:
-          ansible_host: "{{ tailscale_ip_styx | default('styx') }}"
       vars:
         ansible_connection: ssh
         ansible_user: ansible

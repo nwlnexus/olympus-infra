@@ -4,15 +4,14 @@
 # Linux twin of group_vars/data_hub.yml: same models, same three instances, same ports.
 #
 # These vars load for hosts in the `inference_server` inventory group (inventory/inference-server.yml
-# for ansible-pull, inventory/olympus.yml for push). The group holds a9-mega; nothing runs because
-# the state below is `absent` (runbook: roles/inference-server/README.md),
-# until a later PR flips it to `present` together with the tailnet address.
+# for ansible-pull, inventory/olympus.yml for push). The group holds a9-mega; runbook:
+# roles/inference-server/README.md.
 
-# TODO(owner, with the later `present` PR): the A9's tailnet address. Placeholder, not an address.
-inference_server_tailscale_ip: "TODO-a9-tailnet-ip"
+# The A9's tailnet address (tag:inference, joined 2026-10-27 by bootstrap-host.yml). llama-server binds here only.
+inference_server_tailscale_ip: "100.89.177.55"
 
-# Flip to `present` in the PR that fills in the tailnet address below.
-inference_server_state: absent
+# present since 2026-10-28 (HW10 phase E, olympus-sdk#568).
+inference_server_state: present
 
 # ── ansible-pull (applies to the host once it is in the group) ─────────────────
 ansible_pull_state: present

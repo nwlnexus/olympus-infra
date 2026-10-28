@@ -603,7 +603,6 @@
               - _labels['node-role.kubernetes.io/etcd'] | default('') == 'true'
               - _node.status.conditions | selectattr('type', 'equalto', 'EtcdIsVoter') | map(attribute='status') | list == ['True']
               - _labels['olympus.io/role'] | default('') == 'agent-services'
-              - _labels['olympus.io/ci'] | default('') == 'true'
               - "'olympus.io/role=agent-services:NoSchedule;' in (_taints | default('', true))"
               - _kubelet.podPidsLimit | default(0) | int == 4096
               - _node.status.allocatable.memory != _node.status.capacity.memory

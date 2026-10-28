@@ -4,7 +4,9 @@
 # Owner decision 2026-10-27: they join as k3s HA SERVERS (embedded etcd grows from 3
 # to 5 members: quorum 3, tolerates 2 failures), but they are a separate pool: the
 # label olympus.io/role=agent-services plus the NoSchedule taint keep everything off
-# them except workloads pinned there (ARC runners, memory, inference; decision H10).
+# them except workloads pinned there (memory, inference; decision H10). Owner
+# decision 2026-10-28 (olympus-sdk#567): the ARC runner sets stay on compute_hub,
+# so the former olympus.io/ci=true label is dropped.
 #
 # Why a group of its own and not compute_hub:
 #   - compute_hub carries cluster-scoped one-shot roles (1password-connect,
@@ -52,10 +54,9 @@ k3s_cleanup_orphan_traefik_crds: false
 k3s_remove_disable_skip_files: false
 
 # Placement: applied at registration (config.yaml node-label/node-taint), so no pod
-# lands before the taint exists. One label key cannot hold two values, hence two keys.
+# lands before the taint exists.
 k3s_node_labels:
   - "olympus.io/role=agent-services"
-  - "olympus.io/ci=true"
 k3s_node_taints:
   - "olympus.io/role=agent-services:NoSchedule"
 

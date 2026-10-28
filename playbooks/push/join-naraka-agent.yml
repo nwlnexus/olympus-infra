@@ -68,7 +68,7 @@
           ║    2. Drain/delete all management-hub workloads              ║
           ║    3. Uninstall k3s server from naraka-01                   ║
           ║    4. Install k3s agent (join olympus cluster)              ║
-          ║    5. Apply label + taint: olympus.io/role=management-hub   ║
+          ║    5. No label/taint (general worker, olympus-sdk#567)      ║
           ║                                                              ║
           ║  Type 'yes' to proceed, anything else to abort              ║
           ╚══════════════════════════════════════════════════════════════╝
@@ -154,7 +154,7 @@
           - ""
           - "Next steps (Plan 4 continued):"
           - "  1. Verify Flux reconciles clusters/olympus cleanly"
-          - "  2. Verify ingress workloads (cloudflared + Traefik) land on naraka-01"
+          - "  2. Verify DaemonSets (otel, node-exporter, trident) run on naraka-01"
           - "  3. Decommission management-hub cloudflared tunnel"
           - "  4. Delete clusters/management-hub from olympus-gitops"
       tags: [verify]

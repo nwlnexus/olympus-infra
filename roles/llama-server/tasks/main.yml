@@ -313,6 +313,9 @@
                   | map(attribute='_instance') | map(attribute='name') | unique | list }}
 
     - name: Wait for llama-server /health to return 200
+      # From the controller: data-hub cannot reach its own tailnet address (EADDRNOTAVAIL, 2026-10-28).
+      delegate_to: localhost
+      become: false
       ansible.builtin.uri:
         url: "http://{{ llama_server_api_host }}:{{ _instance.port }}/health"
         method: GET
@@ -328,6 +331,9 @@
       when: not ansible_check_mode
 
     - name: Probe chat instances with a strict json_schema request
+      # From the controller: data-hub cannot reach its own tailnet address (EADDRNOTAVAIL, 2026-10-28).
+      delegate_to: localhost
+      become: false
       ansible.builtin.uri:
         url: "http://{{ llama_server_api_host }}:{{ _instance.port }}/v1/chat/completions"
         method: POST
@@ -367,6 +373,9 @@
         - _instance.name in _llama_server_probe_names
 
     - name: Probe embedding instances for the expected dimension
+      # From the controller: data-hub cannot reach its own tailnet address (EADDRNOTAVAIL, 2026-10-28).
+      delegate_to: localhost
+      become: false
       ansible.builtin.uri:
         url: "http://{{ llama_server_api_host }}:{{ _instance.port }}/v1/embeddings"
         method: POST

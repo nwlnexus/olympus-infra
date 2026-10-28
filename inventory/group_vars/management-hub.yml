@@ -8,16 +8,19 @@
 ansible_user: ansible
 
 # k3s — naraka-01 joins as agent in the unified olympus cluster.
-# Control-plane is the 3 onodes (compute_hub group, kube-vip VIP 192.168.253.2).
+# Control-plane is the 5 onodes (compute_hub + agent_services, kube-vip VIP 192.168.253.2).
 # Apply with: playbooks/push/join-naraka-agent.yml (Plan 4 supervised cutover).
 k3s_state: present
 k3s_agent: true
 k3s_server_url: "https://192.168.253.2:6443"
 k3s_token_op_ref: "op://Dev/compute-hub-k3s-token/password"
-k3s_node_labels:
-  - "olympus.io/role=management-hub"
-k3s_node_taints:
-  - "olympus.io/role=management-hub:NoSchedule"
+# No placement label or taint (olympus-sdk#567, owner decision 2026-10-28): naraka-01
+# is a general worker. The former olympus.io/role=management-hub label + NoSchedule
+# taint are gone; k3s applies node-label/node-taint only at registration, so the
+# live node was changed with kubectl and nothing here may re-add them. Workloads
+# that must stay off this 4-CPU node (the ARC runner sets) exclude it themselves.
+k3s_node_labels: []
+k3s_node_taints: []
 
 # Tailscale (hostname is only used on first join; the node is already
 # connected as naraka-01, and `tailscale set` does not rename it)

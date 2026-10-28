@@ -41,7 +41,7 @@
           - not gv_agent_services.k3s_cleanup_orphan_traefik_crds
           - not gv_agent_services.k3s_remove_disable_skip_files
           - "'olympus.io/role=agent-services' in gv_agent_services.k3s_node_labels"
-          - "'olympus.io/ci=true' in gv_agent_services.k3s_node_labels"
+          - "'olympus.io/ci=true' not in gv_agent_services.k3s_node_labels"
           - gv_agent_services.k3s_node_taints == ['olympus.io/role=agent-services:NoSchedule']
           - gv_agent_services.ansible_pull_inventory == 'inventory/agent-services.yml'
           - "'onepassword_connect_state' not in gv_agent_services"

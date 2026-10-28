@@ -131,6 +131,10 @@ stayed green. The owner chose a hard cutover with no soak (olympus-sdk#588, plan
   | `qwen25-7b` | 8082 | `Qwen2.5-7B-Instruct-Q4_K_M.gguf` (`bartowski/...`) | `coder-light` |
   | `nomic-embed` | 8083 | `nomic-embed-text-v1.5.f16.gguf` (768-dim) | `memory-embed` |
 
+  The A9 twin (`roles/inference-server`) runs `qwen36-27b` and `nomic-embed` identically; since olympus-sdk#460 it
+  replaces `qwen25-7b` with `qwen35-9b` (:8082, `coder-light`) and adds `qwen36-35b-a3b` (:8084, `coder-medium`) and
+  `qwen36-27b-coder` (:8085, `coder-heavy`). data-hub keeps the three above as the fallback.
+
   - Labels `com.olympus.llama-server.<name>`, wrappers `/usr/local/bin/llama-server-serve-<name>`,
     logs `/var/log/llama-server-<name>.{log,err}` (rotated by `/etc/newsyslog.d/llama-server.conf`).
     Each binds `100.95.232.41` only, never `0.0.0.0`, and has no API key (tailnet only,

@@ -87,19 +87,49 @@
           - inference_server_models | rejectattr('revision', 'match', '^[0-9a-f]{40}$') | list | length == 0
           - inference_server_models | rejectattr('file', 'match', '^[A-Za-z0-9._-]+\.gguf$') | list | length == 0
           - inference_server_models | map(attribute='size') | select('integer') | select('gt', 0) | list | length == inference_server_models | length
-          - _names | sort == ['nomic-embed', 'qwen25-7b', 'qwen36-27b']
-          - _ports | sort == [8081, 8082, 8083]
+          - _names | sort == ['nomic-embed', 'qwen35-9b', 'qwen36-27b', 'qwen36-27b-coder', 'qwen36-35b-a3b']
+          - _ports | sort == [8081, 8082, 8083, 8084, 8085]
+          - _ports | unique | length == _ports | length
+          - inference_server_instances | map(attribute='alias') | unique | length == _names | length
+          # no qwen2.5 for coding (owner rule, July 2026)
+          - inference_server_models | map(attribute='file') | select('search', '(?i)qwen2\\.5') | list | length == 0
+          - _by_name['qwen36-27b'].model == _by_name['qwen36-27b-coder'].model
+          - _by_name['qwen36-27b'].port == 8081
+          - _by_name['qwen35-9b'].port == 8082
+          - _by_name['qwen36-35b-a3b'].port == 8084
+          - _by_name['qwen36-27b-coder'].port == 8085
           - _by_name['nomic-embed'].kind == 'embed'
           - _by_name['nomic-embed'].embed_dim == 768
           - inference_server_bind_host == '192.0.2.10'
 
-    - name: Model pins and instance args match the data-hub profile (one shared shape)
+    # The A9 is a superset of data-hub since olympus-sdk#460: every instance and model the two share
+    # (27B on :8081, the embedder on :8083) must stay identical, so the fallback behaves like the primary.
+    - name: Shared model pins and instance args match the data-hub profile (one shared shape)
       vars:
         _dh: "{{ lookup('ansible.builtin.file', '../../inventory/group_vars/data_hub.yml') | from_yaml }}"
+        _dh_inst: "{{ dict(_dh.llama_server_instances | map(attribute='name') | zip(_dh.llama_server_instances)) }}"
+        _dh_models: "{{ dict(_dh.llama_server_models | map(attribute='file') | zip(_dh.llama_server_models)) }}"
+        _a9_models: "{{ dict(inference_server_models | map(attribute='file') | zip(inference_server_models)) }}"
       ansible.builtin.assert:
         that:
-          - _dh.llama_server_models == inference_server_models
-          - _dh.llama_server_instances == inference_server_instances
+          - _dh_inst['qwen36-27b'] == _by_name['qwen36-27b']
+          - _dh_inst['nomic-embed'] == _by_name['nomic-embed']
+          - _dh_models['Qwen3.6-27B-Q5_K_M.gguf'] == _a9_models['Qwen3.6-27B-Q5_K_M.gguf']
+          - _dh_models['nomic-embed-text-v1.5.f16.gguf'] == _a9_models['nomic-embed-text-v1.5.f16.gguf']
+          # the A9-only coder instances serve the same 27B family with the same flags apart from context
+          - _by_name['qwen36-27b-coder'].args | difference(_by_name['qwen36-27b'].args) == [['-c', 65536]]
+          - _by_name['qwen36-35b-a3b'].args == _by_name['qwen36-27b-coder'].args
+
+    # GPU memory budget (olympus-sdk#460): weights of every started instance plus KV, against the 96 GiB GTT
+    # limit. 27B twice (two processes, two copies). Estimate 76.6 GiB; this guards against growth, not accuracy.
+    - name: Resident weights of all instances stay under 70 GiB of the 96 GiB GTT (KV and compute are the rest)
+      vars:
+        _sizes: "{{ dict(inference_server_models | map(attribute='file') | zip(inference_server_models | map(attribute='size'))) }}"
+        _weights: "{{ inference_server_instances | map(attribute='model') | map('extract', _sizes) | map('int') | sum }}"
+      ansible.builtin.assert:
+        that:
+          - _weights | int < 70 * 1024 * 1024 * 1024
+          - inference_server_gpu_memory_gib | int == 96
 
     # ── Render ─────────────────────────────────────────────────────────────────
     - name: Render wrappers
@@ -180,7 +210,7 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: Instance arguments match the data-hub serving table (27B, 7B, embed)
+    - name: Instance arguments (27B memory-extract, 9B coder-light, 35B-A3B coder-medium, 27B coder-heavy, embed)
       ansible.builtin.assert:
         that:
           - "'-c 32768' in _txt['inference-server-serve-qwen36-27b']"
@@ -193,8 +223,24 @@
             "--chat-template-kwargs '{\"enable_thinking\":false}'" in _txt['inference-server-serve-qwen36-27b']
           - "'--cache-ram 0' in _txt['inference-server-serve-qwen36-27b']"
           - "'--timeout 900' in _txt['inference-server-serve-qwen36-27b']"
-          - "'--timeout 900' in _txt['inference-server-serve-qwen25-7b']"
-          - "'--reasoning-format' not in _txt['inference-server-serve-qwen25-7b']"
+          - "'-c 32768' in _txt['inference-server-serve-qwen35-9b']"
+          - "'-np 1' in _txt['inference-server-serve-qwen35-9b']"
+          - "'--timeout 900' in _txt['inference-server-serve-qwen35-9b']"
+          - "'--reasoning-format deepseek' in _txt['inference-server-serve-qwen35-9b']"
+          - >-
+            "--chat-template-kwargs '{\"enable_thinking\":false}'" in _txt['inference-server-serve-qwen35-9b']
+          - "'-c 65536' in _txt['inference-server-serve-qwen36-35b-a3b']"
+          - "'-np 1' in _txt['inference-server-serve-qwen36-35b-a3b']"
+          - "'-ngl 999' in _txt['inference-server-serve-qwen36-35b-a3b']"
+          - "'-fa on' in _txt['inference-server-serve-qwen36-35b-a3b']"
+          - "'--jinja' in _txt['inference-server-serve-qwen36-35b-a3b']"
+          - "'-m /opt/olympus/models/gguf/Qwen3.6-35B-A3B-UD-Q5_K_M.gguf' in _txt['inference-server-serve-qwen36-35b-a3b']"
+          - >-
+            "--chat-template-kwargs '{\"enable_thinking\":false}'" in _txt['inference-server-serve-qwen36-35b-a3b']
+          - "'-c 65536' in _txt['inference-server-serve-qwen36-27b-coder']"
+          - "'-np 1' in _txt['inference-server-serve-qwen36-27b-coder']"
+          - "'-m /opt/olympus/models/gguf/Qwen3.6-27B-Q5_K_M.gguf' in _txt['inference-server-serve-qwen36-27b-coder']"
+          - "'--timeout 900' in _txt['inference-server-serve-qwen36-27b-coder']"
           - "'--embeddings' in _txt['inference-server-serve-nomic-embed']"
           - "'--pooling mean' in _txt['inference-server-serve-nomic-embed']"
           - "'-np 4' in _txt['inference-server-serve-nomic-embed']"
@@ -260,6 +306,8 @@
           - "'table inet olympus_inference' in _n"
           - "'tcp dport 8081 ct state new ct count over 7 reject with tcp reset' in _n"
           - "'tcp dport 8082 ct state new ct count over 7 reject with tcp reset' in _n"
+          - "'tcp dport 8084 ct state new ct count over 7 reject with tcp reset' in _n"
+          - "'tcp dport 8085 ct state new ct count over 7 reject with tcp reset' in _n"
           - "'tcp dport 8083 ct state new ct count over 10 reject with tcp reset' in _n"
           - "'ExecStart=/usr/sbin/nft -f /etc/olympus/inference-server-limits.nft' in _txt['inference-server-limits.service']"
 
@@ -284,7 +332,9 @@
           - "\"METRIC_DECODE_TOTAL='llamacpp:n_decode_total'\" in _s"
           - "\"HOST='192.0.2.10'\" in _s"
           - "\"'qwen36-27b|8081|chat|qwen3.6-27b|0'\" in _s"
-          - "\"'qwen25-7b|8082|chat|qwen2.5-7b-instruct|0'\" in _s"
+          - "\"'qwen35-9b|8082|chat|qwen3.5-9b|0'\" in _s"
+          - "\"'qwen36-35b-a3b|8084|chat|qwen3.6-35b-a3b|0'\" in _s"
+          - "\"'qwen36-27b-coder|8085|chat|qwen3.6-27b-coder|0'\" in _s"
           - "\"'nomic-embed|8083|embed|nomic-embed-text|768'\" in _s"
           - "'FAIL_THRESHOLD=3' in _s"
           - "'STALL_THRESHOLD=3' in _s"

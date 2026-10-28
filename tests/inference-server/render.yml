@@ -23,7 +23,7 @@
       - "ttm.page_pool_size={{ inference_server_ttm_page_pool_size }}"
   tasks:
     # vars_files outrank play vars, so the test address and state go in as facts. The address is a
-    # documentation one (RFC 5737), not a host: the shipped group_vars carry a TODO placeholder.
+    # documentation one (RFC 5737), not a host: tests never render with the real tailnet address.
     - name: Override the shipped placeholders for rendering
       ansible.builtin.set_fact:
         inference_server_tailscale_ip: "192.0.2.10"
@@ -37,16 +37,16 @@
         state: directory
         mode: "0700"
 
-    # ── The shipped inventory keeps the host out of every play ─────────────────
-    - name: Shipped inventory names a9-mega, state stays absent and the tailnet IP is a TODO
+    # ── The shipped inventory: a9-mega, present, bound to its tailnet address ──
+    - name: Shipped inventory names a9-mega, state is present and the tailnet IP is a 100.64.0.0/10 address
       vars:
         _shipped: "{{ lookup('ansible.builtin.file', '../../inventory/group_vars/inference_server.yml') | from_yaml }}"
         _pull: "{{ lookup('ansible.builtin.file', '../../inventory/inference-server.yml') | from_yaml }}"
         _push: "{{ lookup('ansible.builtin.file', '../../inventory/olympus.yml') | from_yaml }}"
       ansible.builtin.assert:
         that:
-          - _shipped.inference_server_state == 'absent'
-          - _shipped.inference_server_tailscale_ip is match('^TODO')
+          - _shipped.inference_server_state == 'present'
+          - _shipped.inference_server_tailscale_ip is match('^100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.[0-9]{1,3}\\.[0-9]{1,3}$')
           - _shipped.ansible_pull_limit == 'a9-mega'
           - _shipped.tailscale_hostname == 'a9-mega'
           - _shipped.tailscale_tags == ['tag:inference']

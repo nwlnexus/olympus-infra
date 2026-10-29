@@ -1,7 +1,9 @@
 ---
 # GEEKOM A9 Mega (Ryzen AI Max+ 395, 128 GB unified memory) - the fleet's inference host.
 # Ubuntu 26.04, tailnet host managed by olympus-infra, NOT a k3s node (olympus-sdk#568, H8).
-# Linux twin of group_vars/data_hub.yml: same models, same three instances, same ports.
+# Linux twin of group_vars/data_hub.yml for the shared instances (qwen36-27b :8081, nomic-embed :8083: same
+# pins, same args). Since olympus-sdk#460 the A9 also runs instances data-hub does not (coder-medium,
+# a dedicated coder-heavy, a Qwen3.5 coder-light); data-hub keeps its three and is only the fallback.
 #
 # These vars load for hosts in the `inference_server` inventory group (inventory/inference-server.yml
 # for ansible-pull, inventory/olympus.yml for push). The group holds a9-mega; runbook:
@@ -55,11 +57,18 @@ inference_server_models:
     revision: 82d411acf4a06cfb8d9b073a5211bf410bfc29bf
     size: 19509790944
     sha256: cfecab168156269f25d5ffe9e13cf2a401ca2f43a9693fa00bcd1625316ccbde
-  - file: Qwen2.5-7B-Instruct-Q4_K_M.gguf
-    repo: bartowski/Qwen2.5-7B-Instruct-GGUF
-    revision: 8911e8a47f92bac19d6f5c64a2e2095bd2f7d031
-    size: 4683074240
-    sha256: 65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423
+  # coder-light (olympus-sdk#460; replaces Qwen2.5-7B: the July rule is no qwen2.5 for coding).
+  - file: Qwen3.5-9B-Q4_K_M.gguf
+    repo: unsloth/Qwen3.5-9B-GGUF
+    revision: 3885219b6810b007914f3a7950a8d1b469d598a5
+    size: 5680522464
+    sha256: 03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8
+  # coder-medium: Qwen3.6-35B-A3B (MoE, 3B active), UD-Q5_K_M (olympus-sdk#460, decision doc 4.6).
+  - file: Qwen3.6-35B-A3B-UD-Q5_K_M.gguf
+    repo: unsloth/Qwen3.6-35B-A3B-GGUF
+    revision: a483e9e6cbd595906af30beda3187c2663a1118c
+    size: 26456194016
+    sha256: c13ce26253ea334df472bd8fbd2d6da66d8a41195c17f6fcbf44c4d20ece0932
   - file: nomic-embed-text-v1.5.f16.gguf
     repo: nomic-ai/nomic-embed-text-v1.5-GGUF
     revision: 0188c9bf409793f810680a5a431e7b899c46104c
@@ -69,7 +78,7 @@ inference_server_models_remove: []
 # Flags the installed llama-server does not know go here (check `llama-server --help`).
 inference_server_drop_flags: []
 inference_server_instances:
-  # memory-extract + coder-heavy. Thinking off by default (LiteLLM sends
+  # memory-extract only since olympus-sdk#460 (coder-heavy moved to :8085). Thinking off by default (LiteLLM sends
   # enable_thinking per alias); reasoning, if any, goes to reasoning_content.
   - name: qwen36-27b
     port: 8081
@@ -89,11 +98,11 @@ inference_server_instances:
       - --metrics
       - --no-webui
       - [--timeout, 900]
-  # coder-light
-  - name: qwen25-7b
+  # coder-light: Qwen3.5-9B (same family and chat template as the 27B; thinking off like the others).
+  - name: qwen35-9b
     port: 8082
-    model: Qwen2.5-7B-Instruct-Q4_K_M.gguf
-    alias: qwen2.5-7b-instruct
+    model: Qwen3.5-9B-Q4_K_M.gguf
+    alias: qwen3.5-9b
     kind: chat
     args:
       - [-c, 32768]
@@ -101,6 +110,47 @@ inference_server_instances:
       - [-ngl, 999]
       - [-fa, "on"]
       - --jinja
+      - [--reasoning-format, deepseek]
+      - [--chat-template-kwargs, '{"enable_thinking":false}']
+      - [-n, 8192]
+      - [--cache-ram, 0]
+      - --metrics
+      - --no-webui
+      - [--timeout, 900]
+  # coder-medium: Qwen3.6-35B-A3B MoE, 64k context (about 26.6 GiB in GTT).
+  - name: qwen36-35b-a3b
+    port: 8084
+    model: Qwen3.6-35B-A3B-UD-Q5_K_M.gguf
+    alias: qwen3.6-35b-a3b
+    kind: chat
+    args:
+      - [-c, 65536]
+      - [-np, 1]
+      - [-ngl, 999]
+      - [-fa, "on"]
+      - --jinja
+      - [--reasoning-format, deepseek]
+      - [--chat-template-kwargs, '{"enable_thinking":false}']
+      - [-n, 8192]
+      - [--cache-ram, 0]
+      - --metrics
+      - --no-webui
+      - [--timeout, 900]
+  # coder-heavy, dedicated (olympus-sdk#460): a second process on the same GGUF as :8081 so a coding
+  # turn never queues behind memory extraction. Own weights copy plus 64k KV in GTT (about 22.7 GiB).
+  - name: qwen36-27b-coder
+    port: 8085
+    model: Qwen3.6-27B-Q5_K_M.gguf
+    alias: qwen3.6-27b-coder
+    kind: chat
+    args:
+      - [-c, 65536]
+      - [-np, 1]
+      - [-ngl, 999]
+      - [-fa, "on"]
+      - --jinja
+      - [--reasoning-format, deepseek]
+      - [--chat-template-kwargs, '{"enable_thinking":false}']
       - [-n, 8192]
       - [--cache-ram, 0]
       - --metrics

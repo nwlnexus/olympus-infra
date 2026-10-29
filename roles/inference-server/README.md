@@ -4,9 +4,10 @@ llama.cpp `llama-server` on Ubuntu (systemd): one unit per model, a stall watchd
 timer, a per-instance connection cap, and the amdgpu/TTM kernel parameters for the GEEKOM A9
 (Ryzen AI Max+ 395 "Strix Halo", 128 GB unified memory). Linux twin of `roles/llama-server` (macOS,
 data-hub): `inference_server_models` and `inference_server_instances` have the same shape as
-`llama_server_models` / `llama_server_instances`, and `inventory/group_vars/inference_server.yml`
-carries the same three instances on the same ports. `tests/inference-server` asserts the two
-files stay identical.
+`llama_server_models` / `llama_server_instances`. `inventory/group_vars/inference_server.yml` carries the
+data-hub instances (27B on 8081, embedder on 8083, same pins and args) plus the A9-only coder instances
+(olympus-sdk#460: 9B coder-light 8082, 35B-A3B coder-medium 8084, dedicated 27B coder-heavy 8085).
+`tests/inference-server` asserts the shared instances and pins stay identical.
 
 Spec: olympus-sdk H8 (`docs/superpowers/specs/2026-10-26-agent-harness-knowledge-and-hosts-design.md`),
 issue nwlnexus/olympus-sdk#568 (HW10). The A9 is a tailnet host managed by olympus-infra, not a k3s node.
@@ -149,19 +150,19 @@ Nothing in the repo targets the box until step 3. Steps 1-2 are on the A9, 3-8 a
    - `inventory/olympus.yml`, group `inference_server`: add `a9-mega` with `ansible_host: 192.168.253.15` (LAN address, push runs).
    - `inventory/group_vars/inference_server.yml`: set `inference_server_tailscale_ip` (marked `TODO`) and flip `inference_server_state` to `present`
      (a later PR, once the tailnet address is known; `ansible_pull_limit` and `tailscale_hostname` are already `a9-mega`). Merge only after `validate` is green.
-4. **Prepare: the prepare tag** (installs packages, downloads llama.cpp and ~24.5 GB of GGUF, no unit touched). On the A9 as the
+4. **Prepare: the prepare tag** (installs packages, downloads llama.cpp and ~52 GB of GGUF (27B 19.5, 35B-A3B 26.5, 9B 5.7, embedder 0.3 GB; the old 7B stays on disk, 4.7 GB), no unit touched). On the A9 as the
    `ansible` user, the same way the scheduled pull runs (the `always`-tagged pre-tasks need `/etc/olympus/op-service-account-token`
    and a Hermes token or `hermes-disabled` flag, as on every host; `baseline` and `ansible-pull` install the schedule on the first full run):
    `ansible-pull -U https://github.com/nwlnexus/olympus-infra.git -i inventory/inference-server.yml -l <a9-host-name> playbooks/pull/olympus.yml --tags inference_server_prepare`.
    Then once more with `-e inference_server_verify_checksums=true` to check every sha256.
 5. **Kernel parameters.** Run the same command with `--tags inference_server_kernel` (or the full role). The play prints `REBOOT REQUIRED`.
    **Reboot the host yourself** (the role never does), then verify `/sys/module/ttm/parameters/pages_limit` is `25165824`.
-6. **Start.** Run the full role (`--tags inference-server`, or let the next scheduled pull do it): it installs the wrappers, units, caps and the watchdog, starts the three
+6. **Start.** Run the full role (`--tags inference-server`, or let the next scheduled pull do it): it installs the wrappers, units, caps and the watchdog, starts the five
    instances, waits for `/health` 200 on each (a 27B model takes a minute or more to load) and runs the probes for the instances it started.
 7. **Verify the probes** (from the A9 or any tailnet host; `<ip>` is the tailnet address):
 
    ```sh
-   for p in 8081 8082 8083; do curl -s -o /dev/null -w "$p %{http_code}\n" http://<ip>:$p/health; done      # 200 each
+   for p in 8081 8082 8083 8084 8085; do curl -s -o /dev/null -w "$p %{http_code}\n" http://<ip>:$p/health; done      # 200 each
    curl -s http://<ip>:8081/v1/chat/completions -H 'Content-Type: application/json' \
      -d '{"model":"qwen3.6-27b","messages":[{"role":"user","content":"ok"}],"max_tokens":4}'                  # "choices"
    curl -s http://<ip>:8083/v1/embeddings -H 'Content-Type: application/json' \
@@ -183,11 +184,33 @@ LiteLLM runs in the cluster and treats the A9 as the primary backend (A9 -> data
 
 | LiteLLM alias | backend model | A9 instance | port |
 |---|---|---|---|
-| `memory-extract`, `coder-heavy` | `openai/qwen3.6-27b` (`extra_body.chat_template_kwargs.enable_thinking: false`) | `qwen36-27b` | 8081 |
-| `coder-light` | `openai/qwen2.5-7b-instruct` | `qwen25-7b` | 8082 |
+| `memory-extract` | `openai/qwen3.6-27b` (`extra_body.chat_template_kwargs.enable_thinking: false`) | `qwen36-27b` | 8081 |
+| `coder-light` | `openai/qwen3.5-9b` (thinking off as above) | `qwen35-9b` | 8082 |
 | `memory-embed` | `openai/nomic-embed-text` (768-dim) | `nomic-embed` | 8083 |
+| `coder-medium` | `openai/qwen3.6-35b-a3b` (thinking off as above) | `qwen36-35b-a3b` | 8084 |
+| `coder-heavy` | `openai/qwen3.6-27b-coder` (thinking off as above) | `qwen36-27b-coder` | 8085 |
 
 The same shape as `litellm_llama_*_instance` on data-hub (`roles/litellm`), so HW11 adds the A9 `api_base` per alias in front of
 data-hub's. Set LiteLLM's per-deployment parallelism to the instance's `-np` and keep its timeout (520 s) below llama-server's 900 s;
 a connection reset from the cap above is the "backend is full" signal to fail over on. The tailnet address and host name are filled
 in by the owner (step 3) and live in the private olympus-sdk / gitops configuration, not in this public repo.
+
+### GPU memory (GTT) budget, olympus-sdk#460
+
+Llama-server allocates weights and the KV cache at start, so GTT is flat (spike: 27,709 MiB with the original three instances).
+Estimates per instance (weights = file size; KV = full-attention layers x KV heads x head dim x 2 (K,V) x 2 B x context;
+this reproduces the measured 27.7 GiB to within 1%):
+
+| Instance | Weights | KV | Total (MiB) |
+|---|---:|---:|---:|
+| `qwen36-27b` :8081, 32k | 18,606 | 2,048 + ~150 recurrent | ~20,800 |
+| `qwen35-9b` :8082, 32k (replaces qwen25-7b, 6,258) | 5,418 | 1,024 + ~100 | ~6,550 |
+| `nomic-embed` :8083 | 262 | ~290 | ~550 |
+| `qwen36-35b-a3b` :8084, 64k | 25,230 | 1,280 + ~60 | ~27,200 incl. ~600 compute |
+| `qwen36-27b-coder` :8085, 64k | 18,606 | 4,096 + ~150 | ~23,250 incl. ~400 compute |
+| **Total** | | | **~78,400 MiB (76.6 GiB) of 98,304 (96 GiB); headroom ~19.5 GiB** |
+
+Both 27B processes load the same GGUF but each holds its own copy in GTT. The three chat instances share the 256 GB/s memory
+bandwidth, so simultaneous generation slows all of them. The headroom is what keeps the 32 GiB OS side and bursts safe: do not
+add a fifth model, and do not raise a context, without redoing this table. If the headroom ever has to grow, drop the dedicated
+`coder-heavy` and run `-np 2 -c 65536` on :8081 instead (shares the weights, about +2 GiB, but the slots then share one GPU queue).

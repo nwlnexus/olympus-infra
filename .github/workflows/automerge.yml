@@ -12,7 +12,11 @@ name: automerge
 # Required checks: read from `GET /repos/{repo}/rules/branches/{base}` (repository and org rulesets). If
 # the base has no required checks, every check run and commit status reported on the head commit (except
 # this workflow's own job) must have passed instead. A strict ("up to date") rule on a PR that is behind
-# gets an update-branch, and the merge happens on the next run.
+# gets an update-branch, and the merge happens on the next run. A merge that GitHub refuses with 405
+# ("Required status check ... is expected") or "Base branch was modified" means the branch went stale
+# before GitHub recomputed its state: that also gets an update-branch instead of a dead end
+#. A 15-minute `schedule` sweep picks up any labelled PR that is still behind, or green
+# but unmerged, because nothing else re-triggers it.
 #
 # The same file lives in olympus-sdk, olympus-infra, olympus-gitops, agent-skills and nix-darwin-hm;
 # only the `workflow_run.workflows` list differs (the workflows whose completion should re-check).
@@ -24,6 +28,8 @@ on:
     types: [completed]
   check_suite:
     types: [completed]
+  schedule:
+    - cron: "*/15 * * * *"
 
 permissions:
   contents: read
@@ -32,7 +38,7 @@ permissions:
   statuses: read
 
 concurrency:
-  group: automerge-${{ github.event.pull_request.number || github.event.workflow_run.head_sha || github.event.check_suite.head_sha }}
+  group: automerge-${{ github.event.pull_request.number || github.event.workflow_run.head_sha || github.event.check_suite.head_sha || 'sweep' }}
   cancel-in-progress: false
 
 jobs:
@@ -47,6 +53,7 @@ jobs:
         && github.event.workflow_run.conclusion == 'success')
       || (github.event_name == 'check_suite'
         && github.event.check_suite.conclusion == 'success')
+      || github.event_name == 'schedule'
     # Pure API caller (bash, gh, jq); shares the small poller pool where one is configured.
     runs-on: ${{ fromJSON(vars.RUNNER_GATE || '"ubuntu-latest"') }}
     timeout-minutes: 10
@@ -68,6 +75,8 @@ jobs:
             pull_request) candidates=$PR_NUMBER ;;
             workflow_run) sha=$WR_SHA; candidates=$(printf '%s' "$WR_PRS" | jq -r '.[]?.number') ;;
             check_suite) sha=$CS_SHA; candidates=$(printf '%s' "$CS_PRS" | jq -r '.[]?.number') ;;
+            schedule) candidates=$(gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" \
+              --jq '.[] | select(.draft | not) | select([.labels[].name] | index("automerge")) | .number') ;;
             *) echo "automerge: event $EVENT is not handled"; exit 0 ;;
           esac
           if [ -z "$candidates" ] && [ -n "${sha:-}" ]; then
@@ -125,6 +134,12 @@ jobs:
           SELF_JOB: automerge
         run: |
           set -euo pipefail
+          # Merge refusals that mean "stale branch, GitHub has not caught up", not "never mergeable".
+          # test-automerge-refusal.sh reads this line, keep it on one line.
+          REFUSAL_RE='HTTP 405|required status check .* expected|base branch was modified'
+          update_branch() { # $1 = PR number, $2 = head sha
+            gh api -X PUT "repos/$REPO/pulls/$1/update-branch" -f expected_head_sha="$2" --silent
+          }
           rc=0
           for n in $PRS; do
             pr=$(gh api "repos/$REPO/pulls/$n")
@@ -176,10 +191,14 @@ jobs:
               echo "automerge: #$n checks on ${sha:0:12} are $verdict; not merging"; continue
             fi
 
-            mstate=$(printf '%s' "$pr" | jq -r .mergeable_state)
+            # A fresh push can leave mergeable_state unset or "unknown"; ask once more before deciding.
+            mstate=$(printf '%s' "$pr" | jq -r '.mergeable_state // "unknown"')
+            if [ "$mstate" = unknown ]; then
+              sleep 5; mstate=$(gh api "repos/$REPO/pulls/$n" --jq '.mergeable_state // "unknown"')
+            fi
             if [ "$strict" = true ] && [ "$mstate" = behind ]; then
               echo "automerge: #$n is behind $base and the rule is strict; updating the branch (merge follows on the next run)"
-              gh api -X PUT "repos/$REPO/pulls/$n/update-branch" -f expected_head_sha="$sha" --silent \
+              update_branch "$n" "$sha" \
                 || echo "automerge: #$n update-branch failed; leaving it"
               continue
             fi
@@ -187,11 +206,20 @@ jobs:
               echo "automerge: #$n has merge conflicts; not merging"; continue
             fi
 
-            if gh api -X PUT "repos/$REPO/pulls/$n/merge" -f merge_method=squash -f sha="$sha" --silent; then
+            if merge_out=$(gh api -X PUT "repos/$REPO/pulls/$n/merge" -f merge_method=squash -f sha="$sha" --silent 2>&1); then
               echo "automerge: #$n squash-merged at ${sha:0:12}"
             elif [ "$(gh api "repos/$REPO/pulls/$n" --jq .merged)" = true ]; then
               echo "automerge: #$n was merged by another run"
+            elif printf '%s' "$merge_out" | grep -Eiq "$REFUSAL_RE"; then
+              echo "automerge: #$n merge refused ($(printf '%s' "$merge_out" | head -n1)); the branch is stale, updating it"
+              if update_branch "$n" "$sha"; then
+                echo "automerge: #$n update-branch requested; merge follows when checks pass on the new head"
+              else
+                echo "::error::automerge: #$n merge refused and update-branch failed"; rc=1
+              fi
+              continue
             else
+              printf '%s\n' "$merge_out"
               echo "::error::automerge: #$n merge was refused (see the API error above)"; rc=1; continue
             fi
             if [ "$head_repo" = "$REPO" ]; then

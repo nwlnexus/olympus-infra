@@ -18,6 +18,9 @@ name: automerge
 #. A 15-minute `schedule` sweep picks up any labelled PR that is still behind, or green
 # but unmerged, because nothing else re-triggers it.
 #
+# The labels are read again right before the merge call, so a run that started before someone removed
+# `automerge` does not merge.
+#
 # The same file lives in olympus-sdk, olympus-infra, olympus-gitops, agent-skills and nix-darwin-hm;
 # only the `workflow_run.workflows` list differs (the workflows whose completion should re-check).
 on:
@@ -206,6 +209,13 @@ jobs:
               echo "automerge: #$n has merge conflicts; not merging"; continue
             fi
 
+            # Last look at the labels: the label may have been removed while this run checked the PR.
+            if ! labels_now=$(gh api "repos/$REPO/issues/$n/labels" --jq '[.[].name] | index("automerge") != null'); then
+              echo "::error::automerge: #$n could not re-read the labels; not merging"; rc=1; continue
+            fi
+            if [ "$labels_now" != true ]; then
+              echo "automerge: #$n lost its automerge label during this run; not merging"; continue
+            fi
             if merge_out=$(gh api -X PUT "repos/$REPO/pulls/$n/merge" -f merge_method=squash -f sha="$sha" --silent 2>&1); then
               echo "automerge: #$n squash-merged at ${sha:0:12}"
             elif [ "$(gh api "repos/$REPO/pulls/$n" --jq .merged)" = true ]; then

@@ -175,6 +175,13 @@ inference_server_instances:
       - --no-webui
       - [--timeout, 120]
 
+# --- Connection cap (HW10 phase F, owner decision 2026-10-28: on after HW11 measured LiteLLM) ---
+# Measured 2026-10-29 with the cluster LiteLLM (aiohttp pool) as the only client: 0 established
+# connections per instance port at idle, 1 during a request; no idle keep-alive. Cap per port =
+# slots(-np) + queue (4) + headroom (2); LiteLLM gets a TCP RST past that and fails over instead of
+# queueing behind a long generation.
+inference_server_connection_limit_enabled: true
+
 # --- iSCSI: none on the inference host ---
 # The iscsi role defaults to state present / host_mount with an empty portal,
 # which fails target discovery ("Cannot resolve host"). The A9 has no SAN volume.

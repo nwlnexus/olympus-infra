@@ -28,7 +28,6 @@ olympus-infra/
 │   ├── data-services         # data-hub service users, /opt/olympus dirs, temporary Postgres
 │   ├── hermes-classify-include # Hermes dynamic role/include support
 │   ├── iscsi                 # iSCSI prerequisites for QNAP-backed storage
-│   ├── mem0-client           # Workstation OpenMemory MCP + Claude recall hook
 │   ├── ollama                # Ollama (retired on data-hub 2026-10-27; kept for rollback)
 │   ├── llama-server          # llama.cpp llama-server, one LaunchDaemon per model + watchdog (macOS)
 │   ├── inference-server      # llama.cpp llama-server on Ubuntu (systemd, Vulkan/ROCm) for the GEEKOM A9: units, watchdog timer, TTM kernel params
@@ -262,21 +261,6 @@ default route, and drops foreign addresses and routing rules (the kube-vip
 VIP, Tailscale's rules). The networkd files take effect at the next reboot;
 reboot one node at a time. Apply or check by hand with
 `playbooks/push/k3s-node-network.yml`, which never restarts k3s or networkd.
-
-### mem0-client workstation wiring
-
-`roles/mem0-client` is a workstation role for Claude Code clients, not a cluster
-service. It:
-
-- Merges an OpenMemory MCP entry into `~/.claude.json` without clobbering other
-  MCP servers.
-- Installs `~/.claude/hooks/mem0-recall-hook.sh`.
-- Appends a `SessionStart` hook to `~/.claude/settings.json`.
-
-The hook posts the session working directory to
-`/api/v1/memories/filter` with `mem0_user_id: mnemosyne` and fails open on any
-timeout, missing dependency, or non-200 response, so Claude Code startup is never
-blocked by memory recall.
 
 ## Variable Naming Conventions
 

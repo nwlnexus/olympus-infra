@@ -26,6 +26,13 @@ k3s_node_taints: []
 # connected as naraka-01, and `tailscale set` does not rename it)
 tailscale_state: present
 tailscale_hostname: naraka-01
+# No MagicDNS on the host, same as compute_hub/agent_services. With it on,
+# systemd-resolved adds the tailnet search domain, kubelet copies it into every
+# pod's resolv.conf, and musl (alpine) pods fail external lookups with EAI_AGAIN:
+# "github.com.<tailnet>" gets SERVFAIL from the CoreDNS tailnet forward
+# (olympus-sdk#622). ansible-pull skips the tailscale tag here, so apply on the
+# node with `sudo tailscale set --accept-dns=false`.
+tailscale_accept_dns: false
 
 # Cloudflared (binary only; tunnel + Deployment run in k3s via GitOps)
 cloudflared_state: present

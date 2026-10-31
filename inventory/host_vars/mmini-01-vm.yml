@@ -2,8 +2,5 @@
 # mmini-01-vm - Linux arm64 VM on the Mac mini mmini-01 (olympus-sdk#694, H20).
 # Group vars: group_vars/k3s_mac_agents.yml.
 #
-# TODO(owner): set k3s_node_ip to this VM's DHCP reservation on the .253 network
-# (bridged NIC). ansible_host and the node-ip pin in k3s config both follow it. The
-# join play refuses to run while it is empty.
-k3s_node_ip: ""
+k3s_node_ip: "192.168.253.17"
 k3s_mac_host: mmini-01

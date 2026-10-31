@@ -7,7 +7,8 @@
 #   B  tailscale                    tagged device from the OAuth client (no key expiry)
 #   C  iscsi, node-prereqs (onodes), atlas, ansible-pull
 #
-# Hosts: agent_services (the two HW9 onodes) and inference_server (the A9, group from
+# Hosts: agent_services (the two HW9 onodes), k3s_mac_agents (the Mac-mini arm64 VMs,
+# olympus-sdk#694; join with playbooks/push/join-k3s-agent.yml) and inference_server (the A9, group from
 # olympus-infra PR #96; a pattern that matches nothing only warns). It never installs
 # or joins k3s: the onodes join with playbooks/push/join-k3s-server.yml afterwards.
 #
@@ -32,7 +33,7 @@
 # Every phase first asserts that the host's hostname is its inventory name.
 
 - name: Bootstrap a new Olympus host
-  hosts: agent_services:inference_server
+  hosts: agent_services:inference_server:k3s_mac_agents
   gather_facts: true
   become: true
 

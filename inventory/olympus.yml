@@ -5,6 +5,7 @@
 #
 # Control-plane: 5 onodes (HA etcd, kube-vip VIP 192.168.253.2); 2 of them in agent_services
 # Agent: naraka-01 (128 GB RAM, 4 CPUs; general worker, no taint since olympus-sdk#567)
+# Agents, arm64: mmini-01-vm, mmini-02-vm (Tart VMs on the Mac minis; tainted, olympus-sdk#694)
 # Data tier: data-hub (macOS, native LaunchDaemons — NOT a k8s node)
 # Inference: GEEKOM A9 a9-mega (Ubuntu, tailnet host, NOT a k8s node)
 # styx (PXE/Packer) was decommissioned in October 2026 and is no longer listed.
@@ -32,6 +33,25 @@ all:
       hosts:
         naraka-01:
           ansible_host: 192.168.253.14
+      vars:
+        ansible_connection: ssh
+        ansible_user: ansible
+        ansible_ssh_private_key_file: ~/.ssh/ansible
+        ansible_python_interpreter: /usr/bin/python3
+
+    # ── k3s agents, Mac-mini arm64 VMs (olympus-sdk#694, decision H20) ───────
+    # One Linux arm64 VM per Mac mini (Tart, bridged NIC on the .253 network).
+    # Agents only: never in k3s_servers (no etcd, no control plane). Labelled
+    # olympus.io/host=mac-mini and tainted olympus.io/arch=arm64:NoSchedule.
+    # Vars: group_vars/k3s_mac_agents.yml. Bootstrapped with bootstrap-host.yml,
+    # joined one at a time with playbooks/push/join-k3s-agent.yml.
+    # ansible_host follows k3s_node_ip (host_vars); the DHCP reservation sets it.
+    k3s_mac_agents:
+      hosts:
+        mmini-01-vm:
+          ansible_host: "{{ k3s_node_ip }}"
+        mmini-02-vm:
+          ansible_host: "{{ k3s_node_ip }}"
       vars:
         ansible_connection: ssh
         ansible_user: ansible

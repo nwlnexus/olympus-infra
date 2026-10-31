@@ -46,7 +46,8 @@ baseline_op_ssh_pubkey_field: "public key"
 baseline_op_ssh_pubkey_vault: "Dev"
 
 # 1Password CLI install
-baseline_op_cli_arch: amd64
+# Debian arch of the 1Password apt repo, from the host's facts: the Mac-mini VMs are arm64 (olympus-sdk#694).
+baseline_op_cli_arch: "{{ 'arm64' if ansible_facts['architecture'] in ['aarch64', 'arm64'] else 'amd64' }}"
 # 1Password CLI apt channel: "beta" (needed for 1Password Environments) or "stable".
 # The package is kept at the latest version in the chosen channel.
 baseline_op_cli_channel: beta

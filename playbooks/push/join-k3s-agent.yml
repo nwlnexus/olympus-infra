@@ -1,0 +1,293 @@
+---
+# Join ONE Mac-mini arm64 VM to the olympus cluster as a k3s AGENT (olympus-sdk#694,
+# decision H20): mmini-01-vm, then mmini-02-vm. Agents only: no etcd, no control plane.
+# Runbook: docs/runbooks/2026-10-31-k3s-agent-mac-mini-vms.md.
+#
+# Only hosts in k3s_mac_agents, one per run (--limit is required). naraka-01 keeps its
+# own play (join-naraka-agent.yml); this one refuses it, and any k3s server.
+#
+# Prerequisites: playbooks/push/bootstrap-host.yml done on the VM (ansible user, op
+# token at /etc/olympus/op-service-account-token, op CLI, baseline with hardening and
+# the pod-bridge IPv6 drop, tailscale, atlas, ansible-pull); k3s_node_ip set in
+# host_vars; scripts/k3s-health-gate.sh passes.
+#
+# Run from olympus-infra on ai-agent-host (AP="uv tool run --from ansible-core ansible-playbook"):
+#
+#   $AP -i inventory/olympus.yml playbooks/push/join-k3s-agent.yml --limit mmini-01-vm --check --diff
+#   $AP -i inventory/olympus.yml playbooks/push/join-k3s-agent.yml --limit mmini-01-vm
+#
+# Check mode runs the read-only pre-checks, then renders the role without installing
+# anything; the etcd snapshot, the confirmation and the post-checks are skipped.
+#
+# Vars:
+#   k3s_join_reference_server  existing server used for the snapshot and kubectl reads
+#                              (default onode-0312ce: not cluster-init, not the canary)
+#   k3s_join_health_gate       run scripts/k3s-health-gate.sh before the join (default true)
+#   operator_confirmed         set to yes to skip the prompt (for a supervised run only)
+#
+# Any failure stops the play. If the join itself fails, the play prints the rollback.
+
+- name: Join a k3s agent (Mac-mini arm64 VM)
+  hosts: k3s_mac_agents
+  gather_facts: true
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  max_fail_percentage: 0
+
+  vars:
+    _ref: "{{ k3s_join_reference_server | default('onode-0312ce') }}"
+    _gate: "{{ playbook_dir }}/../../scripts/k3s-health-gate.sh"
+
+  pre_tasks:
+    # ── Guards: which host, which mode ───────────────────────────────────────────
+    - name: Exactly one target, from k3s_mac_agents only
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all | length == 1
+          - inventory_hostname in groups['k3s_mac_agents']
+          - inventory_hostname not in (groups['k3s_servers'] | default([]))
+          - inventory_hostname not in (groups['k3s_agents'] | default([]))
+          - _ref in groups['k3s_servers']
+        fail_msg: >-
+          Run with --limit <one k3s_mac_agents host> (got {{ ansible_play_hosts_all }}); the
+          reference server ({{ _ref }}) must be an existing k3s server. Servers join with
+          join-k3s-server.yml and naraka-01 with join-naraka-agent.yml.
+        quiet: true
+      tags: [always]
+
+    - name: Agent vars only (never a server, never cluster-init)
+      ansible.builtin.assert:
+        that:
+          - k3s_state | default('present') == 'present'
+          - k3s_agent | default(false) | bool
+          - not (k3s_ha | default(false) | bool)
+          - not (k3s_primary | default(false) | bool)
+          - not (k3s_init | default(false) | bool)
+          - k3s_server_url == 'https://192.168.253.2:6443'
+          - k3s_token_op_ref | default('') != ''
+          - k3s_version is match('^v[0-9]+\\.[0-9]+\\.[0-9]+\\+k3s[0-9]+$')
+          - "'olympus.io/host=mac-mini' in k3s_node_labels"
+          - ('olympus.io/mac-host=' ~ k3s_mac_host) in k3s_node_labels
+          - "'olympus.io/arch=arm64:NoSchedule' in k3s_node_taints"
+          - k3s_kubelet_args | length > 0
+          - ansible_facts['hostname'] == inventory_hostname
+        fail_msg: "{{ inventory_hostname }} does not have agent vars (see group_vars/k3s_mac_agents.yml and its host_vars)."
+        quiet: true
+      tags: [always]
+
+    - name: The node IP is set and belongs to this VM
+      ansible.builtin.assert:
+        that:
+          - k3s_node_ip | default('') != ''
+          - k3s_node_ip is match('^(\d{1,3}\.){3}\d{1,3}$')
+          - k3s_node_ip in ansible_facts['all_ipv4_addresses']
+        fail_msg: >-
+          k3s_node_ip is '{{ k3s_node_ip | default('') }}' and {{ inventory_hostname }} has
+          {{ ansible_facts['all_ipv4_addresses'] | join(', ') }}. Set k3s_node_ip in
+          inventory/host_vars/{{ inventory_hostname }}.yml to the VM's DHCP reservation.
+        quiet: true
+      tags: [always]
+
+    - name: The VM is arm64 Linux on Ubuntu
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['system'] == 'Linux'
+          - ansible_facts['architecture'] in ['aarch64', 'arm64']
+          - ansible_facts['os_family'] == 'Debian'
+        fail_msg: >-
+          {{ inventory_hostname }} is {{ ansible_facts['system'] }}/{{ ansible_facts['architecture'] }}
+          ({{ ansible_facts['distribution'] }}); expected an Ubuntu arm64 VM.
+        quiet: true
+      tags: [always]
+
+    - name: Look for an existing k3s install on the target
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /usr/local/bin/k3s
+        - /etc/rancher/k3s/config.yaml
+        - /var/lib/rancher/k3s
+      register: _k3s_existing
+      tags: [pre-check]
+
+    - name: The target has never run k3s
+      ansible.builtin.assert:
+        that: _k3s_existing.results | selectattr('stat.exists') | list | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} already has {{ _k3s_existing.results | selectattr('stat.exists')
+          | map(attribute='item') | list }}. Not joining over a previous install; roll it back first.
+        quiet: true
+      tags: [pre-check]
+
+    - name: The VIP answers on 6443 from the target
+      ansible.builtin.wait_for:
+        host: "{{ k3s_server_url | regex_replace('^https?://([^:/]+).*$', '\\1') }}"
+        port: 6443
+        timeout: 15
+      tags: [pre-check]
+
+    - name: The op CLI and service-account token are on the target
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: [/usr/bin/op, /etc/olympus/op-service-account-token]
+      register: _op_files
+      failed_when: not _op_files.stat.exists
+      tags: [pre-check]
+
+    # The k3s role reads the cluster token with `environment: "{{ _op_env }}"`.
+    - name: Read the op service-account token
+      ansible.builtin.slurp:
+        src: /etc/olympus/op-service-account-token
+      register: _op_sat
+      no_log: true
+      tags: [pre-check]
+
+    - name: Set _op_env for the k3s role
+      ansible.builtin.set_fact:
+        _op_env:
+          OP_SERVICE_ACCOUNT_TOKEN: "{{ _op_sat.content | b64decode | trim }}"
+      no_log: true
+      tags: [pre-check]
+
+    # ── The target is bootstrapped (bootstrap-host.yml) ──────────────────────────
+    - name: Read the service facts
+      ansible.builtin.service_facts:
+      tags: [pre-check]
+
+    - name: The atlas service and the pod-bridge IPv6 drop unit are installed and enabled
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['services']['atlas.service']['status'] == 'enabled'
+          - ansible_facts['services']['olympus-cni-ipv6-drop.service']['status'] == 'enabled'
+        fail_msg: "atlas or olympus-cni-ipv6-drop is not enabled on {{ inventory_hostname }}; run bootstrap-host.yml (baseline, atlas)."
+        quiet: true
+      tags: [pre-check]
+
+    - name: sshd accepts keys only
+      ansible.builtin.command: sshd -T
+      register: _sshd
+      changed_when: false
+      check_mode: false
+      tags: [pre-check]
+
+    - name: Password logins are off
+      ansible.builtin.assert:
+        that: "'passwordauthentication no' in _sshd.stdout_lines"
+        fail_msg: "sshd on {{ inventory_hostname }} still allows password logins; run bootstrap-host.yml --tags baseline."
+        quiet: true
+      tags: [pre-check]
+
+    # ── The cluster is healthy and a snapshot exists ─────────────────────────────
+    - name: Health gate before the join
+      ansible.builtin.command:
+        argv: ["{{ _gate }}"]
+      delegate_to: localhost
+      become: false
+      register: _gate_before
+      changed_when: false
+      check_mode: false
+      when: k3s_join_health_gate | default(true) | bool
+      tags: [pre-check]
+
+    - name: Show the health gate (before)
+      ansible.builtin.debug:
+        var: _gate_before.stdout_lines
+      when: _gate_before.stdout_lines is defined
+      tags: [pre-check]
+
+    - name: Snapshot etcd on the reference server before the join (precaution)
+      ansible.builtin.command:
+        argv: [k3s, etcd-snapshot, save, --name, "pre-join-{{ inventory_hostname }}"]
+      delegate_to: "{{ _ref }}"
+      register: _snapshot
+      changed_when: true
+      when: not ansible_check_mode
+      tags: [pre-check]
+
+    - name: Show the snapshot
+      ansible.builtin.debug:
+        var: _snapshot.stdout_lines
+      when: _snapshot.stdout_lines is defined
+      tags: [pre-check]
+
+    - name: Confirm target node and operator go-ahead
+      ansible.builtin.pause:
+        prompt: |
+          Join {{ inventory_hostname }} ({{ k3s_node_ip }}, Mac host {{ k3s_mac_host }}) to the olympus cluster as a k3s agent.
+            k3s {{ k3s_version }}, arm64, server {{ k3s_server_url }}
+            labels {{ k3s_node_labels | join(', ') }}
+            taints {{ k3s_node_taints | join(', ') }}
+          Nothing existing is stopped or removed. Type 'yes' to proceed, anything else to abort
+      register: _operator_confirm
+      when:
+        - not ansible_check_mode
+        - operator_confirmed | default('') != 'yes'
+      tags: [pre-check]
+
+    - name: Abort if operator did not confirm
+      ansible.builtin.fail:
+        msg: "Operator did not confirm. Aborting."
+      when:
+        - not ansible_check_mode
+        - operator_confirmed | default('') != 'yes'
+        - _operator_confirm.user_input | default('') | trim | lower != 'yes'
+      tags: [pre-check]
+
+  roles:
+    - role: k3s
+      tags: [k3s]
+
+  post_tasks:
+    - name: Wait for the node to be Ready
+      ansible.builtin.command:
+        cmd: kubectl get node {{ inventory_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      delegate_to: "{{ _ref }}"
+      register: _node_ready
+      until: _node_ready.stdout == "True"
+      retries: 30
+      delay: 10
+      changed_when: false
+      when: not ansible_check_mode
+      tags: [verify]
+
+    - name: Read the node's labels, taints and architecture
+      ansible.builtin.command:
+        cmd: kubectl get node {{ inventory_hostname }} -o json
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      delegate_to: "{{ _ref }}"
+      register: _node_json
+      changed_when: false
+      when: not ansible_check_mode
+      tags: [verify]
+
+    - name: The node carries the labels and taint, and runs the pinned version
+      vars:
+        _node: "{{ _node_json.stdout | from_json }}"
+        _taints: "{{ _node.spec.taints | default([]) | map(attribute='key') | list }}"
+      ansible.builtin.assert:
+        that:
+          - _node.metadata.labels['olympus.io/host'] == 'mac-mini'
+          - _node.metadata.labels['olympus.io/mac-host'] == k3s_mac_host
+          - _node.metadata.labels['kubernetes.io/arch'] == 'arm64'
+          - "'olympus.io/arch' in _taints"
+          - _node.status.nodeInfo.kubeletVersion == k3s_version
+        fail_msg: >-
+          {{ inventory_hostname }} joined but is not as expected: labels {{ _node.metadata.labels }},
+          taints {{ _taints }}, kubelet {{ _node.status.nodeInfo.kubeletVersion }}.
+        quiet: true
+      when: not ansible_check_mode
+      tags: [verify]
+
+    - name: Print join result
+      ansible.builtin.debug:
+        msg:
+          - "{{ inventory_hostname }} joined the olympus cluster as an agent."
+          - "Next: scripts/k3s-health-gate.sh with EXPECTED_NODE_COUNT raised by one (see the runbook)."
+          - "Rollback: kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data,"
+          - "  kubectl delete node {{ inventory_hostname }}, then /usr/local/bin/k3s-agent-uninstall.sh on the VM."
+      when: not ansible_check_mode
+      tags: [verify]

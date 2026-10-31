@@ -1,0 +1,205 @@
+---
+# Offline checks for the Mac-mini arm64 agent join (olympus-sdk#694); no host, no root, no secrets.
+#   ansible-playbook -i tests/k3s-join-agent/inventory.yml tests/k3s-join-agent/render.yml
+#
+# 1. inventory/olympus.yml: k3s_mac_agents holds the two VMs and is neither inside
+#    k3s_servers nor sharing a host with any server or agent group.
+# 2. group_vars/k3s_mac_agents.yml: an agent (no HA, no cluster-init), the cluster's
+#    server URL, token reference and kubelet reservations (same as compute_hub), the
+#    mac-mini labels and the arm64 taint; no inline token.
+# 3. The agent branch of roles/k3s/tasks/linux.yml ("Write k3s config - agent") renders
+#    that config: server, token, node-ip, node-label, node-taint, kubelet-arg; and the
+#    marked node-ip and kubelet-arg blocks are what tasks/node-ip.yml and
+#    tasks/kubelet-args.yml write, so k3s needs no restart after the join.
+- name: k3s join-agent render checks
+  hosts: localhost
+  gather_facts: false
+  vars:
+    repo: "{{ playbook_dir }}/../.."
+    out_dir: "{{ lookup('env', 'RUNNER_TEMP') | default(lookup('env', 'TMPDIR'), true) | default('/tmp', true) }}/k3s-join-agent-test"
+    vm_names: [mmini-01-vm, mmini-02-vm]
+  tasks:
+    - name: Load the inventory, group vars, host vars and the k3s role tasks
+      ansible.builtin.set_fact:
+        inv: "{{ lookup('ansible.builtin.file', repo ~ '/inventory/olympus.yml') | from_yaml }}"
+        gv: "{{ lookup('ansible.builtin.file', repo ~ '/inventory/group_vars/k3s_mac_agents.yml') | from_yaml }}"
+        gv_hub: "{{ lookup('ansible.builtin.file', repo ~ '/inventory/group_vars/compute_hub.yml') | from_yaml }}"
+        gv_all: "{{ lookup('ansible.builtin.file', repo ~ '/inventory/group_vars/all.yml') | from_yaml }}"
+        k3s_tasks: "{{ lookup('ansible.builtin.file', repo ~ '/roles/k3s/tasks/linux.yml') | from_yaml }}"
+        play_text: "{{ lookup('ansible.builtin.file', repo ~ '/playbooks/push/join-k3s-agent.yml') }}"
+
+    - name: The VMs are agents in their own group, outside every server group
+      vars:
+        groups_: "{{ inv.all.children }}"
+        server_children: "{{ groups_.k3s_servers.children.keys() | list }}"
+        other_hosts: >-
+          {{ (groups_.compute_hub.hosts.keys() | list) + (groups_.agent_services.hosts.keys() | list)
+             + (groups_.k3s_agents.hosts.keys() | list) }}
+      ansible.builtin.assert:
+        that:
+          - groups_.k3s_mac_agents.hosts.keys() | list | sort == vm_names
+          - "'k3s_mac_agents' not in server_children"
+          - "'k3s_mac_agents' not in (groups_.k3s_servers.children | default({}))"
+          - vm_names | intersect(other_hosts) | length == 0
+          - groups_.k3s_agents.hosts.keys() | list == ['naraka-01']
+        quiet: true
+
+    - name: Each VM has host vars with the Mac host and a node IP slot
+      ansible.builtin.include_vars:
+        file: "{{ repo }}/inventory/host_vars/{{ item }}.yml"
+        name: "hv_{{ item | replace('-', '_') }}"
+      loop: "{{ vm_names }}"
+
+    - name: Host vars name the Mac host
+      ansible.builtin.assert:
+        that:
+          - hv_mmini_01_vm.k3s_mac_host == 'mmini-01'
+          - hv_mmini_02_vm.k3s_mac_host == 'mmini-02'
+          - hv_mmini_01_vm.k3s_node_ip is defined
+          - hv_mmini_02_vm.k3s_node_ip is defined
+        quiet: true
+
+    - name: Group vars are an arm64 mac-mini agent with the cluster's reservations
+      ansible.builtin.assert:
+        that:
+          - gv.k3s_agent
+          - not gv.k3s_ha
+          - not gv.k3s_primary
+          - not gv.k3s_init
+          - gv.k3s_server_url == 'https://' ~ gv_hub.k3s_vip ~ ':6443'
+          - gv.k3s_token_op_ref == gv_hub.k3s_token_op_ref
+          - gv.k3s_token_op_ref is match('^op://')
+          - "'k3s_token' not in gv"
+          - gv.k3s_kubelet_args == gv_hub.k3s_kubelet_args
+          - "'olympus.io/host=mac-mini' in gv.k3s_node_labels"
+          - gv.k3s_node_labels | select('match', 'olympus.io/mac-host=.*k3s_mac_host') | list | length == 1
+          - gv.k3s_node_taints == ['olympus.io/arch=arm64:NoSchedule']
+          - gv.baseline_node_hardening
+          - gv.baseline_k8s_node_network
+          - gv.atlas_state == 'present'
+          - gv_all.k3s_version == 'v1.35.9+k3s1'
+        quiet: true
+
+    - name: The play refuses servers and naraka-01 and takes no inline token
+      ansible.builtin.assert:
+        that:
+          - "'hosts: k3s_mac_agents' in play_text"
+          - play_text is search('inventory_hostname not in \(groups\[.k3s_servers.\]')
+          - play_text is search('inventory_hostname not in \(groups\[.k3s_agents.\]')
+          - "'op read' not in play_text"
+          - play_text is not search('(?i)token:\\s*[\"\\x27]?[A-Za-z0-9]{20,}')
+        quiet: true
+
+    - name: Create the output directory
+      ansible.builtin.file:
+        path: "{{ out_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Extract the agent config content from the role task
+      vars:
+        _agent_task: "{{ k3s_tasks | selectattr('name', 'equalto', 'Write k3s config — agent (join via server URL)') | list }}"
+      ansible.builtin.copy:
+        content: "{{ _agent_task[0]['ansible.builtin.copy'].content }}"
+        dest: "{{ out_dir }}/agent-config.j2"
+        mode: "0600"
+      when: _agent_task | length == 1
+
+    - name: Render it for mmini-01-vm
+      ansible.builtin.template:
+        src: "{{ out_dir }}/agent-config.j2"
+        dest: "{{ out_dir }}/config.yaml"
+        mode: "0600"
+      vars:
+        _k3s_token: "test-token"
+        k3s_server_url: "{{ gv.k3s_server_url }}"
+        k3s_node_ip: "192.168.253.250"
+        k3s_mac_host: "{{ hv_mmini_01_vm.k3s_mac_host }}"
+        k3s_node_labels: "{{ gv.k3s_node_labels | map('regex_replace', '\\{\\{ k3s_mac_host \\}\\}', hv_mmini_01_vm.k3s_mac_host) | list }}"
+        k3s_node_taints: "{{ gv.k3s_node_taints }}"
+        k3s_kubelet_args: "{{ gv.k3s_kubelet_args }}"
+
+    - name: Read the rendered config
+      ansible.builtin.slurp:
+        src: "{{ out_dir }}/config.yaml"
+      register: _cfg_raw
+
+    - name: The config is a plain agent with the labels, taint and reservations
+      vars:
+        cfg: "{{ _cfg_raw.content | b64decode | from_yaml }}"
+      ansible.builtin.assert:
+        that:
+          - cfg.server == 'https://192.168.253.2:6443'
+          - cfg.token == 'test-token'
+          - cfg['node-ip'] == '192.168.253.250'
+          - "'cluster-init' not in cfg"
+          - "'tls-san' not in cfg"
+          - "'disable' not in cfg"
+          - cfg['node-label'] == ['olympus.io/host=mac-mini', 'olympus.io/mac-host=mmini-01']
+          - cfg['node-taint'] == ['olympus.io/arch=arm64:NoSchedule']
+          - cfg['kubelet-arg'] == gv_hub.k3s_kubelet_args
+          - "'system-reserved=cpu=1,memory=2Gi' in cfg['kubelet-arg']"
+          - "'kube-reserved=memory=1Gi' in cfg['kubelet-arg']"
+          - "'pod-max-pids=4096' in cfg['kubelet-arg']"
+          - cfg['kubelet-arg'] | select('match', 'eviction-hard=memory.available<1Gi') | list | length == 1
+        quiet: true
+
+    # Same markers and content as roles/k3s/tasks/node-ip.yml and kubelet-args.yml.
+    - name: node-ip blockinfile is a no-op on the rendered file
+      ansible.builtin.blockinfile:
+        path: "{{ out_dir }}/config.yaml"
+        marker: "# {mark} ANSIBLE MANAGED - k3s_node_ip"
+        block: |
+          node-ip: "192.168.253.250"
+        insertafter: EOF
+        create: false
+      register: _bi_nodeip
+
+    - name: kubelet-arg blockinfile is a no-op on the rendered file
+      ansible.builtin.blockinfile:
+        path: "{{ out_dir }}/config.yaml"
+        marker: "# {mark} ANSIBLE MANAGED - k3s_kubelet_args"
+        block: |
+          kubelet-arg:
+          {% for arg in gv.k3s_kubelet_args %}
+            - "{{ arg }}"
+          {% endfor %}
+        insertafter: EOF
+        create: false
+      register: _bi_kubelet
+
+    - name: Neither marked block changed
+      ansible.builtin.assert:
+        that:
+          - not _bi_nodeip.changed
+          - not _bi_kubelet.changed
+
+    - name: An agent with no kubelet args renders no kubelet-arg key (naraka-01 unchanged)
+      ansible.builtin.template:
+        src: "{{ out_dir }}/agent-config.j2"
+        dest: "{{ out_dir }}/naraka.yaml"
+        mode: "0600"
+      vars:
+        _k3s_token: "test-token"
+        k3s_server_url: "https://192.168.253.2:6443"
+        k3s_node_ip: ""
+        k3s_node_labels: []
+        k3s_node_taints: []
+        k3s_kubelet_args: []
+
+    - name: Read the naraka-style config
+      ansible.builtin.slurp:
+        src: "{{ out_dir }}/naraka.yaml"
+      register: _nar_raw
+
+    - name: Only server and token
+      vars:
+        cfg: "{{ _nar_raw.content | b64decode | from_yaml }}"
+      ansible.builtin.assert:
+        that: cfg.keys() | list | sort == ['server', 'token']
+        quiet: true
+
+    - name: Remove the output directory
+      ansible.builtin.file:
+        path: "{{ out_dir }}"
+        state: absent

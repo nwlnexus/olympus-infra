@@ -1,0 +1,74 @@
+---
+# k3s_mac_agents - the Linux arm64 VMs on the Mac minis (mmini-01-vm, mmini-02-vm;
+# olympus-sdk#694, decision H20). Joined as k3s AGENTS: no etcd, no control plane,
+# never in k3s_servers. Join with playbooks/push/join-k3s-agent.yml, one host per run.
+#
+# Every node and image in the cluster is amd64, so the NoSchedule taint keeps pods that
+# cannot run on arm64 off these nodes; only workloads that tolerate it (an arm64 ARC
+# runner scale set first) land here.
+#
+# Per host (host_vars): k3s_node_ip (the DHCP reservation on the .253 network) and
+# k3s_mac_host (the Mac that runs the VM). No secrets in this file; the cluster token
+# and the atlas bootstrap key are read from 1Password at run time.
+
+ansible_user: ansible
+
+# --- k3s agent (joins through the kube-vip VIP, same as naraka-01) ---
+k3s_state: present
+k3s_ha: false
+k3s_primary: false
+k3s_init: false
+k3s_agent: true
+k3s_server_url: "https://192.168.253.2:6443"
+k3s_token_op_ref: "op://Dev/compute-hub-k3s-token/password"
+
+# Applied at registration (config.yaml node-label/node-taint), so no pod lands before
+# the taint exists, and kept in the file across restarts.
+k3s_node_labels:
+  - "olympus.io/host=mac-mini"
+  - "olympus.io/mac-host={{ k3s_mac_host }}"
+k3s_node_taints:
+  - "olympus.io/arch=arm64:NoSchedule"
+
+# Same kubelet reserve, eviction and per-pod PID cap as compute_hub and agent_services.
+# The agent config template renders this block before k3s first starts.
+k3s_kubelet_args:
+  - "system-reserved=cpu=1,memory=2Gi"
+  - "kube-reserved=memory=1Gi"
+  - "eviction-hard=memory.available<1Gi,nodefs.available<10%,imagefs.available<10%"
+  - "pod-max-pids=4096"
+
+# --- Tailscale (tagged device, no key expiry, no personal login) ---
+tailscale_state: present
+tailscale_ephemeral: false
+tailscale_accept_routes: false
+tailscale_accept_dns: false
+tailscale_tags:
+  - "tag:infra-server"
+  - "tag:k8s"
+tailscale_services:
+  - ssh
+tailscale_oauth_client_id: "{{ lookup('community.general.onepassword', 'ansible-tailscale-oauth', field='client-id', vault='Dev') }}"
+tailscale_oauth_client_secret: "{{ lookup('community.general.onepassword', 'ansible-tailscale-oauth', field='client-secret', vault='Dev') }}"
+
+# --- ansible-pull ---
+ansible_pull_state: present
+ansible_pull_legacy_users:
+  - ansible
+ansible_pull_inventory: inventory/k3s-mac-agents.yml
+ansible_pull_playbook: playbooks/pull/olympus.yml
+ansible_pull_limit: "$(hostname -s)"
+ansible_pull_skip_tags: common
+
+# --- baseline ---
+# The VM is cloud-image Ubuntu on a bridged virtio NIC: baseline_k8s_node_network
+# turns on the CNI-link and wait-online handling. Hardening gives the key-only ansible
+# account, the sshd drop-in and the pod-bridge IPv6 drop (olympus-cni-ipv6-drop).
+# No carrier-loss drop-ins: a virtual NIC has no link to lose, and the netplan file
+# name in a Tart cloud image is not known here.
+baseline_unattended_auto_reboot: false
+baseline_k8s_node_network: true
+baseline_node_hardening: true
+
+# --- Atlas (system service in the VM; bootstrap key from the shared 1Password item) ---
+atlas_state: present

@@ -1,0 +1,21 @@
+---
+# k3s_mac_agents - pull inventory for the Mac-mini arm64 VMs (olympus-sdk#694).
+# Used by ansible-pull with --limit $(hostname -s):
+#   ansible-pull -U <repo> -i inventory/k3s-mac-agents.yml \
+#     playbooks/pull/olympus.yml --limit $(hostname -s)
+# Loads group_vars/k3s_mac_agents.yml and host_vars/<hostname>.yml. The pull
+# playbook never runs the k3s role; the join is push-only
+# (playbooks/push/join-k3s-agent.yml).
+
+all:
+  children:
+    k3s_mac_agents:
+      hosts:
+        mmini-01-vm:
+          ansible_host: 127.0.0.1   # ansible-pull runs locally on each node
+          ansible_connection: local
+        mmini-02-vm:
+          ansible_host: 127.0.0.1
+          ansible_connection: local
+      vars:
+        ansible_python_interpreter: /usr/bin/python3

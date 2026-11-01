@@ -1,0 +1,76 @@
+---
+# Renders roles/ddclient/templates/ddclient.conf.j2 for data-hub (macOS, Homebrew service)
+# and for a Linux onode, and asserts the names, address sources and daemon mode each gets.
+# Also checks that data-hub's pull no longer excludes the role and that the role reads the
+# Homebrew 4.x config path. Runs on the controller; no host or token needed (the password is
+# a placeholder).
+#
+#   ansible-playbook -i tests/ddclient/inventory.yml tests/ddclient/render.yml
+- name: Render ddclient.conf
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - ../../roles/ddclient/defaults/main.yml
+  vars:
+    _role: ../../roles/ddclient
+    _ddclient_cf_token: placeholder-not-a-token
+    _darwin_facts:
+      hostname: data-hub
+      os_family: Darwin
+      default_ipv4: {interface: en0, address: 192.0.2.5}
+    _linux_facts:
+      hostname: onode-000000
+      os_family: Debian
+      default_ipv4: {interface: enp1s0, address: 192.0.2.6}
+    _data_hub_vars: "{{ lookup('ansible.builtin.file', '../../inventory/group_vars/data_hub.yml') | from_yaml }}"
+    _main_tasks: "{{ lookup('ansible.builtin.file', _role ~ '/tasks/main.yml') }}"
+  tasks:
+    - name: Render for data-hub (macOS) and an onode (Linux)
+      ansible.builtin.set_fact:
+        _darwin_conf: >-
+          {{ lookup('ansible.builtin.template', _role ~ '/templates/ddclient.conf.j2',
+                    template_vars={'ansible_facts': _darwin_facts}) }}
+        _linux_conf: >-
+          {{ lookup('ansible.builtin.template', _role ~ '/templates/ddclient.conf.j2',
+                    template_vars={'ansible_facts': _linux_facts}) }}
+
+    - name: data-hub gets its own names, en0 for the internal record, web for the public one
+      vars:
+        _lines: "{{ _darwin_conf.splitlines() | map('trim') | list }}"
+      ansible.builtin.assert:
+        that:
+          - "'data-hub.edge.nwlnexus.net' in _lines"
+          - "'data-hub.nwlnexus.net' in _lines"
+          - "'use=if, if=en0' in _lines"
+          - "'use=web, web=https://api.ipify.org/' in _lines"
+          # public name follows use=web, internal name follows use=if
+          - _lines.index('use=web, web=https://api.ipify.org/') < _lines.index('data-hub.edge.nwlnexus.net') < _lines.index('use=if, if=en0') < _lines.index('data-hub.nwlnexus.net')
+          # launchd (StartInterval) schedules it: one-shot, never a forking daemon
+          - "'daemon=0' in _lines"
+          - "'protocol=cloudflare' in _lines"
+          - "'zone=nwlnexus.net' in _lines"
+          - _darwin_conf is not search('(?i)macst-02|ai-hub')
+        fail_msg: "{{ _darwin_conf }}"
+        quiet: true
+
+    - name: A Linux onode keeps the systemd daemon interval and its own interface
+      vars:
+        _lines: "{{ _linux_conf.splitlines() | map('trim') | list }}"
+      ansible.builtin.assert:
+        that:
+          - "'onode-000000.edge.nwlnexus.net' in _lines"
+          - "'onode-000000.nwlnexus.net' in _lines"
+          - "'use=if, if=enp1s0' in _lines"
+          - "('daemon=' ~ ddclient_daemon_interval) in _lines"
+        fail_msg: "{{ _linux_conf }}"
+        quiet: true
+
+    - name: data-hub's pull runs the role, and the role reads the Homebrew 4.x config path
+      ansible.builtin.assert:
+        that:
+          - "'ddclient' not in _data_hub_vars.pull_excluded_roles"
+          - "'tailscale' in _data_hub_vars.pull_excluded_roles"
+          - _data_hub_vars.ddclient_state | default(ddclient_state) == 'present'
+          - _main_tasks is search("ddclient_brew_prefix ~ '/etc/ddclient/ddclient.conf'")
+          - ddclient_brew_prefix == '/opt/homebrew'
+        quiet: true

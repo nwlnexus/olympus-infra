@@ -1,0 +1,24 @@
+---
+# Retire PostgreSQL (data_services_postgres_state: absent; data-hub since olympus-sdk#701, no
+# client since 2026-06-27). The LaunchDaemon is retired like ClickHouse and Redis
+# (macos-retire-daemon.yml), the wrapper is deleted and Homebrew postgresql@16 is uninstalled.
+# Kept, as for ClickHouse and Redis: the data directory under
+# data_services_nvme_root/data/postgres (and its config/logs siblings) and the built-in
+# _postgres account. Every task is a no-op once Postgres is gone, also in check mode.
+- name: Retire the PostgreSQL LaunchDaemon
+  ansible.builtin.include_tasks: macos-retire-daemon.yml
+  vars:
+    _ds_retire_label: com.olympus.postgres
+
+- name: Remove the PostgreSQL wrapper
+  ansible.builtin.file:
+    path: /usr/local/bin/postgres-serve
+    state: absent
+  become: true
+
+# Homebrew refuses to run as root, so the formula is removed as the login user.
+- name: Uninstall postgresql@16
+  community.general.homebrew:
+    name: postgresql@16
+    state: absent
+  become: false

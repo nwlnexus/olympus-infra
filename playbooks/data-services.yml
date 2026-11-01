@@ -1,8 +1,9 @@
 ---
 # Push-based setup for data-hub (the Mac Studio).
 #
-#   play 1  data-services  Postgres (temporary), service users and /opt/olympus dirs
-#   play 2  serving        Ollama (retired), llama-server + LiteLLM: the fleet's inference node
+#   play 1  data-services  retired-service cleanup, wired networking; Postgres (retired on data-hub,
+#                          olympus-sdk#701: data_services_postgres_state absent)
+#   play 2  serving        Ollama (retired), llama-server (fallback behind the A9), LiteLLM (retired)
 #
 # Two plays because the plays need different privilege:
 #   - data-services does its own `become` per task and needs a root play for dscl/launchctl
@@ -10,8 +11,9 @@
 #     (Homebrew refuses to run as root) and use `become` only on the tasks that need it
 #
 # Secrets: ds_pg_password (initdb of a brand-new data dir only) is passed as an
-# extra var by the push wrapper. LiteLLM's keys are read on the host from 1Password
-# via /etc/olympus/op-service-account-token; nothing else is needed.
+# extra var by the push wrapper; it is unused while data_services_postgres_state is
+# absent. LiteLLM's keys were read on the host from 1Password; it is retired, so
+# nothing else is needed.
 #
 # Usage (from olympus-sdk, which holds the push config):
 #   make data-services
@@ -20,8 +22,7 @@
 #     ../olympus-infra/playbooks/data-services.yml [--check --diff] [--tags ollama,llama-server,litellm]
 #
 # `--tags llama_server_prepare` only installs/pins llama.cpp and downloads/verifies the
-# GGUF models (no LaunchDaemon is touched). llama-server runs before litellm, so a model
-# that does not serve fails the play before LiteLLM is repointed.
+# GGUF models (no LaunchDaemon is touched).
 
 - name: Configure data-hub data services
   hosts: data-hub
@@ -31,7 +32,7 @@
   roles:
     - data-services
 
-- name: Configure data-hub serving profile (llama-server + LiteLLM)
+- name: Configure data-hub serving profile (llama-server; Ollama and LiteLLM retired)
   hosts: data-hub
   become: false
   gather_facts: true

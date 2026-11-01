@@ -5,7 +5,8 @@
     state: present
   become: false
 
-# ds_pg_password is pre-read by the controller-local play in data-services.yml
+# ds_pg_password (initdb only) is passed as an extra var by the push wrapper (see
+# playbooks/data-services.yml)
 
 - name: Check if PostgreSQL data directory is initialised
   ansible.builtin.stat:

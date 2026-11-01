@@ -348,6 +348,7 @@
     group: root
     mode: '0600'
   become: true
+  diff: false  # the file holds the Cloudflare token; --diff would print it
   notify: restart ddclient
   when:
     - _ddclient_state == 'present'
@@ -363,6 +364,7 @@
     group: wheel
     mode: '0600'
   become: true
+  diff: false  # the file holds the Cloudflare token; --diff would print it
   notify: restart ddclient
   when:
     - _ddclient_state == 'present'

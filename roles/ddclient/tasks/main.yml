@@ -3,9 +3,30 @@
   ansible.builtin.set_fact:
     _ddclient_state: "{{ ddclient_state | default('present') }}"
 
+# macOS: Homebrew ddclient 4.x reads <prefix>/etc/ddclient/ddclient.conf (the -file argument
+# of homebrew.mxcl.ddclient). The 3.x path <prefix>/etc/ddclient.conf is never read.
 - name: Set platform-specific config path
   ansible.builtin.set_fact:
-    _ddclient_conf_path: "{{ '/opt/homebrew/etc/ddclient.conf' if ansible_facts['os_family'] == 'Darwin' else '/etc/ddclient.conf' }}"
+    _ddclient_conf_path: >-
+      {{ ddclient_brew_prefix ~ '/etc/ddclient/ddclient.conf'
+         if ansible_facts['os_family'] == 'Darwin' else '/etc/ddclient.conf' }}
+
+- name: Stat the Homebrew prefix (macOS)
+  ansible.builtin.stat:
+    path: "{{ ddclient_brew_prefix }}"
+    get_checksum: false
+  register: _ddclient_brew_prefix_stat
+  when: ansible_facts['os_family'] == 'Darwin'
+
+# ansible-pull runs as `ansible`, but the Homebrew prefix belongs to the login user and
+# Homebrew refuses to run as anyone else: only the prefix owner installs or removes the
+# formula; a pull run checks that it is installed (configure.yml).
+- name: Decide whether this run may manage the Homebrew package (macOS)
+  ansible.builtin.set_fact:
+    _ddclient_brew_manage: >-
+      {{ ansible_facts['os_family'] == 'Darwin'
+         and _ddclient_brew_prefix_stat.stat.exists | default(false)
+         and _ddclient_brew_prefix_stat.stat.pw_name | default('') == ansible_facts['user_id'] }}
 
 # --- ABSENT ---
 - name: Remove ddclient (Linux)
@@ -25,12 +46,13 @@
   when:
     - _ddclient_state == 'absent'
     - ansible_facts['os_family'] == 'Darwin'
+    - _ddclient_brew_manage | bool
 
 - name: Remove ddclient config
   ansible.builtin.file:
     path: "{{ _ddclient_conf_path }}"
     state: absent
-  become: "{{ ansible_facts['os_family'] != 'Darwin' }}"
+  become: true
   when: _ddclient_state == 'absent'
 
 # --- PRESENT ---
@@ -59,6 +81,7 @@
   register: _op_token_read
   no_log: true
   changed_when: false
+  check_mode: false  # read-only; without it --check skips the whole role
   failed_when: false
   when:
     - _ddclient_state == 'present'

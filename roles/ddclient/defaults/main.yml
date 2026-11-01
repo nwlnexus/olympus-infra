@@ -3,7 +3,10 @@ ddclient_state: present
 ddclient_zone: "nwlnexus.net"
 ddclient_subdomain: "edge"          # public record: <hostname>.<subdomain>.<zone>
 ddclient_ttl: 120
-ddclient_daemon_interval: 300
+ddclient_daemon_interval: 300       # Linux only; macOS runs one-shot under launchd (see the template)
+# macOS: the Homebrew prefix. The formula's service (homebrew.mxcl.ddclient, a root
+# LaunchDaemon) runs `ddclient -file <prefix>/etc/ddclient/ddclient.conf` every 300 s.
+ddclient_brew_prefix: /opt/homebrew
 # 1Password reference for Cloudflare DNS-only API token (for pull-mode via op read)
 ddclient_cf_token_op_ref: "op://Dev/dns-only-cf-token/credential"
 # Cloudflare API token override (for push-mode via vault; takes precedence over op_ref)

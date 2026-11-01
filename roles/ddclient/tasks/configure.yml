@@ -15,13 +15,36 @@
     - _ddclient_state == 'present'
     - ansible_facts['os_family'] != 'Darwin'
 
-- name: Install ddclient (macOS)
+- name: Install ddclient (macOS, Homebrew prefix owner only)
   community.general.homebrew:
     name: ddclient
     state: present
   when:
     - _ddclient_state == 'present'
     - ansible_facts['os_family'] == 'Darwin'
+    - _ddclient_brew_manage | bool
+
+- name: Stat the ddclient binary (macOS)
+  ansible.builtin.stat:
+    path: "{{ ddclient_brew_prefix }}/opt/ddclient/bin/ddclient"
+    get_checksum: false
+  register: _ddclient_bin_stat
+  when:
+    - _ddclient_state == 'present'
+    - ansible_facts['os_family'] == 'Darwin'
+
+- name: Assert ddclient is installed (macOS)
+  ansible.builtin.assert:
+    that: _ddclient_bin_stat.stat.exists
+    fail_msg: >-
+      {{ ddclient_brew_prefix }}/opt/ddclient/bin/ddclient is missing. This run's user does not
+      own the Homebrew prefix, so it cannot install it: run `brew install ddclient` as the owner.
+    quiet: true
+  when:
+    - _ddclient_state == 'present'
+    - ansible_facts['os_family'] == 'Darwin'
+    # a --check run as the prefix owner has not installed it yet
+    - not (ansible_check_mode and _ddclient_brew_manage | bool)
 
 # Look up zone ID once for all record operations
 - name: Look up Cloudflare zone ID
@@ -33,6 +56,7 @@
     status_code: 200
   register: _ddclient_zone_resp
   no_log: true
+  check_mode: false  # read-only lookup; --check needs its result
   when: _ddclient_state == 'present'
 
 - name: Set zone ID fact
@@ -62,6 +86,7 @@
     status_code: 200
   register: _ddclient_extra_fqdn_zone_resps
   no_log: true
+  check_mode: false  # read-only lookup; --check needs its result
   loop: "{{ _ddclient_extra_fqdn_zones }}"
   when:
     - _ddclient_state == 'present'
@@ -97,6 +122,26 @@
 
 # --- Seed A records (idempotent: create if absent, skip if present) ---
 
+# The public record is seeded with the public IP (same service as the template's
+# use=web); the LAN address is only a fallback. ddclient keeps both current afterwards.
+- name: Look up the public IPv4 address
+  ansible.builtin.uri:
+    url: https://api.ipify.org/?format=json
+    method: GET
+    return_content: true
+    status_code: 200
+  register: _ddclient_public_ip_resp
+  check_mode: false  # read-only lookup
+  failed_when: false
+  when: _ddclient_state == 'present'
+
+- name: Set the public record seed address
+  ansible.builtin.set_fact:
+    _ddclient_public_seed_ip: >-
+      {{ (_ddclient_public_ip_resp.json | default({})).ip
+         | default(ansible_facts['default_ipv4']['address'], true) }}
+  when: _ddclient_state == 'present'
+
 - name: Check existing public A record
   ansible.builtin.uri:
     url: >-
@@ -109,6 +154,7 @@
     status_code: 200
   register: _ddclient_public_check
   no_log: true
+  check_mode: false  # read-only lookup; --check needs its result
   when: _ddclient_state == 'present'
 
 - name: Create public A record
@@ -122,7 +168,7 @@
     body:
       type: A
       name: "{{ ansible_facts['hostname'] }}.{{ ddclient_subdomain }}.{{ ddclient_zone }}"
-      content: "{{ ansible_facts['default_ipv4']['address'] }}"
+      content: "{{ _ddclient_public_seed_ip }}"
       ttl: "{{ ddclient_ttl }}"
       proxied: false
     status_code: 200
@@ -141,6 +187,7 @@
     status_code: 200
   register: _ddclient_internal_checks
   no_log: true
+  check_mode: false  # read-only lookup; --check needs its result
   loop: "{{ _ddclient_internal_fqdns }}"
   when: _ddclient_state == 'present'
 
@@ -178,6 +225,7 @@
     status_code: 200
   register: _ddclient_cross_zone_checks
   no_log: true
+  check_mode: false  # read-only lookup; --check needs its result
   loop: >-
     {{ ddclient_extra_fqdns |
        reject('match', '.*\.' + ddclient_zone + '$') | list }}
@@ -221,6 +269,7 @@
     status_code: 200
   register: _ddclient_extra_zone_resps
   no_log: true
+  check_mode: false  # read-only lookup; --check needs its result
   loop: "{{ ddclient_extra_public_records | map(attribute='zone') | unique | list }}"
   when:
     - _ddclient_state == 'present'
@@ -240,6 +289,7 @@
            | list | first).json.result | default([]) | first | default({})).id | default('') }}
   register: _ddclient_extra_checks
   no_log: true
+  check_mode: false  # read-only lookup; --check needs its result
   loop: "{{ ddclient_extra_public_records }}"
   when:
     - _ddclient_state == 'present'
@@ -287,14 +337,27 @@
     - _ddclient_state == 'present'
     - ansible_facts['os_family'] != 'Darwin'
 
+# The service is a root LaunchDaemon, so the config is root's; the pull user (not the
+# Homebrew owner) cannot write under the prefix without become anyway.
 - name: Render ddclient.conf (macOS)
   ansible.builtin.template:
     src: ddclient.conf.j2
     dest: "{{ _ddclient_conf_path }}"
-    owner: "{{ ansible_facts['user_id'] }}"
-    group: "{{ ansible_facts['user_gid'] }}"
+    owner: root
+    group: wheel
     mode: '0600'
+  become: true
   notify: restart ddclient
+  when:
+    - _ddclient_state == 'present'
+    - ansible_facts['os_family'] == 'Darwin'
+
+# ddclient 4.x never reads the 3.x path; a config left there only keeps a token copy.
+- name: Remove the ddclient 3.x config path (macOS)
+  ansible.builtin.file:
+    path: "{{ ddclient_brew_prefix }}/etc/ddclient.conf"
+    state: absent
+  become: true
   when:
     - _ddclient_state == 'present'
     - ansible_facts['os_family'] == 'Darwin'
@@ -309,25 +372,27 @@
     - _ddclient_state == 'present'
     - ansible_facts['os_family'] != 'Darwin'
 
-- name: Check ddclient service status (macOS)
-  ansible.builtin.shell: brew services list | grep "^ddclient" || true
+# Homebrew's service for ddclient is a root LaunchDaemon (system domain): `brew services`
+# run as a non-root user does not see it, so check launchd directly.
+- name: Check the ddclient LaunchDaemon (macOS)
+  ansible.builtin.command: launchctl print system/homebrew.mxcl.ddclient
+  become: true
   register: _ddclient_svc_status
   changed_when: false
   failed_when: false
+  check_mode: false  # read-only
   when:
     - _ddclient_state == 'present'
     - ansible_facts['os_family'] == 'Darwin'
 
-- name: Enable and start ddclient (macOS)
-  ansible.builtin.shell: |
-    sudo -n /opt/homebrew/bin/brew services start ddclient
+- name: Start ddclient as a root brew service (macOS)
+  ansible.builtin.command: "{{ ddclient_brew_prefix }}/bin/brew services start ddclient"
+  become: true
   environment:
     HOMEBREW_NO_AUTO_UPDATE: "1"
     HOMEBREW_NO_ANALYTICS: "1"
-  register: _ddclient_brew_start
-  changed_when: "'Successfully started' in _ddclient_brew_start.stdout or 'started' in _ddclient_brew_start.stdout"
-  failed_when: false
+  changed_when: true
   when:
     - _ddclient_state == 'present'
     - ansible_facts['os_family'] == 'Darwin'
-    - "'started' not in (_ddclient_svc_status.stdout | default(''))"
+    - _ddclient_svc_status.rc | default(1) != 0

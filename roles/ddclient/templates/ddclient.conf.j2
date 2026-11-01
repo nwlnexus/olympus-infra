@@ -19,7 +19,13 @@
 {% endfor %}
 {% endfor %}
 
+{% if ansible_facts['os_family'] == 'Darwin' %}
+# macOS: launchd runs ddclient every 300 s (homebrew.mxcl.ddclient, StartInterval). It must
+# run once and exit: in daemon mode it forks, the launchd job exits, and launchd kills the child.
+daemon=0
+{% else %}
 daemon={{ ddclient_daemon_interval }}
+{% endif %}
 ssl=yes
 verbose=no
 quiet=no

@@ -131,12 +131,12 @@ tailscale_hostname: data-hub
 # tailscale: no push playbook manages it here either; with role defaults the pull
 #   would run `tailscale set --ssh=false` (Tailscale SSH is in use on this host) and
 #   retag the device to the default tags through the API.
-# ddclient: the running Homebrew ddclient here is configured by hand (old host names);
-#   the role would rewrite its config and seed a public A record for data-hub. Leave it
-#   to an owner decision (keep, move to the role, or retire).
+# ddclient is no longer excluded: the role manages the root Homebrew service here and
+# keeps data-hub.edge.nwlnexus.net (public, use=web) and data-hub.nwlnexus.net (en0 LAN
+# IPv4) current. It replaced a hand-made config for retired names (MACST-02, ai-hub)
+# that Homebrew ddclient 4.x never read.
 pull_excluded_roles:
   - tailscale
-  - ddclient
 
 # Not a k3s node (the k3s agent is the data-hub-vm guest). Keeps the cluster-scoped
 # roles (1password-connect, eso-bootstrap: `k3s_primary | default(true)` in

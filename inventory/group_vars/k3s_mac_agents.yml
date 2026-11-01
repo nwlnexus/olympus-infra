@@ -74,3 +74,9 @@ baseline_node_hardening: true
 
 # --- Atlas (system service in the VM; bootstrap key from the shared 1Password item) ---
 atlas_state: present
+
+# --- iSCSI: initiator for the Trident CSI node plugin, like every other k3s node ---
+# Without this the role's defaults (host_mount, empty portal) ran `iscsiadm -m discovery -p :3260` and failed
+# every pull on these VMs. csi_node only prepares the initiator; Trident does the logins.
+iscsi_state: present
+iscsi_mode: csi_node

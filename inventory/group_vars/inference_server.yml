@@ -1,9 +1,10 @@
 ---
 # GEEKOM A9 Mega (Ryzen AI Max+ 395, 128 GB unified memory) - the fleet's inference host.
 # Ubuntu 26.04, tailnet host managed by olympus-infra, NOT a k3s node (olympus-sdk#568, H8).
-# Linux twin of group_vars/data_hub.yml for the shared instances (qwen36-27b :8081, nomic-embed :8083: same
-# pins, same args). Since olympus-sdk#460 the A9 also runs instances data-hub does not (coder-medium,
-# a dedicated coder-heavy, a Qwen3.5 coder-light); data-hub keeps its three and is only the fallback.
+# Linux twin of group_vars/data_hub.yml for the shared instance (nomic-embed :8083: same pin, same args).
+# The A9 also runs instances data-hub does not (qwen36-27b :8081, whose data-hub twin was retired in
+# olympus-sdk#701; since olympus-sdk#460 coder-medium, a dedicated coder-heavy, a Qwen3.5 coder-light);
+# data-hub keeps a 7B coder-light and the embedder as the fallback.
 #
 # These vars load for hosts in the `inference_server` inventory group (inventory/inference-server.yml
 # for ansible-pull, inventory/olympus.yml for push). The group holds a9-mega; runbook:

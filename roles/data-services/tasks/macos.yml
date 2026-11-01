@@ -5,14 +5,22 @@
 - name: Keep the host on wired networking and clear VPN-client conflicts
   ansible.builtin.include_tasks: macos-network.yml
 
+# The _postgres account and the Postgres directories exist only for Postgres. When it is
+# retired they are neither created nor removed (the data directory is kept).
 - name: Create system users
   ansible.builtin.include_tasks: macos-users.yml
+  when: data_services_postgres_state == 'present'
 
 - name: Create directory structure
   ansible.builtin.include_tasks: macos-dirs.yml
+  when: data_services_postgres_state == 'present'
 
-# PostgreSQL is temporary: it goes away after WS9 of olympus-sdk#444 confirms nothing
-# is left in claude_mem. Ollama and LiteLLM are owned by roles/ollama and roles/litellm
-# (see playbooks/data-services.yml); this role no longer manages them.
+# Ollama and LiteLLM are owned by roles/ollama and roles/litellm (see
+# playbooks/data-services.yml); this role no longer manages them.
 - name: Configure PostgreSQL
   ansible.builtin.include_tasks: macos-postgres.yml
+  when: data_services_postgres_state == 'present'
+
+- name: Retire PostgreSQL
+  ansible.builtin.include_tasks: macos-postgres-retire.yml
+  when: data_services_postgres_state == 'absent'

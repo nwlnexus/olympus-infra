@@ -1,6 +1,8 @@
 ---
 # Renders the data-services templates (PostgreSQL only; ClickHouse, Redis and the NFS
-# archive are retired) and asserts the boot-ordering and decommission properties.
+# archive are retired) and asserts the boot-ordering and decommission properties. The
+# templates are the `present` path (role default); data-hub itself retires Postgres
+# (data_services_postgres_state: absent, olympus-sdk#701), which is asserted too.
 # Runs on the controller; no host needed.
 #
 #   ansible-playbook -i tests/data-services/inventory.yml tests/data-services/render.yml
@@ -64,6 +66,16 @@
           - "'archive_command' not in _txt['postgresql.conf']"
           - "'ai-hub-data' not in _txt['postgresql.conf']"
           - data_services_retired_daemons | sort == ['com.olympus.clickhouse', 'com.olympus.nfs._Volumes_ai-hub-data', 'com.olympus.redis']
+
+    - name: Postgres defaults to present and data-hub retires it
+      vars:
+        _dh: "{{ lookup('ansible.builtin.file', '../../inventory/group_vars/data_hub.yml') | from_yaml }}"
+      ansible.builtin.assert:
+        that:
+          - data_services_postgres_state == 'present'
+          - _dh.data_services_postgres_state == 'absent'
+          # nothing Postgres-specific is left in data-hub's vars once it is retired
+          - _dh.keys() | select('match', '^data_services_postgres_') | list == ['data_services_postgres_state']
 
     - name: Clean up
       ansible.builtin.file:

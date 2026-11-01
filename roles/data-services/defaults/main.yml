@@ -8,8 +8,13 @@ data_services_tailscale_cidr: "100.64.0.0/10"
 # Filesystem roots
 data_services_nvme_root: /opt/olympus
 
-# PostgreSQL (temporary, until WS9 of olympus-sdk#444) – macOS ships a built-in
-# _postgres at UID 216; use it as-is.
+# PostgreSQL – `present` installs and runs it (LaunchDaemon com.olympus.postgres as the
+# _postgres user); `absent` retires it: the LaunchDaemon is booted out, disabled and deleted,
+# /usr/local/bin/postgres-serve is removed and Homebrew postgresql@16 is uninstalled. The data
+# directory under data_services_nvme_root/data/postgres and the _postgres user are kept.
+# data-hub sets `absent` (olympus-sdk#701). The settings below apply to `present` only.
+data_services_postgres_state: present
+# macOS ships a built-in _postgres at UID 216; use it as-is.
 data_services_postgres_uid: 216
 data_services_postgres_port: 5432
 data_services_postgres_shared_buffers: "4GB"

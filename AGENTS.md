@@ -25,7 +25,7 @@ olympus-infra/
 │   ├── external-dns          # external-dns Helm deployment
 │   ├── cert-manager          # cert-manager Helm deployment
 │   ├── ansible-pull          # ansible-pull wrapper + systemd timer / LaunchDaemon
-│   ├── data-services         # data-hub service users, /opt/olympus dirs, temporary Postgres
+│   ├── data-services         # data-hub retired-service cleanup, wired networking; Postgres (retired on data-hub)
 │   ├── hermes-classify-include # Hermes dynamic role/include support
 │   ├── iscsi                 # iSCSI prerequisites for QNAP-backed storage
 │   ├── ollama                # Ollama (retired on data-hub 2026-10-27; kept for rollback)
@@ -37,7 +37,7 @@ olympus-infra/
 │   ├── common                # Common OS setup (packages, sysctl, etc.)
 │   └── node-prereqs          # k3s node prerequisites
 ├── playbooks/
-│   ├── data-services.yml     # Push playbook for data-hub: Postgres + llama-server + LiteLLM
+│   ├── data-services.yml     # Push playbook for data-hub: data-services + llama-server
 │   └── pull/                 # ansible-pull playbooks (run daily on hosts)
 │       ├── compute-hub.yml
 │       ├── management-hub.yml # Retired context, kept for history
@@ -76,15 +76,18 @@ unless a legacy playbook explicitly says otherwise.
 
 `data-hub` runs host-native services because Apple Silicon GPU/Metal acceleration
 is not available to Linux containers. After the 2026-10-20 decommission
-(olympus-sdk#446) the host runs only:
+(olympus-sdk#446) and olympus-sdk#701 the only data-tier-era service left is:
 
 | Service | Port | Notes |
 |---|---:|---|
-| llama-server + LiteLLM | 8081-8083 / 4000 | The fleet's inference node; see "data-hub serving profile" |
-| PostgreSQL | 5432 | Temporary, until WS9 of olympus-sdk#444 confirms nothing is left in `claude_mem` |
+| llama-server | 8082-8083 | Fallback behind the A9 (coder-light, embed); see "data-hub serving profile" |
 
-`data-services` manages the `_postgres` account, the Postgres directories under
-`/opt/olympus`, and the Postgres LaunchDaemon. ClickHouse, Redis and the QNAP
+PostgreSQL is retired (olympus-sdk#701, no client since 2026-06-27):
+`data_services_postgres_state: absent` makes `tasks/macos-postgres-retire.yml` retire
+`com.olympus.postgres` (via `tasks/macos-retire-daemon.yml`), delete
+`/usr/local/bin/postgres-serve` and uninstall Homebrew `postgresql@16`. The data
+directory `/opt/olympus/data/postgres` and the built-in `_postgres` account are kept.
+The role default stays `present` (account, directories, LaunchDaemon). ClickHouse, Redis and the QNAP
 archive NFS mount (`com.olympus.nfs._Volumes_ai-hub-data`) were unused (no data,
 no clients) and are gone: `tasks/macos-legacy-cleanup.yml` boots out, disables and
 deletes their LaunchDaemons (`data_services_retired_daemons`) on any host that
@@ -96,20 +99,24 @@ Operational constraints:
 
 - `data_services_tailscale_ip` is `100.95.232.41`; services bind to tailnet
   addresses or allow the Tailscale CGNAT range instead of public interfaces.
-- Every data-hub LaunchDaemon that binds the tailnet IP (Postgres, llama-server, LiteLLM)
-  starts through a wrapper that waits for that address and has `KeepAlive` plus
-  `ThrottleInterval`. At the 2026-07-05 boot Postgres started before tailscaled and
+- Every data-hub LaunchDaemon that binds the tailnet IP (llama-server; formerly Postgres
+  and LiteLLM) starts through a wrapper that waits for that address and has `KeepAlive`
+  plus `ThrottleInterval`. At the 2026-07-05 boot Postgres started before tailscaled and
   bound `127.0.0.1` only, unnoticed for 3.5 months.
 - Secrets are not stored in this public repo. The push wrapper in the private
   `olympus-sdk` repo passes `ds_pg_password` (only used to `initdb` a new data
-  dir). `ds_redis_password` and `ds_ch_password` are no longer used.
+  dir; unused while Postgres is `absent`). `ds_redis_password` and `ds_ch_password`
+  are no longer used.
 - `roles/llama-server` owns the model servers and `roles/ollama` only removes Ollama
   (see "data-hub serving profile" below).
 
-### data-hub serving profile (llama-server + LiteLLM)
+### data-hub serving profile (llama-server)
 
-data-hub is the fleet's inference node. `roles/llama-server` and `roles/litellm` own it
-end to end; `playbooks/data-services.yml` runs `ollama`, `llama-server`, `litellm` as a
+data-hub is the fallback inference node behind the A9: the cluster LiteLLM
+(olympus-gitops) routes to its llama-servers when the A9 is down. Its own LiteLLM
+(`litellm_state: absent`) and the 27B instance were retired (olympus-sdk#569,
+olympus-sdk#701). `roles/llama-server` owns it; `playbooks/data-services.yml` runs
+`ollama`, `llama-server`, `litellm` (the last only to keep it removed) as a
 second play after `data-services`, and the hourly pull (`playbooks/pull/olympus.yml`)
 runs `ollama` then `llama-server` on Darwin. Vars live in `inventory/group_vars/data_hub.yml`
 (the host is in the `data_hub` group in both `inventory/olympus.yml` and the pull
@@ -125,24 +132,24 @@ stayed green. The owner chose a hard cutover with no soak (olympus-sdk#588, plan
   One process and LaunchDaemon per model, all resident; there is no model swapper,
   because on-demand swapping is the scheduler layer that wedged Ollama.
 
-  | Instance | Port | Model | LiteLLM aliases |
+  | Instance | Port | Model | Fallback for |
   |---|---:|---|---|
-  | `qwen36-27b` | 8081 | `Qwen3.6-27B-Q5_K_M.gguf` (`unsloth/Qwen3.6-27B-GGUF`) | `memory-extract`, `coder-heavy` |
   | `qwen25-7b` | 8082 | `Qwen2.5-7B-Instruct-Q4_K_M.gguf` (`bartowski/...`) | `coder-light` |
   | `nomic-embed` | 8083 | `nomic-embed-text-v1.5.f16.gguf` (768-dim) | `memory-embed` |
 
-  The A9 twin (`roles/inference-server`) runs `qwen36-27b` and `nomic-embed` identically; since olympus-sdk#460 it
-  replaces `qwen25-7b` with `qwen35-9b` (:8082, `coder-light`) and adds `qwen36-35b-a3b` (:8084, `coder-medium`) and
-  `qwen36-27b-coder` (:8085, `coder-heavy`). data-hub keeps the three above as the fallback.
+  The 27B (`qwen36-27b`, :8081) was retired in olympus-sdk#701: its plist is pruned and
+  `Qwen3.6-27B-Q5_K_M.gguf` is deleted through `llama_server_models_remove`. The A9 twin
+  (`roles/inference-server`) runs `nomic-embed` identically, plus `qwen36-27b` (:8081),
+  `qwen35-9b` (:8082, `coder-light`), `qwen36-35b-a3b` (:8084, `coder-medium`) and
+  `qwen36-27b-coder` (:8085, `coder-heavy`).
 
   - Labels `com.olympus.llama-server.<name>`, wrappers `/usr/local/bin/llama-server-serve-<name>`,
     logs `/var/log/llama-server-<name>.{log,err}` (rotated by `/etc/newsyslog.d/llama-server.conf`).
     Each binds `100.95.232.41` only, never `0.0.0.0`, and has no API key (tailnet only,
-    parity with Ollama; LiteLLM is the client door). The wrapper waits for the tailnet
-    address like Postgres and LiteLLM, then `exec sudo -Hu nwilliams-lucas`.
-  - Arguments are per-instance lists in group_vars (`-np 1`, 32k context, `-fa on`,
-    `--jinja`, `--metrics`, `--no-webui`, `--timeout 900`; the 27B also
-    `--reasoning-format deepseek` and thinking off by default). A flag the installed
+    parity with Ollama; the cluster LiteLLM is the client door). The wrapper waits for the
+    tailnet address, then `exec sudo -Hu nwilliams-lucas`.
+  - Arguments are per-instance lists in group_vars (the 7B: `-np 1`, 32k context, `-fa on`,
+    `--jinja`, `--metrics`, `--no-webui`, `--timeout 900`). A flag the installed
     `llama-server --help` does not know goes in `llama_server_drop_flags`.
   - Models live in `/opt/olympus/models/gguf` (run-user owned; `/opt/olympus` itself is
     left as `data-services` made it). They are downloaded from Hugging Face at pinned
@@ -167,18 +174,10 @@ stayed green. The owner chose a hard cutover with no soak (olympus-sdk#588, plan
     return 768 values. Three failed checks or three stalled minutes, at most once per
     10-minute cooldown, mean `SIGKILL` and a launchd restart, logged as
     `RESTART <name> reason=...` (also to syslog via `logger`).
-  - Timeouts: memory worker 300 s < LiteLLM 600 s < llama-server 900 s.
-- **LiteLLM** (`com.litellm.proxy` LaunchDaemon, wrapper `/usr/local/bin/litellm-serve`):
-  binds the tailnet IP on `:4000`, same wait-for-address guard. `litellm_backend:
-  llama_server` renders each alias as `openai/<instance alias>` with `api_base
-  http://100.95.232.41:<port>/v1` and `api_key: not-used`; `memory-extract` and
-  `coder-heavy` send `extra_body.chat_template_kwargs.enable_thinking`
-  (`litellm_extract_thinking`, `litellm_coder_heavy_thinking`, both false). There is no
-  fallback alias. `coder-cloud` stays disabled until an Anthropic key exists at
-  `litellm_anthropic_key_op_ref` (then set `litellm_coder_cloud_enabled: true`). The
-  master key is read on the host with `op read` using `/etc/olympus/op-service-account-token`;
-  the config is mode 0600. `litellm_backend: ollama` renders the previous Ollama config
-  byte for byte (rollback).
+- **LiteLLM** on data-hub is retired (`litellm_state: absent`: the `com.litellm.proxy`
+  LaunchDaemon, `/usr/local/bin/litellm-serve`, `/opt/litellm` and the pipx package are
+  removed). The cluster LiteLLM in olympus-gitops replaced it; there is no rollback to it,
+  since the 27B it routed `memory-extract` and `coder-heavy` to is gone too.
 - **Ollama** is retired: `ollama_state: absent` with `ollama_remove_package: true` and
   `ollama_purge_models: true` boots out `homebrew.mxcl.ollama`, uninstalls the package and
   deletes `~nwilliams-lucas/.ollama/models`. Rollback is a push with olympus-sdk's
@@ -188,25 +187,18 @@ stayed green. The owner chose a hard cutover with no soak (olympus-sdk#588, plan
   and `qwen2.5:7b-instruct` (about 5 GB). A follow-up removes the Ollama role from the
   playbooks once the cutover is verified. `roles/data-services` no longer installs Ollama.
 
-Residency budget (64 GiB unified memory; computed from the GGUF sizes, so confirm with
-`vm_stat` and the llama-server load logs after the first start):
+Residency budget (64 GiB unified memory; computed from the GGUF sizes):
 
 | Item | GiB |
 |---|---:|
-| `Qwen3.6-27B-Q5_K_M` weights | 18.2 |
-| ...KV cache at 32k, f16: 16 full-attention layers x 4 KV heads x 256 dim = 64 KiB/token | 2.0 |
-| ...linear-attention state (48 layers) plus compute buffers | 1.7 |
 | `Qwen2.5-7B-Instruct-Q4_K_M` weights | 4.4 |
 | ...KV cache at 32k, f16: 28 layers x 4 KV heads x 128 dim = 56 KiB/token | 1.75 |
 | ...compute buffers | 0.5 |
 | `nomic-embed-text-v1.5` f16 weights plus KV (8k ctx, 4 slots) and buffers | 0.5 |
 
-- All three resident: about 29 GiB, always (Ollama's MLX 27B alone took 30-45 GiB).
-- Against 64 GiB: macOS 8, LiteLLM and server processes 0.5, Postgres until WS9 4.5,
-  models 29, macOS CI runner (#391) budget 16 = 58 GiB, leaving about 6 GiB (about 10.5
-  once Postgres is gone). If that is tight, the 27B drops to Q4_K_M (16.8 GB, same pin).
-  The default Metal working-set cap (`iogpu.wired_limit_mb=0`, roughly 48 GiB) is well
-  above the model total.
+- Both resident: about 7 GiB. With the 27B (about 22 GiB) and Postgres (4.5 GiB) retired
+  in olympus-sdk#701, the rest of the 64 GiB (macOS 8, macOS CI runner budget 16) leaves
+  roughly 32 GiB for the k3s agent VM and headroom.
 
 ### Linux node QUIC tuning
 

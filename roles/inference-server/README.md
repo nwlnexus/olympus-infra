@@ -5,9 +5,10 @@ timer, a per-instance connection cap, and the amdgpu/TTM kernel parameters for t
 (Ryzen AI Max+ 395 "Strix Halo", 128 GB unified memory). Linux twin of `roles/llama-server` (macOS,
 data-hub): `inference_server_models` and `inference_server_instances` have the same shape as
 `llama_server_models` / `llama_server_instances`. `inventory/group_vars/inference_server.yml` carries the
-data-hub instances (27B on 8081, embedder on 8083, same pins and args) plus the A9-only coder instances
-(olympus-sdk#460: 9B coder-light 8082, 35B-A3B coder-medium 8084, dedicated 27B coder-heavy 8085).
-`tests/inference-server` asserts the shared instances and pins stay identical.
+27B on 8081 (data-hub's twin was retired in olympus-sdk#701), the embedder on 8083 (same pins and args as
+data-hub's) and the A9-only coder instances (olympus-sdk#460: 9B coder-light 8082, 35B-A3B coder-medium
+8084, dedicated 27B coder-heavy 8085). `tests/inference-server` asserts the shared embedder and its pin
+stay identical.
 
 Spec: olympus-sdk H8 (`docs/superpowers/specs/2026-10-26-agent-harness-knowledge-and-hosts-design.md`),
 issue nwlnexus/olympus-sdk#568 (HW10). The A9 is a tailnet host managed by olympus-infra, not a k3s node.

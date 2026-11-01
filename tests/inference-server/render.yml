@@ -102,8 +102,8 @@
           - _by_name['nomic-embed'].embed_dim == 768
           - inference_server_bind_host == '192.0.2.10'
 
-    # The A9 is a superset of data-hub since olympus-sdk#460: every instance and model the two share
-    # (27B on :8081, the embedder on :8083) must stay identical, so the fallback behaves like the primary.
+    # Every instance and model the A9 shares with data-hub (the embedder on :8083; data-hub's 27B was
+    # retired in olympus-sdk#701) must stay identical, so the fallback behaves like the primary.
     - name: Shared model pins and instance args match the data-hub profile (one shared shape)
       vars:
         _dh: "{{ lookup('ansible.builtin.file', '../../inventory/group_vars/data_hub.yml') | from_yaml }}"
@@ -112,9 +112,8 @@
         _a9_models: "{{ dict(inference_server_models | map(attribute='file') | zip(inference_server_models)) }}"
       ansible.builtin.assert:
         that:
-          - _dh_inst['qwen36-27b'] == _by_name['qwen36-27b']
           - _dh_inst['nomic-embed'] == _by_name['nomic-embed']
-          - _dh_models['Qwen3.6-27B-Q5_K_M.gguf'] == _a9_models['Qwen3.6-27B-Q5_K_M.gguf']
+          - "'qwen36-27b' not in _dh_inst"
           - _dh_models['nomic-embed-text-v1.5.f16.gguf'] == _a9_models['nomic-embed-text-v1.5.f16.gguf']
           # the A9-only coder instances serve the same 27B family with the same flags apart from context
           - _by_name['qwen36-27b-coder'].args | difference(_by_name['qwen36-27b'].args) == [['-c', 65536]]

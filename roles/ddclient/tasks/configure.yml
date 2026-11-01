@@ -403,7 +403,28 @@
     - _ddclient_state == 'present'
     - ansible_facts['os_family'] == 'Darwin'
 
-- name: Start ddclient as a root brew service (macOS)
+- name: Look for the ddclient LaunchDaemon plist (macOS)
+  ansible.builtin.stat:
+    path: /Library/LaunchDaemons/homebrew.mxcl.ddclient.plist
+  register: _ddclient_plist
+  when:
+    - _ddclient_state == 'present'
+    - ansible_facts['os_family'] == 'Darwin'
+    - _ddclient_svc_status.rc | default(1) != 0
+
+# An existing plist is loaded with launchctl: `brew services` as root refuses to run when it needs to refresh its
+# API cache. Only a host that never had the service (no plist) falls back to brew, which writes the plist.
+- name: Load the ddclient LaunchDaemon (macOS)
+  ansible.builtin.command: launchctl bootstrap system /Library/LaunchDaemons/homebrew.mxcl.ddclient.plist
+  become: true
+  changed_when: true
+  when:
+    - _ddclient_state == 'present'
+    - ansible_facts['os_family'] == 'Darwin'
+    - _ddclient_svc_status.rc | default(1) != 0
+    - _ddclient_plist.stat.exists | default(false)
+
+- name: Start ddclient as a root brew service (macOS, first install)
   ansible.builtin.command: "{{ ddclient_brew_prefix }}/bin/brew services start ddclient"
   become: true
   environment:
@@ -414,3 +435,4 @@
     - _ddclient_state == 'present'
     - ansible_facts['os_family'] == 'Darwin'
     - _ddclient_svc_status.rc | default(1) != 0
+    - not (_ddclient_plist.stat.exists | default(false))

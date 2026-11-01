@@ -7,14 +7,11 @@
   when: ansible_facts['os_family'] != 'Darwin'
   listen: restart ddclient
 
-# Root brew service (system LaunchDaemon homebrew.mxcl.ddclient); RunAtLoad makes the
-# restart run ddclient once with the new config.
+# Root brew service (system LaunchDaemon homebrew.mxcl.ddclient): restart it through launchd. `brew services` as
+# root refuses to run when it needs to refresh its API cache ("cannot as root"), which failed the first pull.
 - name: Restart ddclient (macOS)
-  ansible.builtin.command: "{{ ddclient_brew_prefix }}/bin/brew services restart ddclient"
+  ansible.builtin.command: launchctl kickstart -k system/homebrew.mxcl.ddclient
   become: true
-  environment:
-    HOMEBREW_NO_AUTO_UPDATE: "1"
-    HOMEBREW_NO_ANALYTICS: "1"
   changed_when: true
   when: ansible_facts['os_family'] == 'Darwin'
   listen: restart ddclient

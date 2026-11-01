@@ -116,9 +116,33 @@ llama_server_instances:
 litellm_state: absent
 litellm_run_user: nwilliams-lucas
 
+# ── iSCSI / NFS ───────────────────────────────────────────────────────────────
+# No NAS mount on this host. The iscsi role defaults to `present`, which on macOS
+# installs an NFS-mount LaunchDaemon; with no portal set it would mount ":/data".
+# `absent` makes the role a no-op here (it has no removal tasks).
+iscsi_state: absent
+
 # ── Tailscale ─────────────────────────────────────────────────────────────────
 tailscale_state: present
 tailscale_hostname: data-hub
+
+# ── Roles the hourly pull never runs on this host (olympus-sdk#703) ───────────
+# The pull ended at `baseline` on macOS until #703, so these roles never ran here.
+# tailscale: no push playbook manages it here either; with role defaults the pull
+#   would run `tailscale set --ssh=false` (Tailscale SSH is in use on this host) and
+#   retag the device to the default tags through the API.
+# ddclient: the running Homebrew ddclient here is configured by hand (old host names);
+#   the role would rewrite its config and seed a public A record for data-hub. Leave it
+#   to an owner decision (keep, move to the role, or retire).
+pull_excluded_roles:
+  - tailscale
+  - ddclient
+
+# Not a k3s node (the k3s agent is the data-hub-vm guest). Keeps the cluster-scoped
+# roles (1password-connect, eso-bootstrap: `k3s_primary | default(true)` in
+# playbooks/pull/olympus.yml) out of this host's pull: a credentials file exists in
+# /etc/olympus, so 1password-connect would otherwise run `helm upgrade --install`.
+k3s_primary: false
 
 # Cloudflared binary present (tunnel deleted — binary kept for potential future use)
 cloudflared_state: present

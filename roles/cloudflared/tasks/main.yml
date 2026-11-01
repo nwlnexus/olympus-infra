@@ -1,8 +1,19 @@
 ---
+# ansible-pull runs as `ansible`, but /opt/homebrew belongs to the login user and
+# Homebrew refuses to run as anyone else (permission denied on its lock files), so
+# pull runs skip the Homebrew package step; push runs as the owner still manage it.
+# Same pattern as roles/llama-server (olympus-sdk#703).
+- name: Stat the Homebrew prefix
+  ansible.builtin.stat:
+    path: /opt/homebrew
+    get_checksum: false
+  register: _cloudflared_brew_prefix
+
 - name: Install cloudflared via Homebrew
   community.general.homebrew:
     name: cloudflared
     state: "{{ 'present' if cloudflared_state == 'present' else 'absent' }}"
+  when: _cloudflared_brew_prefix.stat.exists and _cloudflared_brew_prefix.stat.pw_name == ansible_facts['user_id']
 
 # ── macOS: LaunchDaemon + /etc/cloudflared credentials ───────────────────────
 - name: Create /etc/cloudflared directory (macOS)

@@ -42,45 +42,14 @@
     - eso_connect_token | length == 0
     - _eso_connect_token_result.stdout is defined
 
-- name: Skip ESO bootstrap if no Connect token available
-  ansible.builtin.meta: end_host
-  when:
-    - eso_bootstrap_state == 'present'
-    - eso_connect_token | length == 0
-
-# ── Existing tasks ────────────────────────────────────────────────────────────
-- name: Set kubectl base command
+# Skip the rest of this role with a `when` on a static import, not `meta: end_host`
+# / `end_play`: those end the whole play for the host, so every later role in
+# playbooks/pull/olympus.yml was skipped too (olympus-sdk#703). `meta: end_role`
+# needs ansible-core 2.18, newer than the distro ansible on the Linux pull hosts.
+- name: Decide whether to skip ESO bootstrap (no Connect token available)
   ansible.builtin.set_fact:
-    _eso_kubectl: >-
-      kubectl
-      {%- if eso_kubectl_context != '' %} --context {{ eso_kubectl_context }}{% endif %}
+    _eso_skip: "{{ eso_bootstrap_state == 'present' and eso_connect_token | length == 0 }}"
 
-- name: Create external-secrets namespace
-  ansible.builtin.command: "{{ _eso_kubectl }} create namespace {{ eso_namespace }}"
-  register: _eso_ns
-  failed_when:
-    - _eso_ns.rc != 0
-    - "'already exists' not in _eso_ns.stderr"
-  changed_when: _eso_ns.rc == 0
-  become: "{{ eso_kubectl_become }}"
-  environment:
-    KUBECONFIG: "{{ eso_kubeconfig_path }}"
-    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
-  when: eso_bootstrap_state == 'present'
-
-- name: Seed ESO 1Password Connect token secret
-  ansible.builtin.shell: |
-    set -o pipefail
-    {{ _eso_kubectl }} create secret generic eso-op-connect-token \
-      --from-literal=token={{ eso_connect_token }} \
-      -n {{ eso_namespace }} \
-      --dry-run=client -o yaml | {{ _eso_kubectl }} apply -f -
-  args:
-    executable: /bin/bash
-  become: "{{ eso_kubectl_become }}"
-  environment:
-    KUBECONFIG: "{{ eso_kubeconfig_path }}"
-    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
-  no_log: true
-  changed_when: true
-  when: eso_bootstrap_state == 'present'
+- name: eso-bootstrap — seed the Connect token
+  ansible.builtin.import_tasks: bootstrap.yml
+  when: not (_eso_skip | default(false) | bool)

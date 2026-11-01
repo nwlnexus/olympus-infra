@@ -1,0 +1,107 @@
+---
+# Imported from main.yml (see the gate there).
+- name: Install helm (Linux)
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
+    executable: /bin/bash
+  become: true
+  when:
+    - _1pw_state == 'present'
+    - ansible_facts['os_family'] != 'Darwin'
+
+- name: Add 1Password Helm repo
+  ansible.builtin.command: >
+    helm repo add 1password
+    https://1password.github.io/connect-helm-charts
+  register: repo_add
+  changed_when: "'already exists' not in repo_add.stderr"
+  become: "{{ onepassword_connect_become }}"
+  environment:
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+  when: _1pw_state == 'present'
+
+- name: Update Helm repos
+  ansible.builtin.command: helm repo update
+  become: "{{ onepassword_connect_become }}"
+  environment:
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+  changed_when: false
+  when: _1pw_state == 'present'
+
+- name: Create 1password namespace
+  ansible.builtin.command: kubectl create namespace {{ onepassword_connect_namespace }}
+  register: ns_create
+  failed_when:
+    - ns_create.rc != 0
+    - "'already exists' not in ns_create.stderr"
+  changed_when: ns_create.rc == 0
+  become: "{{ onepassword_connect_become }}"
+  environment:
+    KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+  when: _1pw_state == 'present'
+
+- name: Create credentials secret (base64-encoded — required by Connect Helm chart 1.14+)
+  ansible.builtin.shell: |
+    set -o pipefail
+    kubectl create secret generic op-credentials \
+      --from-literal=1password-credentials.json="$(base64 < {{ onepassword_connect_credentials_file }})" \
+      -n {{ onepassword_connect_namespace }} \
+      --dry-run=client -o yaml | kubectl apply -f -
+  args:
+    executable: /bin/bash
+  become: "{{ onepassword_connect_become }}"
+  environment:
+    KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+  changed_when: true
+  when: _1pw_state == 'present'
+
+- name: Install 1Password Connect via Helm
+  ansible.builtin.command: >
+    helm upgrade --install connect 1password/connect
+    --namespace {{ onepassword_connect_namespace }}
+    --version {{ onepassword_connect_chart_version }}
+    --set connect.serviceType=ClusterIP
+    --wait
+  become: "{{ onepassword_connect_become }}"
+  environment:
+    KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+  changed_when: true
+  when: _1pw_state == 'present'
+
+
+# --- TRAEFIK INGRESSROUTE ---
+- name: Render 1Password Connect Traefik IngressRoute
+  ansible.builtin.template:
+    src: traefik-ingressroute.yaml.j2
+    dest: /tmp/onepassword-connect-ingressroute.yaml
+    mode: '0600'
+  when:
+    - _1pw_state == 'present'
+    - onepassword_connect_hostname != ""
+
+- name: Apply 1Password Connect Traefik IngressRoute
+  ansible.builtin.command: kubectl apply -f /tmp/onepassword-connect-ingressroute.yaml
+  become: "{{ onepassword_connect_become }}"
+  environment:
+    KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+  changed_when: true
+  when:
+    - _1pw_state == 'present'
+    - onepassword_connect_hostname != ""
+
+- name: Uninstall 1Password Connect
+  ansible.builtin.command: helm uninstall connect -n {{ onepassword_connect_namespace }}
+  become: "{{ onepassword_connect_become }}"
+  environment:
+    KUBECONFIG: "{{ onepassword_connect_kubeconfig }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+  failed_when: false
+  changed_when: true
+  when: _1pw_state == 'absent'

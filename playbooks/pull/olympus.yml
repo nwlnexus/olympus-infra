@@ -8,6 +8,12 @@
 #   k3s         — cluster restarts require coordinated push with human oversight
 #   bootstrap-user — service-user mutation is push-only
 #
+# pull_excluded_roles (list, default []): roles a host's pull never runs, set in
+# group_vars/host_vars. Unlike ansible_pull_skip_tags (a wrapper flag, so it only
+# takes effect from the run after the one that deploys it), it applies in the
+# same run that first reads it. For hosts whose services are managed elsewhere
+# (data-hub: nix-darwin or by hand).
+#
 # Run by the ansible service user via:
 #   Linux:  systemd timer → /opt/ansible-pull/ansible-pull-run
 #   macOS:  LaunchDaemon → /opt/ansible-pull/ansible-pull-run
@@ -58,7 +64,12 @@
 
     - role: atlas
       tags: [atlas]
-      when: atlas_state is defined
+      # Linux-only role (systemd units, an `atlas` system user). On macOS atlas is
+      # installed outside Ansible (data-hub: nix-darwin, user `_atlas`); running the
+      # role there would add a second user and fail on the systemd tasks.
+      when:
+        - atlas_state is defined
+        - ansible_facts['os_family'] != 'Darwin'
 
     - role: 1password-connect
       tags: [1password-connect]
@@ -82,7 +93,9 @@
 
     - role: tailscale
       tags: [tailscale]
-      when: tailscale_state is defined
+      when:
+        - tailscale_state is defined
+        - "'tailscale' not in (pull_excluded_roles | default([]))"
 
     - role: cloudflared
       tags: [cloudflared]
@@ -123,10 +136,12 @@
         - inference_server_state is defined
         - ansible_facts['os_family'] == 'Debian'
 
-    # ddclient last in opt-in block: role uses meta:end_host when CF token unavailable;
-    # placing it last ensures ansible-pull and other critical roles always complete.
+    # ddclient last: it skips its own configure tasks when no CF token is available.
+    # Roles must never use `meta: end_host` / `end_play` as a self-gate: that ends
+    # the play for the host and skips every later role (olympus-sdk#703).
     - role: ddclient
       tags: [ddclient]
+      when: "'ddclient' not in (pull_excluded_roles | default([]))"
 
     # ── Always last — Hermes-injected dynamic roles ───────────────────────────
     - role: hermes-classify-include

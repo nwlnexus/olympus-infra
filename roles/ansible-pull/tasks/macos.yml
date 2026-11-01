@@ -1,10 +1,21 @@
 ---
+# ansible-pull runs as `ansible`, but /opt/homebrew belongs to the login user and
+# Homebrew refuses to run as anyone else (permission denied on its lock files), so
+# pull runs skip the Homebrew package step; push runs as the owner still manage it.
+# Same pattern as roles/llama-server (olympus-sdk#703).
+- name: Stat the Homebrew prefix
+  ansible.builtin.stat:
+    path: /opt/homebrew
+    get_checksum: false
+  register: _ansible_pull_brew_prefix
+
 - name: Install ansible via Homebrew (macOS)
   community.general.homebrew:
     name:
       - ansible
       - git
     state: "{{ 'present' if ansible_pull_state == 'present' else 'absent' }}"
+  when: _ansible_pull_brew_prefix.stat.exists and _ansible_pull_brew_prefix.stat.pw_name == ansible_facts['user_id']
 
 - name: Ensure /opt/ansible-pull directory exists (macOS)
   ansible.builtin.file:

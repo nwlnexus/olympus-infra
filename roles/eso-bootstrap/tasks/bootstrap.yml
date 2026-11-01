@@ -1,0 +1,37 @@
+---
+# Imported from main.yml (see the gate there).
+- name: Set kubectl base command
+  ansible.builtin.set_fact:
+    _eso_kubectl: >-
+      kubectl
+      {%- if eso_kubectl_context != '' %} --context {{ eso_kubectl_context }}{% endif %}
+
+- name: Create external-secrets namespace
+  ansible.builtin.command: "{{ _eso_kubectl }} create namespace {{ eso_namespace }}"
+  register: _eso_ns
+  failed_when:
+    - _eso_ns.rc != 0
+    - "'already exists' not in _eso_ns.stderr"
+  changed_when: _eso_ns.rc == 0
+  become: "{{ eso_kubectl_become }}"
+  environment:
+    KUBECONFIG: "{{ eso_kubeconfig_path }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+  when: eso_bootstrap_state == 'present'
+
+- name: Seed ESO 1Password Connect token secret
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ _eso_kubectl }} create secret generic eso-op-connect-token \
+      --from-literal=token={{ eso_connect_token }} \
+      -n {{ eso_namespace }} \
+      --dry-run=client -o yaml | {{ _eso_kubectl }} apply -f -
+  args:
+    executable: /bin/bash
+  become: "{{ eso_kubectl_become }}"
+  environment:
+    KUBECONFIG: "{{ eso_kubeconfig_path }}"
+    PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+  no_log: true
+  changed_when: true
+  when: eso_bootstrap_state == 'present'

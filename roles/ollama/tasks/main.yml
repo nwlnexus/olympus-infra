@@ -1,4 +1,14 @@
 ---
+# ansible-pull runs as `ansible`, but /opt/homebrew belongs to the login user and
+# Homebrew refuses to run as anyone else (permission denied on its lock files), so
+# pull runs skip the Homebrew package step; push runs as the owner still manage it.
+# Same pattern as roles/llama-server (olympus-sdk#703).
+- name: Stat the Homebrew prefix
+  ansible.builtin.stat:
+    path: /opt/homebrew
+    get_checksum: false
+  register: _ollama_brew_prefix
+
 - name: Install/upgrade Ollama via Homebrew
   community.general.homebrew:
     name: ollama
@@ -6,7 +16,9 @@
     # pinned or track upstream. Removal (ollama_state absent) is a separate task below.
     state: "{{ ollama_pkg_state }}"
   register: ollama_pkg
-  when: ollama_state == "present"
+  when:
+    - ollama_state == "present"
+    - _ollama_brew_prefix.stat.exists and _ollama_brew_prefix.stat.pw_name == ansible_facts['user_id']
 
 # Legacy duplicate: an earlier data-services role installed a second LaunchDaemon
 # (com.olympus.ollama) that loops failing to bind :11434 (homebrew.mxcl.ollama,
@@ -119,6 +131,7 @@
   when:
     - ollama_state == "absent"
     - ollama_remove_package | bool
+    - _ollama_brew_prefix.stat.exists and _ollama_brew_prefix.stat.pw_name == ansible_facts['user_id']
 
 - name: Purge Ollama models
   ansible.builtin.file:

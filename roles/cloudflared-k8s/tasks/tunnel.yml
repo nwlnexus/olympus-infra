@@ -1,0 +1,445 @@
+---
+# Imported from main.yml (see the gate there).
+# Look up by name FIRST (CF returns 400 on duplicate-name POST, not 409, so
+# create-then-recover-with-GET fails the play. Reverse the order.)
+- name: Look up existing tunnel by name
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflared_account_id }}/cfd_tunnel?name={{ cloudflared_tunnel_name }}&is_deleted=false"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+    status_code: 200
+  register: tunnel_list
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_tunnel_name != ""
+
+- name: Create tunnel via Cloudflare API (only if missing)
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflared_account_id }}/cfd_tunnel"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      name: "{{ cloudflared_tunnel_name }}"
+      config_src: cloudflare
+    status_code: 200
+  register: tunnel_create
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_tunnel_name != ""
+    - (tunnel_list.json.result | default([]) | length) == 0
+
+- name: Re-list tunnel after creation
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflared_account_id }}/cfd_tunnel?name={{ cloudflared_tunnel_name }}&is_deleted=false"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+    status_code: 200
+  register: tunnel_list
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_tunnel_name != ""
+    - tunnel_create is defined
+    - tunnel_create is not skipped
+
+- name: Fail if tunnel not found
+  ansible.builtin.fail:
+    msg: "Tunnel '{{ cloudflared_tunnel_name }}' not found via Cloudflare API"
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_tunnel_name != ""
+    - tunnel_list.json.result | length == 0
+
+- name: Set tunnel ID
+  ansible.builtin.set_fact:
+    cloudflared_tunnel_id: "{{ tunnel_list.json.result[0].id }}"
+  when:
+    - _cf_k8s_state == 'present'
+    - tunnel_list.json.result | length > 0
+
+- name: Create cloudflared namespace
+  ansible.builtin.command: "{{ _kubectl }} create namespace {{ cloudflared_namespace }}"
+  register: cf_ns_create
+  failed_when:
+    - cf_ns_create.rc != 0
+    - "'already exists' not in cf_ns_create.stderr"
+  changed_when: cf_ns_create.rc == 0
+  become: "{{ cloudflared_kubectl_become }}"
+  environment:
+    KUBECONFIG: "{{ cloudflared_kubeconfig_path }}"
+  when: _cf_k8s_state == 'present'
+
+- name: Get tunnel token
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflared_account_id }}/cfd_tunnel/{{ cloudflared_tunnel_id }}/token"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+    status_code: 200
+  register: tunnel_token_resp
+  no_log: true
+  when: _cf_k8s_state == 'present'
+
+- name: Create cloudflared tunnel secret
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ _kubectl }} create secret generic cloudflared-creds \
+      --from-literal=tunnel-token={{ tunnel_token_resp.json.result }} \
+      -n {{ cloudflared_namespace }} \
+      --dry-run=client -o yaml | {{ _kubectl }} apply -f -
+  args:
+    executable: /bin/bash
+  become: "{{ cloudflared_kubectl_become }}"
+  environment:
+    KUBECONFIG: "{{ cloudflared_kubeconfig_path }}"
+  no_log: true
+  changed_when: true
+  when:
+    - _cf_k8s_state == 'present'
+    - not (cloudflared_skip_k8s_secret | bool)
+
+# GitOps mode: push credentials to 1Password so ESO can hydrate the in-cluster
+# Secret. Item create/edit has no lookup-plugin equivalent, so this uses the
+# `op` CLI (on PATH + OP_SERVICE_ACCOUNT_TOKEN exported by the pull wrapper).
+- name: Push tunnel credentials to 1Password
+  ansible.builtin.include_tasks: onepassword.yml
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_op_enabled | bool
+
+# --- BOOTSTRAP-ONLY: configure catch-all rule + ingress CNAME, then stop ---
+# When cloudflared_bootstrap_only: true, ArgoCD deploys the Deployment.
+# Ansible only: creates tunnel, seeds token secret, configures catch-all ingress.
+
+# --- IDEMPOTENT catch-all: GET current config, only PUT if catch-all is missing or wrong ---
+# Preserves any hostname-specific routes added via the Cloudflare dashboard.
+
+- name: Get current tunnel ingress configuration
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflared_account_id }}/cfd_tunnel/{{ cloudflared_tunnel_id }}/configurations"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+    status_code: 200
+  register: _cf_current_config
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_bootstrap_only | bool
+    - cloudflared_catch_all_service != ""
+
+- name: Extract current catch-all and hostname rules
+  ansible.builtin.set_fact:
+    _cf_current_catchall: >-
+      {{ (_cf_current_config.json.result.config.ingress | default([]))
+         | rejectattr('hostname', 'defined') | list | first | default({}) }}
+    _cf_hostname_rules: >-
+      {{ (_cf_current_config.json.result.config.ingress | default([]))
+         | selectattr('hostname', 'defined') | list }}
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_bootstrap_only | bool
+    - cloudflared_catch_all_service != ""
+
+- name: Set expected catch-all rule
+  ansible.builtin.set_fact:
+    _cf_expected_catchall:
+      service: "{{ cloudflared_catch_all_service }}"
+      originRequest:
+        http2Origin: true
+        noTLSVerify: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_bootstrap_only | bool
+    - cloudflared_catch_all_service != ""
+
+- name: Update tunnel catch-all (missing or changed — preserves all hostname routes)
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflared_account_id }}/cfd_tunnel/{{ cloudflared_tunnel_id }}/configurations"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      config:
+        ingress: "{{ _cf_hostname_rules + [_cf_expected_catchall] }}"
+    status_code: 200
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_bootstrap_only | bool
+    - cloudflared_catch_all_service != ""
+    - _cf_current_catchall != _cf_expected_catchall
+
+- name: Look up zone ID for ingress CNAME (bootstrap-only mode)
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones?name={{ cloudflared_domain }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+    status_code: 200
+  register: _bootstrap_zone
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_bootstrap_only | bool
+    - cloudflared_ingress_hostname != ""
+    - cloudflared_domain != ""
+
+- name: Check existing CNAME for ingress hostname (bootstrap-only mode)
+  ansible.builtin.uri:
+    url: >-
+      https://api.cloudflare.com/client/v4/zones/{{ _bootstrap_zone.json.result[0].id }}/dns_records?type=CNAME&name={{ cloudflared_ingress_hostname }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+    status_code: 200
+  register: _bootstrap_cname_check
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_bootstrap_only | bool
+    - cloudflared_ingress_hostname != ""
+    - _bootstrap_zone is defined
+    - (_bootstrap_zone.json.result | default([]) | length) > 0
+
+- name: Create ingress CNAME (bootstrap-only mode, new record)
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones/{{ _bootstrap_zone.json.result[0].id }}/dns_records"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      type: CNAME
+      name: "{{ cloudflared_ingress_hostname }}"
+      content: "{{ cloudflared_tunnel_id }}.cfargotunnel.com"
+      proxied: true
+      ttl: 1
+    status_code: 200
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_bootstrap_only | bool
+    - cloudflared_ingress_hostname != ""
+    - _bootstrap_cname_check is defined
+    - (_bootstrap_cname_check.json.result | default([]) | length) == 0
+
+- name: Update ingress CNAME if tunnel target changed (bootstrap-only mode)
+  ansible.builtin.uri:
+    url: >-
+      https://api.cloudflare.com/client/v4/zones/{{ _bootstrap_zone.json.result[0].id }}/dns_records/{{ _bootstrap_cname_check.json.result[0].id }}
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      content: "{{ cloudflared_tunnel_id }}.cfargotunnel.com"
+      proxied: true
+    status_code: 200
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - cloudflared_bootstrap_only | bool
+    - cloudflared_ingress_hostname != ""
+    - _bootstrap_cname_check is defined
+    - (_bootstrap_cname_check.json.result | default([]) | length) > 0
+    - _bootstrap_cname_check.json.result[0].content != cloudflared_tunnel_id + '.cfargotunnel.com'
+
+# --- FULL MODE: deploy Deployment to cluster (skipped in bootstrap-only mode) ---
+- name: Render cloudflared Deployment
+  ansible.builtin.template:
+    src: deployment.yaml.j2
+    dest: /tmp/cloudflared-deployment.yaml
+    mode: '0600'
+  when:
+    - _cf_k8s_state == 'present'
+    - not (cloudflared_bootstrap_only | bool)
+
+- name: Apply cloudflared Deployment to cluster
+  ansible.builtin.command: "{{ _kubectl }} apply -f /tmp/cloudflared-deployment.yaml"
+  become: "{{ cloudflared_kubectl_become }}"
+  environment:
+    KUBECONFIG: "{{ cloudflared_kubeconfig_path }}"
+  changed_when: true
+  when:
+    - _cf_k8s_state == 'present'
+    - not (cloudflared_bootstrap_only | bool)
+
+- name: Wait for cloudflared rollout to complete
+  ansible.builtin.command: >
+    {{ _kubectl }} rollout status deployment/cloudflared
+    -n {{ cloudflared_namespace }}
+    --timeout=120s
+  become: "{{ cloudflared_kubectl_become }}"
+  environment:
+    KUBECONFIG: "{{ cloudflared_kubeconfig_path }}"
+  changed_when: false
+  when:
+    - _cf_k8s_state == 'present'
+    - not (cloudflared_bootstrap_only | bool)
+
+# --- ROUTE CONFIGURATION (full mode only, skipped if cloudflared_domain is empty) ---
+- name: Wait for tunnel to show active connections
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflared_account_id }}/cfd_tunnel/{{ cloudflared_tunnel_id }}/connections"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+    status_code: 200
+  register: _cf_connections
+  no_log: true
+  until: (_cf_connections.json.result | default([]) | length) > 0
+  retries: 18
+  delay: 10
+  when:
+    - _cf_k8s_state == 'present'
+    - not (cloudflared_bootstrap_only | bool)
+    - cloudflared_domain != ""
+
+- name: Look up Cloudflare zone ID for domain
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones?name={{ cloudflared_domain }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+    status_code: 200
+  register: _cf_zone
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - not (cloudflared_bootstrap_only | bool)
+    - cloudflared_domain != ""
+    - cloudflared_zone_id == ""
+
+- name: Fail if zone not found for domain
+  ansible.builtin.fail:
+    msg: "No Cloudflare zone found for domain '{{ cloudflared_domain }}'"
+  when:
+    - _cf_k8s_state == 'present'
+    - not (cloudflared_bootstrap_only | bool)
+    - cloudflared_domain != ""
+    - cloudflared_zone_id == ""
+    - (_cf_zone.json.result | default([]) | length) == 0
+
+- name: Set resolved zone ID fact
+  ansible.builtin.set_fact:
+    _cf_zone_id: >-
+      {{ cloudflared_zone_id if cloudflared_zone_id != ''
+         else _cf_zone.json.result[0].id }}
+  when:
+    - _cf_k8s_state == 'present'
+    - not (cloudflared_bootstrap_only | bool)
+    - cloudflared_domain != ""
+
+- name: Build ingress list from cloudflared_services
+  ansible.builtin.set_fact:
+    _cf_ingress_routes: >-
+      {{ _cf_ingress_routes | default([])
+         + [{'hostname': item.subdomain + '.' + cloudflared_domain,
+             'service': item.k8s_service}
+            | combine({'originRequest': item.origin_request} if item.origin_request is defined else {})] }}
+  loop: "{{ cloudflared_services }}"
+  when:
+    - _cf_k8s_state == 'present'
+    - not (cloudflared_bootstrap_only | bool)
+    - cloudflared_domain != ""
+
+- name: Configure tunnel ingress routes (managed config PUT)
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflared_account_id }}/cfd_tunnel/{{ cloudflared_tunnel_id }}/configurations"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      config:
+        ingress: "{{ _cf_ingress_routes + [{'service': 'http_status:404'}] }}"
+    status_code: 200
+  no_log: true
+  when:
+    - _cf_k8s_state == 'present'
+    - not (cloudflared_bootstrap_only | bool)
+    - cloudflared_domain != ""
+    - _cf_ingress_routes | default([]) | length > 0
+
+- name: Check existing CNAME DNS records for each service
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones/{{ _cf_zone_id }}/dns_records?type=CNAME&name={{ item.subdomain }}.{{ cloudflared_domain }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+    status_code: 200
+  register: _cf_dns_check
+  no_log: true
+  loop: "{{ cloudflared_services }}"
+  when:
+    - _cf_k8s_state == 'present'
+    - not (cloudflared_bootstrap_only | bool)
+    - cloudflared_domain != ""
+
+- name: Create CNAME DNS records for new services
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones/{{ _cf_zone_id }}/dns_records"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      type: CNAME
+      name: "{{ item.item.subdomain }}.{{ cloudflared_domain }}"
+      content: "{{ cloudflared_tunnel_id }}.cfargotunnel.com"
+      proxied: true
+      ttl: 1
+    status_code: 200
+  no_log: true
+  loop: "{{ _cf_dns_check.results }}"
+  when:
+    - _cf_k8s_state == 'present'
+    - not (cloudflared_bootstrap_only | bool)
+    - cloudflared_domain != ""
+    - item.json.result | length == 0
+
+- name: Update CNAME DNS records where tunnel target changed
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones/{{ _cf_zone_id }}/dns_records/{{ item.json.result[0].id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ cf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      content: "{{ cloudflared_tunnel_id }}.cfargotunnel.com"
+      proxied: true
+    status_code: 200
+  no_log: true
+  loop: "{{ _cf_dns_check.results }}"
+  when:
+    - _cf_k8s_state == 'present'
+    - not (cloudflared_bootstrap_only | bool)
+    - cloudflared_domain != ""
+    - item.json.result | length > 0
+    - item.json.result[0].content != cloudflared_tunnel_id + '.cfargotunnel.com'
+
+# --- ABSENT ---
+- name: Tear down cloudflared k8s resources
+  ansible.builtin.command: "{{ _kubectl }} delete namespace {{ cloudflared_namespace }}"
+  become: "{{ cloudflared_kubectl_become }}"
+  environment:
+    KUBECONFIG: "{{ cloudflared_kubeconfig_path }}"
+  failed_when: false
+  changed_when: true
+  when: _cf_k8s_state == 'absent'

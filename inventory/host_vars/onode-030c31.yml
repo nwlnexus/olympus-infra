@@ -19,8 +19,8 @@ ddclient_extra_fqdns:
 #   1password-connect  — `helm upgrade --install --wait` of the live release
 #   cloudflared-k8s    — rewrites the 1Password item / tunnel config each run
 #   eso-bootstrap      — one-time seed (secret already exists); re-applies the
-#                        Connect token secret and `meta: end_host`s the whole
-#                        play if the token cannot be read
+#                        Connect token secret (skips itself if the token
+#                        cannot be read)
 # Host value replaces the group value, so `common` is repeated here.
 ansible_pull_skip_tags: common,qnap-csi-bootstrap,1password-connect,cloudflared-k8s,eso-bootstrap
 

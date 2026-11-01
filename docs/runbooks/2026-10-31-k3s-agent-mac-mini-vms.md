@@ -1,4 +1,7 @@
-# Join a Mac-mini arm64 VM to the cluster as a k3s agent
+# Join a Mac arm64 VM to the cluster as a k3s agent
+
+The Mac minis' VMs (mmini-01-vm, mmini-02-vm) and data-hub's (data-hub-vm, olympus-sdk#701; host label
+`mac-studio` through `k3s_mac_host_label` in its host_vars) follow the same steps.
 
 olympus-sdk#694, decision H20. Hosts: `mmini-01-vm`, `mmini-02-vm` (group `k3s_mac_agents`).
 Agents only: no etcd, no control plane, never in `k3s_servers`. Each node is labelled

@@ -67,7 +67,8 @@
           - k3s_server_url == 'https://192.168.253.2:6443'
           - k3s_token_op_ref | default('') != ''
           - k3s_version is match('^v[0-9]+\\.[0-9]+\\.[0-9]+\\+k3s[0-9]+$')
-          - "'olympus.io/host=mac-mini' in k3s_node_labels"
+          - k3s_mac_host_label in ['mac-mini', 'mac-studio']
+          - ('olympus.io/host=' ~ k3s_mac_host_label) in k3s_node_labels
           - ('olympus.io/mac-host=' ~ k3s_mac_host) in k3s_node_labels
           - "'olympus.io/arch=arm64:NoSchedule' in k3s_node_taints"
           - k3s_kubelet_args | length > 0
@@ -270,7 +271,7 @@
         _taints: "{{ _node.spec.taints | default([]) | map(attribute='key') | list }}"
       ansible.builtin.assert:
         that:
-          - _node.metadata.labels['olympus.io/host'] == 'mac-mini'
+          - _node.metadata.labels['olympus.io/host'] == k3s_mac_host_label
           - _node.metadata.labels['olympus.io/mac-host'] == k3s_mac_host
           - _node.metadata.labels['kubernetes.io/arch'] == 'arm64'
           - "'olympus.io/arch' in _taints"

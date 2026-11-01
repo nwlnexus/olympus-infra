@@ -17,7 +17,7 @@
   vars:
     repo: "{{ playbook_dir }}/../.."
     out_dir: "{{ lookup('env', 'RUNNER_TEMP') | default(lookup('env', 'TMPDIR'), true) | default('/tmp', true) }}/k3s-join-agent-test"
-    vm_names: [mmini-01-vm, mmini-02-vm]
+    vm_names: [data-hub-vm, mmini-01-vm, mmini-02-vm]
   tasks:
     - name: Load the inventory, group vars, host vars and the k3s role tasks
       ansible.builtin.set_fact:
@@ -57,6 +57,9 @@
           - hv_mmini_02_vm.k3s_mac_host == 'mmini-02'
           - hv_mmini_01_vm.k3s_node_ip is defined
           - hv_mmini_02_vm.k3s_node_ip is defined
+          - hv_data_hub_vm.k3s_mac_host == 'data-hub'
+          - hv_data_hub_vm.k3s_node_ip is defined
+          - hv_data_hub_vm.k3s_mac_host_label == 'mac-studio'
         quiet: true
 
     - name: Group vars are an arm64 mac-mini agent with the cluster's reservations
@@ -71,7 +74,8 @@
           - gv.k3s_token_op_ref is match('^op://')
           - "'k3s_token' not in gv"
           - gv.k3s_kubelet_args == gv_hub.k3s_kubelet_args
-          - "'olympus.io/host=mac-mini' in gv.k3s_node_labels"
+          - gv.k3s_mac_host_label == 'mac-mini'
+          - gv.k3s_node_labels | select('search', '^olympus\\.io/host=.*k3s_mac_host_label') | list | length == 1
           - gv.k3s_node_labels | select('match', 'olympus.io/mac-host=.*k3s_mac_host') | list | length == 1
           - gv.k3s_node_taints == ['olympus.io/arch=arm64:NoSchedule']
           - gv.baseline_node_hardening
@@ -115,7 +119,8 @@
         k3s_server_url: "{{ gv.k3s_server_url }}"
         k3s_node_ip: "192.168.253.250"
         k3s_mac_host: "{{ hv_mmini_01_vm.k3s_mac_host }}"
-        k3s_node_labels: "{{ gv.k3s_node_labels | map('regex_replace', '\\{\\{ k3s_mac_host \\}\\}', hv_mmini_01_vm.k3s_mac_host) | list }}"
+        k3s_mac_host_label: "{{ gv.k3s_mac_host_label }}"
+        k3s_node_labels: "{{ gv.k3s_node_labels | map('regex_replace', '\\{\\{ k3s_mac_host \\}\\}', hv_mmini_01_vm.k3s_mac_host) | map('regex_replace', '\\{\\{ k3s_mac_host_label \\}\\}', gv.k3s_mac_host_label) | list }}"
         k3s_node_taints: "{{ gv.k3s_node_taints }}"
         k3s_kubelet_args: "{{ gv.k3s_kubelet_args }}"
 

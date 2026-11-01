@@ -1,6 +1,6 @@
 ---
-# k3s_mac_agents - the Linux arm64 VMs on the Mac minis (mmini-01-vm, mmini-02-vm;
-# olympus-sdk#694, decision H20). Joined as k3s AGENTS: no etcd, no control plane,
+# k3s_mac_agents - the Linux arm64 VMs on the Macs (mmini-01-vm, mmini-02-vm: olympus-sdk#694, decision H20;
+# data-hub-vm: #701, which sets k3s_mac_host_label: mac-studio). Joined as k3s AGENTS: no etcd, no control plane,
 # never in k3s_servers. Join with playbooks/push/join-k3s-agent.yml, one host per run.
 #
 # Every node and image in the cluster is amd64, so the NoSchedule taint keeps pods that
@@ -24,8 +24,10 @@ k3s_token_op_ref: "op://Dev/compute-hub-k3s-token/password"
 
 # Applied at registration (config.yaml node-label/node-taint), so no pod lands before
 # the taint exists, and kept in the file across restarts.
+# k3s_mac_host_label: the kind of Mac (mac-mini; data-hub-vm overrides it with mac-studio in host_vars).
+k3s_mac_host_label: mac-mini
 k3s_node_labels:
-  - "olympus.io/host=mac-mini"
+  - "olympus.io/host={{ k3s_mac_host_label }}"
   - "olympus.io/mac-host={{ k3s_mac_host }}"
 k3s_node_taints:
   - "olympus.io/arch=arm64:NoSchedule"

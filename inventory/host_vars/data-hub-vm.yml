@@ -1,0 +1,8 @@
+---
+# data-hub-vm - Linux arm64 VM on the Mac Studio data-hub (olympus-sdk#701, H20). 8 vCPU / 32 GiB, the memory the
+# retired 27B llama-server instance used. Group vars: group_vars/k3s_mac_agents.yml.
+#
+k3s_node_ip: "192.168.253.6"
+k3s_mac_host: data-hub
+# A Mac Studio, not a Mac mini: olympus.io/host=mac-studio; same arm64 taint as the group.
+k3s_mac_host_label: mac-studio

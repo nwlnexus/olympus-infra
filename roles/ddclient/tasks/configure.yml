@@ -212,6 +212,22 @@
     - _ddclient_state == 'present'
     - (item.json.result | default([]) | length) == 0
 
+# Names only (no token): with --check the create tasks above are skipped (uri has no
+# check mode) and their output is censored, so this says what a real run would create.
+- name: Report hostname-zone A records this run creates
+  ansible.builtin.debug:
+    msg: >-
+      {{ ([ansible_facts['hostname'] ~ '.' ~ ddclient_subdomain ~ '.' ~ ddclient_zone ~ ' (public, seed '
+           ~ _ddclient_public_seed_ip ~ ')']
+          if (_ddclient_public_check.json.result | default([]) | length) == 0 else [])
+         + ((_ddclient_internal_checks.results | default([])
+             | selectattr('json', 'defined')
+             | rejectattr('json.result')
+             | map(attribute='item') | list)
+            | map('regex_replace', '$', ' (internal, ' ~ ansible_facts['default_ipv4']['address'] ~ ')')
+            | list) }}
+  when: _ddclient_state == 'present'
+
 # Seed extra FQDNs that live in zones OTHER than ddclient_zone.
 - name: Check existing cross-zone extra FQDN A records
   ansible.builtin.uri:

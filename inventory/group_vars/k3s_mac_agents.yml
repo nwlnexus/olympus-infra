@@ -75,6 +75,11 @@ baseline_node_hardening: true
 # --- Atlas (system service in the VM; bootstrap key from the shared 1Password item) ---
 atlas_state: present
 
+# --- node-prereqs: the k3s node package set, as on the onodes (nfs-common for qnap-nfs PVCs, open-iscsi,
+# multipath, lvm2, fail2ban). The VMs lacked nfs-common, so NFS-backed pods (memory postgres-backup) could not
+# run on them (olympus-sdk#707). Applied by playbooks/push/bootstrap-host.yml --tags node-prereqs.
+node_prereqs_state: present
+
 # --- iSCSI: initiator for the Trident CSI node plugin, like every other k3s node ---
 # Without this the role's defaults (host_mount, empty portal) ran `iscsiadm -m discovery -p :3260` and failed
 # every pull on these VMs. csi_node only prepares the initiator; Trident does the logins.

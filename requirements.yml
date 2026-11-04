@@ -6,8 +6,9 @@
 collections:
   # community.general.homebrew (+ homebrew_* modules) — used across the macOS
   # homebrew, ollama, and other data-hub roles.
+  # community.general.keep_keys (roles/cloudflare-access) needs 9.1.0.
   - name: community.general
-    version: ">=9.0.0"
+    version: ">=9.1.0"
   # ansible.posix.* helpers used by the baseline/system roles.
   - name: ansible.posix
     version: ">=1.5.0"

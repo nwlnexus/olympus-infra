@@ -93,3 +93,10 @@ jobs:
           # Mac-mini arm64 agent join (olympus-sdk#694): inventory placement, group vars and the
           # rendered agent config.yaml (labels, taint, kubelet reservations); renders under $RUNNER_TEMP.
           ansible-playbook -i tests/k3s-join-agent/inventory.yml tests/k3s-join-agent/render.yml
+
+      - name: Offline plan test (cloudflare-access)
+        run: |
+          set -euo pipefail
+          # olympus-sdk#736: the Access policies, application and tunnel rule the role would write, planned
+          # from fake API responses (no token, no API call); also checks every API/op task is no_log.
+          ansible-playbook -i tests/cloudflare-access/inventory.yml tests/cloudflare-access/render.yml

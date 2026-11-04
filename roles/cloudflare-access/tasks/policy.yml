@@ -1,0 +1,59 @@
+---
+# Create or update one reusable policy (`_cfa_policy`, from compute-policies.yml) against the list in
+# _cfa_policy_current. Matched by name. Compared on decision and the include/exclude/require rules
+# (order-insensitive); a PUT replaces exactly those, so a rule added in the dashboard is removed again.
+# Sets _cfa_policy_ids[name] for the application.
+
+- name: "Compare {{ _cfa_policy.name }}"
+  ansible.builtin.set_fact:
+    _cfa_pol_match: "{{ _cfa_policy_current | selectattr('name', 'equalto', _cfa_policy.name) | list }}"
+
+- name: "Refuse duplicate policies named {{ _cfa_policy.name }}"
+  ansible.builtin.assert:
+    that: _cfa_pol_match | length <= 1
+    fail_msg: "Several reusable policies are named {{ _cfa_policy.name }}; remove the extra ones in the dashboard."
+    quiet: true
+
+- name: "Decide what to do with {{ _cfa_policy.name }}"
+  vars:
+    _cur: "{{ _cfa_pol_match | first | default({}) }}"
+    _norm: "{{ lookup('ansible.builtin.template', _cfa_templates ~ '/policy-norm.j2', template_vars={'p': _cur}) | from_json }}"
+    _want: "{{ lookup('ansible.builtin.template', _cfa_templates ~ '/policy-norm.j2', template_vars={'p': _cfa_policy}) | from_json }}"
+  ansible.builtin.set_fact:
+    _cfa_pol_action: "{{ 'create' if _cfa_pol_match | length == 0 else ('unchanged' if _norm == _want else 'update') }}"
+
+- name: "Report {{ _cfa_policy.name }}"
+  ansible.builtin.debug:
+    msg: "{{ _cfa_policy.name }} ({{ _cfa_policy.decision }}, {{ _cfa_policy.include | length }} include rule(s)): {{ _cfa_pol_action }}"
+
+- name: "Create {{ _cfa_policy.name }}"
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/policies"
+    method: POST
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body: "{{ _cfa_policy }}"
+    status_code: [200, 201]
+  register: _cfa_pol_created
+  changed_when: true
+  no_log: true
+  when: _cfa_pol_action == 'create'
+
+- name: "Update {{ _cfa_policy.name }}"
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/policies/{{ _cfa_pol_match[0].id }}"
+    method: PUT
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body: "{{ _cfa_policy }}"
+    status_code: 200
+  changed_when: true
+  no_log: true
+  when: _cfa_pol_action == 'update'
+
+- name: "Record the id of {{ _cfa_policy.name }}"
+  ansible.builtin.set_fact:
+    _cfa_policy_ids: >-
+      {{ _cfa_policy_ids | default({}) | combine({_cfa_policy.name:
+           (_cfa_pol_match[0].id if _cfa_pol_match | length > 0
+            else (_cfa_pol_created.json.result.id if _cfa_pol_created.json is defined else 'CHECK-MODE-' ~ _cfa_policy.name))}) }}

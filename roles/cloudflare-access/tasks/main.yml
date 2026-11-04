@@ -1,0 +1,33 @@
+---
+# Cloudflare Access for the memory gateway's public host (olympus-sdk#736). See defaults/main.yml.
+# Order matters: service tokens first (the service-auth policy includes their ids), then the two
+# policies (the application references their ids), then the application (its AUD), then the tunnel
+# rule and DNS, which make the host reachable only after Access protects it.
+
+- name: Resolve the Cloudflare API token
+  ansible.builtin.set_fact:
+    _cfa_token: >-
+      {{ cloudflare_access_api_token if cloudflare_access_api_token != ''
+         else lookup('community.general.onepassword',
+                     cloudflare_access_cf_token_op_item,
+                     field=cloudflare_access_cf_token_op_field,
+                     vault=cloudflare_access_cf_token_op_vault,
+                     errors='ignore') | default('', true) }}
+  no_log: true
+  when: cloudflare_access_state == 'present'
+
+- name: Warn and skip when no Cloudflare API token could be resolved
+  ansible.builtin.debug:
+    msg: >-
+      cloudflare-access: no API token (1Password {{ cloudflare_access_cf_token_op_vault }}/{{
+      cloudflare_access_cf_token_op_item }} field {{ cloudflare_access_cf_token_op_field }}, or
+      cloudflare_access_api_token). Nothing was read or changed.
+  when:
+    - cloudflare_access_state == 'present'
+    - _cfa_token | default('') == ''
+
+- name: Cloudflare Access application, policies, service tokens, tunnel rule and DNS
+  ansible.builtin.include_tasks: apply.yml
+  when:
+    - cloudflare_access_state == 'present'
+    - _cfa_token | default('') != ''

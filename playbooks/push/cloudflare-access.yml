@@ -1,0 +1,37 @@
+---
+# Cloudflare Access for the memory gateway's public host https://memory.nwlnexus.io
+# (olympus-sdk#736; role roles/cloudflare-access, defaults there). API calls only, from the controller:
+# no host is touched, no kubectl. Runbook: olympus-sdk docs/runbooks/memory-access-service-tokens.md.
+#
+# Prerequisites (owner):
+#   - 1Password Dev/cloudflare-account field `access_api_token`: a Cloudflare API token with the
+#     permissions listed in roles/cloudflare-access/defaults/main.yml (Access apps/policies and service
+#     tokens Edit, Access organizations Read, Tunnel Edit, DNS Edit + Zone Read on nwlnexus.io).
+#   - OP_SERVICE_ACCOUNT_TOKEN exported and `op` on PATH (the account must be able to write vault Dev).
+#   - The owner e-mail, passed on the command line (never committed: this repository is public).
+#
+# Dry run (reads everything, writes nothing, prints the plan):
+#   ansible-playbook playbooks/push/cloudflare-access.yml --check \
+#     -e '{"cloudflare_access_owner_emails": ["OWNER@EXAMPLE"]}'
+# Apply:
+#   ansible-playbook playbooks/push/cloudflare-access.yml \
+#     -e '{"cloudflare_access_owner_emails": ["OWNER@EXAMPLE"]}'
+# The last task prints MEMORY_ACCESS_TEAM_DOMAIN and MEMORY_ACCESS_AUD for olympus-gitops
+# clusters/olympus/memory/gateway/gateway.yaml, and each token's client id for its gateway client row.
+#
+# Rotate one host's secret (same client id; the old secret stays valid 24 h unless grace is 0):
+#   ansible-playbook playbooks/push/cloudflare-access.yml -e '{"cloudflare_access_owner_emails": [...],
+#     "cloudflare_access_rotate_hosts": ["NWL-MBM2"]}'
+# Extend one host's token by a year: cloudflare_access_refresh_hosts instead.
+# Take the public path down (Access stays): -e cloudflare_access_tunnel_enabled=false.
+
+- name: Cloudflare Access for the memory gateway
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    # Same account as cloudflared_account_id in inventory/group_vars/compute_hub.yml (tests check it).
+    cloudflare_access_account_id: "1b15dcdab99d4e8d5babb3dc6b1adaec"
+  roles:
+    - role: cloudflare-access
+      tags: [cloudflare-access]

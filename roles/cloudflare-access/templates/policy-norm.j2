@@ -1,0 +1,5 @@
+{#- Canonical form of an Access policy for comparison: decision plus sorted include/exclude/require rules. -#}
+{{ {'decision': p.decision | default(''),
+    'include': p.include | default([], true) | map('to_json', sort_keys=true) | sort | list,
+    'exclude': p.exclude | default([], true) | map('to_json', sort_keys=true) | sort | list,
+    'require': p.require | default([], true) | map('to_json', sort_keys=true) | sort | list} | to_json }}

@@ -1,0 +1,218 @@
+---
+# Offline checks for roles/cloudflare-access (olympus-sdk#736): runs the role's pure planning steps
+# (compute-policies, compute-app, compute-tunnel) against fake Cloudflare API responses and asserts the
+# result. No API, no token, no 1Password: the placeholders below are not credentials.
+#
+#   ansible-playbook -i tests/cloudflare-access/inventory.yml tests/cloudflare-access/render.yml
+- name: Plan the Access objects from fake API responses
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - ../../roles/cloudflare-access/defaults/main.yml
+  vars:
+    _role: ../../roles/cloudflare-access
+    _cfa_templates: "{{ playbook_dir }}/../../roles/cloudflare-access/templates"
+    _compute_hub: "{{ lookup('ansible.builtin.file', '../../inventory/group_vars/compute_hub.yml') | from_yaml }}"
+    _playbook: "{{ lookup('ansible.builtin.file', '../../playbooks/push/cloudflare-access.yml') | from_yaml }}"
+    _apply: "{{ lookup('ansible.builtin.file', _role ~ '/tasks/apply.yml') | from_yaml }}"
+    _token_tasks: "{{ lookup('ansible.builtin.file', _role ~ '/tasks/service-token.yml') | from_yaml }}"
+    _catch_all: {service: "https://traefik.traefik.svc.cluster.local:443", originRequest: {noTLSVerify: true}}
+    _other_rule: {hostname: other.nwlnexus.net, service: "http://other.other:80"}
+  tasks:
+    # --- wiring ------------------------------------------------------------------------------------
+    - name: The playbook targets the same account as the cluster tunnel and hard-codes no owner e-mail
+      ansible.builtin.assert:
+        that:
+          - _playbook[0].vars.cloudflare_access_account_id == _compute_hub.cloudflared_account_id
+          - cloudflare_access_tunnel_name == _compute_hub.cloudflared_tunnel_name
+          - lookup('ansible.builtin.file', '../../playbooks/push/cloudflare-access.yml') is not search('@gmail|@nwlnexus')
+          - lookup('ansible.builtin.file', _role ~ '/defaults/main.yml') is not search('@gmail|@nwlnexus')
+        quiet: true
+
+    - name: Every task that talks to the API or 1Password is no_log, and reads run in --check
+      vars:
+        _all: "{{ _apply + _token_tasks + (lookup('ansible.builtin.file', _role ~ '/tasks/tunnel.yml') | from_yaml)
+                  + (lookup('ansible.builtin.file', _role ~ '/tasks/policy.yml') | from_yaml) }}"
+        _api: >-
+          [{% for t in _all if 'ansible.builtin.uri' in t or 'ansible.builtin.command' in t %}{{ t | to_json }},{% endfor %}null]
+        _gets: >-
+          [{% for t in _all if 'ansible.builtin.uri' in t and t['ansible.builtin.uri'].method == 'GET' %}{{ t | to_json }},{% endfor %}null]
+        _api_l: "{{ (_api | from_json)[:-1] }}"
+        _gets_l: "{{ (_gets | from_json)[:-1] }}"
+      ansible.builtin.assert:
+        that:
+          - _api_l | length > 15
+          - _api_l | map(attribute='no_log', default=false) | reject('equalto', true) | list | length == 0
+          - _gets_l | length >= 8
+          - _gets_l | map(attribute='check_mode', default=true) | reject('equalto', false) | list | length == 0
+        fail_msg: "{{ _api_l | map(attribute='name') | zip(_api_l | map(attribute='no_log', default=false)) | list | to_json }}"
+        quiet: true
+
+    # --- policies ----------------------------------------------------------------------------------
+    - name: Plan the policies with two of three tokens present
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-policies.yml"
+      vars:
+        # Task vars beat vars_files (the role defaults), play vars do not.
+        cloudflare_access_owner_emails: [Owner@Example.invalid]
+        _cfa_tokens: {memory-ai-agent-host: tok-1, memory-nwl-mstudio: tok-2, unrelated: tok-9}
+
+    - name: The allow-owner policy admits the owner only, service-auth exactly the memory tokens, no Bypass
+      ansible.builtin.assert:
+        that:
+          - _cfa_policies_desired | length == 2
+          - _cfa_policies_desired[0].name == 'memory-allow-owner'
+          - _cfa_policies_desired[0].decision == 'allow'
+          - "_cfa_policies_desired[0].include == [{'email': {'email': 'owner@example.invalid'}}]"
+          - _cfa_policies_desired[1].name == 'memory-service-auth'
+          - _cfa_policies_desired[1].decision == 'non_identity'
+          - "_cfa_policies_desired[1].include == [{'service_token': {'token_id': 'tok-1'}}, {'service_token': {'token_id': 'tok-2'}}]"
+          - _cfa_policies_desired | map(attribute='decision') | select('equalto', 'bypass') | list == []
+        fail_msg: "{{ _cfa_policies_desired | to_json }}"
+        quiet: true
+
+    - name: Policy comparison ignores rule order and extra API fields
+      vars:
+        _api_view:
+          id: pol-2
+          name: memory-service-auth
+          decision: non_identity
+          include: [{'service_token': {'token_id': 'tok-2'}}, {'service_token': {'token_id': 'tok-1'}}]
+          exclude: []
+          require: []
+          created_at: "2026-11-04T00:00:00Z"
+        _norm_api: "{{ lookup('ansible.builtin.template', _cfa_templates ~ '/policy-norm.j2', template_vars={'p': _api_view}) }}"
+        _norm_want: "{{ lookup('ansible.builtin.template', _cfa_templates ~ '/policy-norm.j2', template_vars={'p': _cfa_policies_desired[1]}) }}"
+        _bypass: "{{ _api_view | combine({'decision': 'bypass'}) }}"
+        _norm_bypass: "{{ lookup('ansible.builtin.template', _cfa_templates ~ '/policy-norm.j2', template_vars={'p': _bypass}) }}"
+      ansible.builtin.assert:
+        that:
+          - _norm_api == _norm_want
+          - _norm_bypass != _norm_want
+        quiet: true
+
+    # --- application -------------------------------------------------------------------------------
+    - name: Plan the application when none exists
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-app.yml"
+      vars:
+        _cfa_apps: [{name: moneta-access, domain: moneta.example.invalid, aud: x}]
+        _cfa_policy_ids: {memory-allow-owner: pol-1, memory-service-auth: pol-2}
+
+    - name: A new self-hosted app on the bare host, both policies, Managed OAuth with DCR for claude.ai
+      ansible.builtin.assert:
+        that:
+          - _cfa_app_action == 'create'
+          - _cfa_app_desired.type == 'self_hosted'
+          - _cfa_app_desired.domain == 'memory.nwlnexus.io'
+          - "_cfa_app_desired.destinations == [{'type': 'public', 'uri': 'memory.nwlnexus.io'}]"
+          - "_cfa_app_desired.policies == [{'id': 'pol-1', 'precedence': 1}, {'id': 'pol-2', 'precedence': 2}]"
+          - _cfa_app_desired.oauth_configuration.enabled
+          - _cfa_app_desired.oauth_configuration.dynamic_client_registration.enabled
+          - _cfa_app_desired.oauth_configuration.dynamic_client_registration.allowed_uris == ['https://claude.ai/*']
+          - not _cfa_app_desired.oauth_configuration.dynamic_client_registration.allow_any_on_localhost
+          - _cfa_app_desired.session_duration == '24h'
+        fail_msg: "{{ _cfa_app_desired | to_json }}"
+        quiet: true
+
+    - name: Plan against an app that already matches (API view with extra fields and omitted falsy ones)
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-app.yml"
+      vars:
+        _cfa_policy_ids: {memory-allow-owner: pol-1, memory-service-auth: pol-2}
+        _cfa_apps:
+          - id: app-1
+            aud: aud-123
+            uid: app-1
+            name: memory
+            type: self_hosted
+            domain: memory.nwlnexus.io
+            destinations: [{type: public, uri: memory.nwlnexus.io}]
+            session_duration: 24h
+            app_launcher_visible: false
+            allowed_idps: []
+            http_only_cookie_attribute: true
+            same_site_cookie_attribute: lax
+            policies:
+              - {id: pol-1, precedence: 1, name: memory-allow-owner, decision: allow, include: []}
+              - {id: pol-2, precedence: 2, name: memory-service-auth, decision: non_identity, include: []}
+            oauth_configuration:
+              enabled: true
+              dynamic_client_registration:
+                enabled: true
+                allowed_uris: ["https://claude.ai/*"]
+                allow_any_on_localhost: false
+                allow_any_on_loopback: false
+              grant: {access_token_lifetime: 15m, session_duration: 336h}
+            created_at: "2026-11-04T00:00:00Z"
+
+    - name: A matching app is unchanged (second run changes nothing)
+      ansible.builtin.assert:
+        that:
+          - _cfa_app_action == 'unchanged'
+          - _cfa_app_diff_keys == []
+          - _cfa_app_current.aud == 'aud-123'
+        fail_msg: "{{ _cfa_app_diff_keys | to_json }}"
+        quiet: true
+
+    - name: Plan against an app whose policies were changed in the dashboard (a Bypass added)
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-app.yml"
+      vars:
+        _cfa_policy_ids: {memory-allow-owner: pol-1, memory-service-auth: pol-2}
+        _cfa_apps:
+          - id: app-1
+            aud: aud-123
+            name: memory
+            type: self_hosted
+            domain: memory.nwlnexus.io
+            destinations: [{type: public, uri: memory.nwlnexus.io}]
+            session_duration: 24h
+            policies:
+              - {id: pol-bypass, precedence: 1, decision: bypass}
+              - {id: pol-1, precedence: 2}
+              - {id: pol-2, precedence: 3}
+            oauth_configuration: {enabled: false}
+
+    - name: It is updated back to exactly the two policies and Managed OAuth
+      ansible.builtin.assert:
+        that:
+          - _cfa_app_action == 'update'
+          - "'policies' in _cfa_app_diff_keys"
+          - "'oauth_configuration' in _cfa_app_diff_keys"
+          - (_cfa_app_current | combine(_cfa_app_desired)).policies == _cfa_app_desired.policies
+        fail_msg: "{{ _cfa_app_diff_keys | to_json }}"
+        quiet: true
+
+    # --- tunnel ------------------------------------------------------------------------------------
+    - name: Plan the tunnel rule on a config with another hostname and the catch-all
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-tunnel.yml"
+      vars:
+        _cfa_tunnel_config: {ingress: ["{{ _other_rule }}", "{{ _catch_all }}"], warp-routing: {enabled: false}}
+
+    - name: The rule goes first, every other rule is kept, the catch-all stays last
+      ansible.builtin.assert:
+        that:
+          - _cfa_ingress_changed
+          - "_cfa_ingress_new == [{'hostname': 'memory.nwlnexus.io', 'service': 'http://memory-gateway.memory.svc.cluster.local:80'}, _other_rule, _catch_all]"
+        fail_msg: "{{ _cfa_ingress_new | to_json }}"
+        quiet: true
+
+    - name: Plan again on the written config
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-tunnel.yml"
+      vars:
+        _cfa_tunnel_config: {ingress: "{{ _cfa_ingress_new }}"}
+
+    - name: Second run changes nothing
+      ansible.builtin.assert:
+        that: not _cfa_ingress_changed
+        quiet: true
+
+    - name: Plan the rollback (tunnel disabled)
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-tunnel.yml"
+      vars:
+        cloudflare_access_tunnel_enabled: false
+        _cfa_tunnel_config: {ingress: "{{ _cfa_ingress_new }}"}
+
+    - name: Rollback removes only the memory rule
+      ansible.builtin.assert:
+        that:
+          - _cfa_ingress_changed
+          - _cfa_ingress_new == [_other_rule, _catch_all]
+        quiet: true

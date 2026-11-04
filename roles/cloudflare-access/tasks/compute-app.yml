@@ -1,0 +1,68 @@
+---
+# Desired self-hosted application and its diff against the API (pure: tests/cloudflare-access runs it
+# offline with fake responses). Inputs: _cfa_apps (GET /access/apps result), _cfa_policy_ids.
+# Outputs: _cfa_app_desired, _cfa_app_matches, _cfa_app_current, _cfa_app_action, _cfa_app_diff_keys.
+
+- name: Build the desired application
+  ansible.builtin.set_fact:
+    _cfa_app_desired:
+      name: "{{ cloudflare_access_app_name }}"
+      type: self_hosted
+      domain: "{{ cloudflare_access_app_domain }}"
+      # The bare host covers every path (/, /mcp, /healthz, /readyz): Access path "/*".
+      destinations:
+        - type: public
+          uri: "{{ cloudflare_access_app_domain }}"
+      session_duration: "{{ cloudflare_access_session_duration }}"
+      app_launcher_visible: false
+      allowed_idps: "{{ cloudflare_access_allowed_idps }}"
+      auto_redirect_to_identity: "{{ cloudflare_access_allowed_idps | length == 1 }}"
+      http_only_cookie_attribute: true
+      same_site_cookie_attribute: lax
+      # CORS preflights are not let through unauthenticated: the gateway answers no CORS at all.
+      options_preflight_bypass: false
+      # Order matters only for the dashboard; both policies are evaluated.
+      policies:
+        - id: "{{ _cfa_policy_ids[cloudflare_access_policy_prefix ~ 'allow-owner'] }}"
+          precedence: 1
+        - id: "{{ _cfa_policy_ids[cloudflare_access_policy_prefix ~ 'service-auth'] }}"
+          precedence: 2
+      oauth_configuration: >-
+        {{ {'enabled': true,
+            'dynamic_client_registration': {
+              'enabled': true,
+              'allowed_uris': cloudflare_access_oauth_allowed_redirect_uris,
+              'allow_any_on_localhost': cloudflare_access_oauth_allow_localhost | bool,
+              'allow_any_on_loopback': cloudflare_access_oauth_allow_loopback | bool},
+            'grant': {
+              'access_token_lifetime': cloudflare_access_oauth_access_token_lifetime,
+              'session_duration': cloudflare_access_oauth_grant_session_duration}}
+           if cloudflare_access_managed_oauth | bool else {'enabled': false} }}
+
+- name: Find the existing application
+  ansible.builtin.set_fact:
+    _cfa_app_matches: >-
+      {{ _cfa_apps | selectattr('domain', 'defined')
+         | selectattr('domain', 'in', [cloudflare_access_app_domain, cloudflare_access_app_domain ~ '/*', cloudflare_access_app_domain ~ '/'])
+         | list }}
+
+- name: Compare it field by field (lists of objects reduced to the fields this role sets)
+  vars:
+    _cur: "{{ _cfa_app_matches | first | default({}) }}"
+    _cur_norm: >-
+      {{ _cur | combine({
+           'policies': _cur.policies | default([], true)
+                       | community.general.keep_keys(target=['id', 'precedence']),
+           'destinations': _cur.destinations | default([], true)
+                           | community.general.keep_keys(target=['type', 'uri'])}) }}
+  ansible.builtin.set_fact:
+    _cfa_app_current: "{{ _cur }}"
+    _cfa_app_diff_keys: >-
+      {{ lookup('ansible.builtin.template', _cfa_templates ~ '/app-diff.j2',
+                template_vars={'cur': _cur_norm, 'want': _cfa_app_desired}) | from_json }}
+
+- name: Decide what to do with the application
+  ansible.builtin.set_fact:
+    _cfa_app_action: >-
+      {{ 'create' if _cfa_app_matches | length == 0
+         else ('update' if _cfa_app_diff_keys | length > 0 else 'unchanged') }}

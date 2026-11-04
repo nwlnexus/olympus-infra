@@ -59,7 +59,9 @@
       {{ cloudflare_access_op_cmd + ['item', 'create', '--category=password',
           '--title=' ~ cloudflare_access_op_item,
           '--vault=' ~ cloudflare_access_op_vault] + _cfa_op_fields }}
+  register: _cfa_op_create
   changed_when: true
+  failed_when: false
   no_log: true
   when: not (_cfa_op_item_exists | bool)
 
@@ -68,9 +70,25 @@
     argv: >-
       {{ cloudflare_access_op_cmd + ['item', 'edit', cloudflare_access_op_item,
           '--vault=' ~ cloudflare_access_op_vault] + _cfa_op_fields }}
+  register: _cfa_op_edit
   changed_when: true
+  failed_when: false
   no_log: true
   when: _cfa_op_item_exists | bool
+
+# The write tasks above are no_log (their argv carries the secret), which also hid op's error message.
+# Show op's stderr with every field value replaced, so a failed write says why.
+- name: "Stop if the 1Password write for {{ _cfa_host }} failed (op's message, values redacted)"
+  ansible.builtin.fail:
+    msg: >-
+      op exited {{ _cfa_op_result.rc }}:
+      {% set ns = namespace(err=_cfa_op_result.stderr | default('')) %}
+      {%- for value in _cfa_op_fields | map('regex_replace', '^[^=]*=', '') %}
+      {%- set ns.err = ns.err | replace(value, '<redacted>') %}
+      {%- endfor %}{{ ns.err | trim }}
+  vars:
+    _cfa_op_result: "{{ _cfa_op_edit if (_cfa_op_item_exists | bool) else _cfa_op_create }}"
+  when: (_cfa_op_result.rc | default(0)) != 0
 
 - name: The item exists from now on
   ansible.builtin.set_fact:

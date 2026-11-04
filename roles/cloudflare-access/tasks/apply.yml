@@ -87,6 +87,35 @@
   ansible.builtin.set_fact:
     _cfa_op_item_exists: "{{ (_cfa_op_get.rc | default(1)) == 0 }}"
 
+# Preflight, before anything is created in Cloudflare: Cloudflare shows a new secret only once, so a
+# 1Password write that fails after the token exists loses it. Create the item (or touch it) with a
+# non-secret marker field first; a missing permission or bad auth then stops the play here, with op's
+# message, and nothing has changed in Cloudflare.
+- name: Preflight the 1Password write (marker field only, no secret)
+  ansible.builtin.command:
+    argv: >-
+      {{ cloudflare_access_op_cmd
+         + (['item', 'edit', cloudflare_access_op_item] if (_cfa_op_item_exists | bool)
+            else ['item', 'create', '--category=password', '--title=' ~ cloudflare_access_op_item])
+         + ['--vault=' ~ cloudflare_access_op_vault, 'managed-by[text]=olympus-infra roles/cloudflare-access'] }}
+  register: _cfa_op_preflight
+  changed_when: not (_cfa_op_item_exists | bool)
+  failed_when: false
+  no_log: true
+  when: >-
+    (_cfa_tokens_missing | length > 0 or cloudflare_access_rotate_hosts | length > 0)
+    and not ansible_check_mode
+
+- name: Stop before any Cloudflare change if the 1Password preflight failed
+  ansible.builtin.fail:
+    msg: "1Password write preflight failed (op exited {{ _cfa_op_preflight.rc }}): {{ _cfa_op_preflight.stderr | default('') | trim }}"
+  when: (_cfa_op_preflight.rc | default(0)) != 0
+
+- name: The item exists after the preflight
+  ansible.builtin.set_fact:
+    _cfa_op_item_exists: true
+  when: (_cfa_op_preflight.rc | default(1)) == 0
+
 - name: Create the missing service tokens and store them in 1Password
   ansible.builtin.include_tasks: service-token.yml
   loop: "{{ _cfa_tokens_missing }}"

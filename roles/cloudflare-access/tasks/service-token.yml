@@ -80,14 +80,10 @@
 # Show op's stderr with every field value replaced, so a failed write says why.
 - name: "Stop if the 1Password write for {{ _cfa_host }} failed (op's message, values redacted)"
   ansible.builtin.fail:
-    msg: >-
-      op exited {{ _cfa_op_result.rc }}:
-      {% set ns = namespace(err=_cfa_op_result.stderr | default('')) %}
-      {%- for value in _cfa_op_fields | map('regex_replace', '^[^=]*=', '') %}
-      {%- set ns.err = ns.err | replace(value, '<redacted>') %}
-      {%- endfor %}{{ ns.err | trim }}
+    msg: "op exited {{ _cfa_op_result.rc }}: {{ _cfa_op_result.stderr | default('') | regex_replace(_cfa_op_values, '<redacted>') | trim }}"
   vars:
     _cfa_op_result: "{{ _cfa_op_edit if (_cfa_op_item_exists | bool) else _cfa_op_create }}"
+    _cfa_op_values: "{{ _cfa_op_fields | map('regex_replace', '^[^=]*=', '') | map('regex_escape') | join('|') }}"
   when: (_cfa_op_result.rc | default(0)) != 0
 
 - name: The item exists from now on

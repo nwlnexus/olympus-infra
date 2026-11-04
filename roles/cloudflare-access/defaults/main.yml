@@ -93,7 +93,14 @@ cloudflare_access_op_vault: "Dev"
 # 1Password Connect, and the repos' .envrc exports both Connect and a service account, so the Connect
 # variables are dropped for these calls and the service account is used (it needs write access to the
 # vault above). The token lookup at the start may still go through Connect.
-cloudflare_access_op_cmd: [env, -u, OP_CONNECT_HOST, -u, OP_CONNECT_TOKEN, op]
+# stdin is /dev/null: under Ansible stdin is a pipe, and `op item create/edit` then reads it as a JSON
+# item template ("invalid JSON in piped input"). /dev/null is a character device, which op treats like a
+# terminal. The arguments that follow are passed through "$@" unchanged (no shell parsing of values).
+cloudflare_access_op_cmd:
+  - sh
+  - -c
+  - exec env -u OP_CONNECT_HOST -u OP_CONNECT_TOKEN op "$@" </dev/null
+  - op
 cloudflare_access_op_item: "memory-access-tokens"
 
 # --- Tunnel public hostname and DNS -------------------------------------------------------------------

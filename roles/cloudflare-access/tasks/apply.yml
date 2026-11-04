@@ -71,10 +71,9 @@
       to_refresh: "{{ cloudflare_access_refresh_hosts }}"
 
 - name: Look up the 1Password item that holds the service tokens
-  # `op item get` rather than `op item list`: 1Password Connect (the repo's .envrc auth) does not support
-  # `op item list`. Exit 0 = the item exists; the output (field values) is discarded and never logged.
+  # Exit 0 = the item exists; the output (field values) is discarded and never logged.
   ansible.builtin.command:
-    argv: [op, item, get, "{{ cloudflare_access_op_item }}", "--vault={{ cloudflare_access_op_vault }}", --format=json]
+    argv: "{{ cloudflare_access_op_cmd + ['item', 'get', cloudflare_access_op_item, '--vault=' ~ cloudflare_access_op_vault, '--format=json'] }}"
   register: _cfa_op_get
   changed_when: false
   failed_when: false

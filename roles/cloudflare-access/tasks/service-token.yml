@@ -56,7 +56,7 @@
 - name: "Create the 1Password item with the token of {{ _cfa_host }}"
   ansible.builtin.command:
     argv: >-
-      {{ ['op', 'item', 'create', '--category=password',
+      {{ cloudflare_access_op_cmd + ['item', 'create', '--category=password',
           '--title=' ~ cloudflare_access_op_item,
           '--vault=' ~ cloudflare_access_op_vault] + _cfa_op_fields }}
   changed_when: true
@@ -66,7 +66,7 @@
 - name: "Write into the 1Password item the token of {{ _cfa_host }}"
   ansible.builtin.command:
     argv: >-
-      {{ ['op', 'item', 'edit', cloudflare_access_op_item,
+      {{ cloudflare_access_op_cmd + ['item', 'edit', cloudflare_access_op_item,
           '--vault=' ~ cloudflare_access_op_vault] + _cfa_op_fields }}
   changed_when: true
   no_log: true

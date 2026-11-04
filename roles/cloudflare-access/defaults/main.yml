@@ -32,7 +32,7 @@ cloudflare_access_state: present
 cloudflare_access_api_token: ""
 cloudflare_access_cf_token_op_item: "cloudflare-account"
 cloudflare_access_cf_token_op_field: "access_api_token"
-cloudflare_access_cf_token_op_vault: "Dev"
+cloudflare_access_cf_token_op_vault: "CI"
 cloudflare_access_account_id: ""
 # Only tests point this elsewhere (a local fake of the API).
 cloudflare_access_api_url: "https://api.cloudflare.com/client/v4"

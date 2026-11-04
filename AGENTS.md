@@ -210,7 +210,7 @@ the header there has the commands). It owns, look-up-before-create: one service 
 Auth, exactly those tokens), the self-hosted application `memory` on the bare host with Managed OAuth
 (DCR, redirect `https://claude.ai/*`), the `memory.nwlnexus.io` rule on the remotely managed `compute-hub`
 tunnel (inserted first, every other rule and the catch-all kept) and its proxied CNAME. The owner e-mail is
-passed with `-e` and never committed. It uses its own API token (1Password `cloudflare-account` field
+passed with `-e` and never committed. It uses its own API token (1Password `CI/cloudflare-account` field
 `access_api_token`; scopes in the role defaults), not the Tunnel + DNS token of `cloudflared-k8s`.
 `tests/cloudflare-access` plans everything offline from fake API responses (CI). Runbook: olympus-sdk
 `docs/runbooks/memory-access-service-tokens.md`.

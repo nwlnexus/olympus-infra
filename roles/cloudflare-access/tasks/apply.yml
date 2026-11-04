@@ -70,11 +70,14 @@
       to_rotate: "{{ cloudflare_access_rotate_hosts }}"
       to_refresh: "{{ cloudflare_access_refresh_hosts }}"
 
-- name: Look up the 1Password item that holds the service tokens (titles only, no field values)
+- name: Look up the 1Password item that holds the service tokens
+  # `op item get` rather than `op item list`: 1Password Connect (the repo's .envrc auth) does not support
+  # `op item list`. Exit 0 = the item exists; the output (field values) is discarded and never logged.
   ansible.builtin.command:
-    argv: [op, item, list, "--vault={{ cloudflare_access_op_vault }}", --format=json]
-  register: _cfa_op_list
+    argv: [op, item, get, "{{ cloudflare_access_op_item }}", "--vault={{ cloudflare_access_op_vault }}", --format=json]
+  register: _cfa_op_get
   changed_when: false
+  failed_when: false
   check_mode: false
   no_log: true
   when: >-
@@ -83,9 +86,7 @@
 
 - name: Note whether the 1Password item exists
   ansible.builtin.set_fact:
-    _cfa_op_item_exists: >-
-      {{ (_cfa_op_list.stdout | default('[]') | from_json | selectattr('title', 'equalto', cloudflare_access_op_item)
-          | list | length) > 0 }}
+    _cfa_op_item_exists: "{{ (_cfa_op_get.rc | default(1)) == 0 }}"
 
 - name: Create the missing service tokens and store them in 1Password
   ansible.builtin.include_tasks: service-token.yml

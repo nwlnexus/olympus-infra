@@ -1,0 +1,295 @@
+---
+# Included from main.yml once an API token is resolved. Every GET runs in --check (check_mode: false);
+# every write is a uri/command task, which Ansible skips in --check, so a check run only reads and
+# reports. Every task that carries the token or a secret is no_log.
+
+- name: Check the required inputs
+  ansible.builtin.assert:
+    that:
+      - cloudflare_access_account_id | length > 0
+      - cloudflare_access_owner_emails | length > 0
+      - cloudflare_access_owner_emails | select('match', '^[^@\s]+@[^@\s]+$') | list | length
+        == cloudflare_access_owner_emails | length
+      - cloudflare_access_service_token_hosts | length > 0
+      - cloudflare_access_service_token_hosts | unique | length == cloudflare_access_service_token_hosts | length
+      - cloudflare_access_rotate_hosts | difference(cloudflare_access_service_token_hosts) | length == 0
+      - cloudflare_access_refresh_hosts | difference(cloudflare_access_service_token_hosts) | length == 0
+      - cloudflare_access_rotate_grace_hours | int >= 0
+      - cloudflare_access_rotate_grace_hours | int <= 720
+    fail_msg: >-
+      cloudflare-access needs cloudflare_access_account_id, at least one owner e-mail in
+      cloudflare_access_owner_emails (supplied with -e, never committed: this repository is public),
+      unique service-token hosts, rotate/refresh hosts from that list and a grace of 0-720 hours.
+    quiet: true
+
+- name: Set the API base and headers
+  ansible.builtin.set_fact:
+    _cfa_api: "{{ cloudflare_access_api_url }}"
+    _cfa_acct: "{{ cloudflare_access_api_url }}/accounts/{{ cloudflare_access_account_id }}"
+    # The compute-*.yml steps look templates up through this (tests set it without a role context).
+    _cfa_templates: "{{ role_path }}/templates"
+    _cfa_headers:
+      Authorization: "Bearer {{ _cfa_token }}"
+      Content-Type: "application/json"
+  no_log: true
+
+# ------------------------------------------------------------------------------------------------
+# 1. Service tokens (spec 5.6). The client secret is returned only at creation and rotation, so
+#    each of those writes it straight to 1Password in the same include.
+# ------------------------------------------------------------------------------------------------
+- name: List Access service tokens
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/service_tokens?per_page=1000"
+    method: GET
+    headers: "{{ _cfa_headers }}"
+    status_code: 200
+  register: _cfa_tokens_first
+  check_mode: false
+  no_log: true
+
+- name: Index the existing service tokens by name
+  ansible.builtin.set_fact:
+    _cfa_tokens: "{{ _cfa_tokens_first.json.result | default([], true) | items2dict(key_name='name', value_name='id') }}"
+    _cfa_token_client_ids: "{{ _cfa_tokens_first.json.result | default([], true) | items2dict(key_name='name', value_name='client_id') }}"
+    _cfa_token_names: >-
+      {{ cloudflare_access_service_token_hosts
+         | map('regex_replace', '^', cloudflare_access_service_token_name_prefix) | list }}
+
+- name: Decide which service tokens to create
+  ansible.builtin.set_fact:
+    _cfa_tokens_missing: >-
+      {{ cloudflare_access_service_token_hosts
+         | reject('in', _cfa_tokens.keys() | map('regex_replace', '^' ~ cloudflare_access_service_token_name_prefix, '') | list)
+         | list }}
+
+- name: Report the service-token plan
+  ansible.builtin.debug:
+    msg:
+      existing: "{{ _cfa_token_names | select('in', _cfa_tokens.keys()) | list }}"
+      to_create: "{{ _cfa_tokens_missing | map('regex_replace', '^', cloudflare_access_service_token_name_prefix) | list }}"
+      to_rotate: "{{ cloudflare_access_rotate_hosts }}"
+      to_refresh: "{{ cloudflare_access_refresh_hosts }}"
+
+- name: Look up the 1Password item that holds the service tokens
+  # Exit 0 = the item exists; the output (field values) is discarded and never logged.
+  ansible.builtin.command:
+    argv: "{{ cloudflare_access_op_cmd + ['item', 'get', cloudflare_access_op_item, '--vault=' ~ cloudflare_access_op_vault, '--format=json'] }}"
+  register: _cfa_op_get
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+  when: >-
+    (_cfa_tokens_missing | length > 0 or cloudflare_access_rotate_hosts | length > 0)
+    and not ansible_check_mode
+
+- name: Note whether the 1Password item exists
+  ansible.builtin.set_fact:
+    _cfa_op_item_exists: "{{ (_cfa_op_get.rc | default(1)) == 0 }}"
+
+# Preflight, before anything is created in Cloudflare: Cloudflare shows a new secret only once, so a
+# 1Password write that fails after the token exists loses it. Create the item (or touch it) with a
+# non-secret marker field first; a missing permission or bad auth then stops the play here, with op's
+# message, and nothing has changed in Cloudflare.
+- name: Preflight the 1Password write (marker field only, no secret)
+  ansible.builtin.command:
+    argv: >-
+      {{ cloudflare_access_op_cmd
+         + (['item', 'edit', cloudflare_access_op_item] if (_cfa_op_item_exists | bool)
+            else ['item', 'create', '--category=password', '--title=' ~ cloudflare_access_op_item])
+         + ['--vault=' ~ cloudflare_access_op_vault, 'managed-by[text]=olympus-infra roles/cloudflare-access'] }}
+  register: _cfa_op_preflight
+  changed_when: not (_cfa_op_item_exists | bool)
+  failed_when: false
+  no_log: true
+  when: >-
+    (_cfa_tokens_missing | length > 0 or cloudflare_access_rotate_hosts | length > 0)
+    and not ansible_check_mode
+
+- name: Stop before any Cloudflare change if the 1Password preflight failed
+  ansible.builtin.fail:
+    msg: "1Password write preflight failed (op exited {{ _cfa_op_preflight.rc }}): {{ _cfa_op_preflight.stderr | default('') | trim }}"
+  when: (_cfa_op_preflight.rc | default(0)) != 0
+
+- name: The item exists after the preflight
+  ansible.builtin.set_fact:
+    _cfa_op_item_exists: true
+  when: (_cfa_op_preflight.rc | default(1)) == 0
+
+- name: Create the missing service tokens and store them in 1Password
+  ansible.builtin.include_tasks: service-token.yml
+  loop: "{{ _cfa_tokens_missing }}"
+  loop_control:
+    loop_var: _cfa_host
+  vars:
+    _cfa_action: create
+  when: not ansible_check_mode
+
+- name: Rotate the requested service-token secrets (client id unchanged) and store them in 1Password
+  ansible.builtin.include_tasks: service-token.yml
+  loop: "{{ cloudflare_access_rotate_hosts | reject('in', _cfa_tokens_missing) | list }}"
+  loop_control:
+    loop_var: _cfa_host
+  vars:
+    _cfa_action: rotate
+  when: not ansible_check_mode
+
+- name: Extend the requested service tokens by one year
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/service_tokens/{{ _cfa_tokens[cloudflare_access_service_token_name_prefix ~ item] }}/refresh"
+    method: POST
+    headers: "{{ _cfa_headers }}"
+    status_code: 200
+  loop: "{{ cloudflare_access_refresh_hosts | reject('in', _cfa_tokens_missing) | list }}"
+  changed_when: true
+  no_log: true
+
+- name: Re-list Access service tokens after creation
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/service_tokens?per_page=1000"
+    method: GET
+    headers: "{{ _cfa_headers }}"
+    status_code: 200
+  register: _cfa_tokens_relist
+  check_mode: false
+  no_log: true
+  when: _cfa_tokens_missing | length > 0 and not ansible_check_mode
+
+- name: Collect the service token ids and expiry dates for the service-auth policy
+  vars:
+    # A skipped task still registers: use the re-list only when it ran.
+    _cfa_tokens_resp: "{{ _cfa_tokens_relist if _cfa_tokens_relist.json is defined else _cfa_tokens_first }}"
+  ansible.builtin.set_fact:
+    _cfa_tokens: "{{ _cfa_tokens_resp.json.result | default([], true) | items2dict(key_name='name', value_name='id') }}"
+    _cfa_token_expiry: "{{ _cfa_tokens_resp.json.result | default([], true) | items2dict(key_name='name', value_name='expires_at') }}"
+    # client_id is public (it is the JWT common_name the gateway's client row matches); the secret is never listed.
+    _cfa_token_client_ids: "{{ _cfa_tokens_resp.json.result | default([], true) | items2dict(key_name='name', value_name='client_id') }}"
+    _cfa_pending: "{{ dict(_cfa_token_names | zip(['(not created yet)'] * (_cfa_token_names | length))) }}"
+
+- name: Report service-token expiry (Cloudflare's expiring-token alert fires a week before)
+  ansible.builtin.debug:
+    msg: "{{ _cfa_token_names | zip(_cfa_token_names | map('extract', _cfa_pending | combine(_cfa_token_expiry))) | list }}"
+
+# ------------------------------------------------------------------------------------------------
+# 2. Reusable policies: exactly allow-owner and service-auth; no Bypass anywhere.
+# ------------------------------------------------------------------------------------------------
+- name: Build the desired policies
+  ansible.builtin.include_tasks: compute-policies.yml
+
+- name: List reusable Access policies
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/policies?per_page=1000"
+    method: GET
+    headers: "{{ _cfa_headers }}"
+    status_code: 200
+  register: _cfa_policies_resp
+  check_mode: false
+  no_log: true
+
+- name: Compare the policies with what exists
+  ansible.builtin.set_fact:
+    _cfa_policy_current: "{{ _cfa_policies_resp.json.result | default([], true) }}"
+
+- name: Create or update each policy
+  ansible.builtin.include_tasks: policy.yml
+  loop: "{{ _cfa_policies_desired }}"
+  loop_control:
+    loop_var: _cfa_policy
+    label: "{{ _cfa_policy.name }}"
+
+# ------------------------------------------------------------------------------------------------
+# 3. The application (its AUD tag goes into the gateway ConfigMap).
+# ------------------------------------------------------------------------------------------------
+- name: List Access applications for the domain
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/apps?domain={{ cloudflare_access_app_domain | urlencode }}&per_page=1000"
+    method: GET
+    headers: "{{ _cfa_headers }}"
+    status_code: 200
+  register: _cfa_apps_resp
+  check_mode: false
+  no_log: true
+
+- name: Build the desired application and compare it with what exists
+  ansible.builtin.include_tasks: compute-app.yml
+  vars:
+    _cfa_apps: "{{ _cfa_apps_resp.json.result | default([], true) }}"
+
+- name: Refuse to touch a second application on the same domain
+  ansible.builtin.assert:
+    that: _cfa_app_matches | length <= 1
+    fail_msg: >-
+      More than one Access application covers {{ cloudflare_access_app_domain }}
+      ({{ _cfa_app_matches | map(attribute='name') | list }}). Resolve that in the dashboard first.
+    quiet: true
+
+- name: Report the application plan
+  ansible.builtin.debug:
+    msg: >-
+      {{ cloudflare_access_app_name }}: {{ _cfa_app_action }}{{ (' (' ~ _cfa_app_diff_keys | join(', ') ~ ')')
+      if _cfa_app_diff_keys | length > 0 else '' }}
+
+- name: Create the Access application
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/apps"
+    method: POST
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body: "{{ _cfa_app_desired }}"
+    status_code: [200, 201]
+  register: _cfa_app_created
+  changed_when: true
+  no_log: true
+  when: _cfa_app_action == 'create'
+
+- name: Update the Access application (full object from GET, desired fields on top)
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/apps/{{ _cfa_app_current.id }}"
+    method: PUT
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body: "{{ _cfa_app_current | combine(_cfa_app_desired) }}"
+    status_code: 200
+  register: _cfa_app_updated
+  changed_when: true
+  no_log: true
+  when: _cfa_app_action == 'update'
+
+- name: Pick the application AUD tag
+  vars:
+    _cfa_app_write: >-
+      {{ _cfa_app_created if _cfa_app_created.json is defined
+         else (_cfa_app_updated if _cfa_app_updated.json is defined else {}) }}
+  ansible.builtin.set_fact:
+    _cfa_aud: >-
+      {{ _cfa_app_write.json.result.aud if _cfa_app_write.json is defined
+         else _cfa_app_current.aud | default('(created on the next non-check run)') }}
+    _cfa_app_ready: "{{ _cfa_app_write.json is defined or _cfa_app_action == 'unchanged' }}"
+
+- name: Read the Zero Trust organization (team domain)
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/organizations"
+    method: GET
+    headers: "{{ _cfa_headers }}"
+    status_code: 200
+  register: _cfa_org_resp
+  check_mode: false
+  no_log: true
+
+# ------------------------------------------------------------------------------------------------
+# 4. Tunnel public hostname and DNS: only after the application protects the host.
+# ------------------------------------------------------------------------------------------------
+- name: Tunnel hostname rule and DNS record
+  ansible.builtin.include_tasks: tunnel.yml
+  when: _cfa_app_ready | bool or not cloudflare_access_tunnel_enabled | bool
+
+# ------------------------------------------------------------------------------------------------
+# 5. Values for olympus-gitops clusters/olympus/memory/gateway/gateway.yaml (not secret).
+# ------------------------------------------------------------------------------------------------
+- name: Values for the gateway ConfigMap (olympus-gitops, memory-gateway-config)
+  ansible.builtin.debug:
+    msg:
+      - 'MEMORY_ACCESS_TEAM_DOMAIN: "https://{{ _cfa_org_resp.json.result.auth_domain }}"'
+      - 'MEMORY_ACCESS_AUD: "{{ _cfa_aud }}"'
+      - "Gateway client rows, one per token (memory-admin client create --kind access_service_token --scopes ''):"
+      - "{{ _cfa_token_names | zip(_cfa_token_names | map('extract', _cfa_pending | combine(_cfa_token_client_ids))) | list }}"

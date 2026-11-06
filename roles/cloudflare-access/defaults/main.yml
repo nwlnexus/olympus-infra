@@ -1,0 +1,118 @@
+---
+# Cloudflare Access for the memory gateway's public host (olympus-sdk#736, findings F4/F8/F12 of the
+# #458 review; design docs/superpowers/specs/2026-10-21-memory-gateway-contract-design.md sections 2.3,
+# 5.2, 5.6 and 11 in olympus-sdk).
+#
+# Everything here goes through the Cloudflare API from the controller (no host is touched):
+#   - one service token per roaming host (`memory-<host>`, 1 year), client id and secret written to the
+#     1Password item `memory-access-tokens` (fields `<host>-id`, `<host>-secret`) the nix module reads;
+#   - two reusable Access policies, `<prefix>allow-owner` (Allow, owner email) and
+#     `<prefix>service-auth` (Service Auth, exactly the tokens above), and no Bypass policy;
+#   - the self-hosted Access application on the bare host (every path: /, /mcp, /healthz, /readyz),
+#     with Managed OAuth + dynamic client registration for the claude.ai connector;
+#   - the tunnel public hostname (one ingress rule, inserted before the catch-all) and its proxied CNAME;
+#   - a printed summary with MEMORY_ACCESS_TEAM_DOMAIN and MEMORY_ACCESS_AUD for the gitops ConfigMap.
+#
+# Look-up-before-create everywhere; a second run changes nothing. Reads run in --check, writes do not.
+# Run with playbooks/push/cloudflare-access.yml (the header there has the commands).
+
+cloudflare_access_state: present
+
+# --- Cloudflare API token ---------------------------------------------------------------------------
+# Explicit override wins; otherwise the community.general.onepassword lookup (OP_SERVICE_ACCOUNT_TOKEN
+# in the environment, `op` on PATH), as in roles/cloudflared-k8s. A dedicated token, NOT the
+# Tunnel + DNS token of cloudflared-k8s, with these permissions:
+#   Account  Access: Apps and Policies       Edit
+#   Account  Access: Service Tokens          Edit
+#   Account  Access: Organizations, Identity Providers, and Groups  Read   (team domain lookup)
+#   Account  Cloudflare Tunnel               Edit   (only for the public hostname rule)
+#   Zone     DNS                             Edit   (zone nwlnexus.io only)
+#   Zone     Zone                            Read   (zone nwlnexus.io only)
+# With no token resolvable the role warns and skips (never fails the play).
+cloudflare_access_api_token: ""
+cloudflare_access_cf_token_op_item: "cloudflare-account"
+cloudflare_access_cf_token_op_field: "access_api_token"
+cloudflare_access_cf_token_op_vault: "CI"
+cloudflare_access_account_id: ""
+# Only tests point this elsewhere (a local fake of the API).
+cloudflare_access_api_url: "https://api.cloudflare.com/client/v4"
+
+# --- Application ------------------------------------------------------------------------------------
+cloudflare_access_app_name: "memory"
+# Bare host = every path (design 6.1: the claude.ai connector URL is the bare host, MCP is also on /).
+cloudflare_access_app_domain: "memory.nwlnexus.io"
+# Browser/SSO session on the application. The Access JWT the gateway verifies expires with it.
+cloudflare_access_session_duration: "24h"
+# Identity providers allowed for allow-owner (UUIDs from Zero Trust > Settings > Authentication).
+# Empty = every IdP configured in the account. Spec 5.6 names Google: set its id here.
+cloudflare_access_allowed_idps: []
+
+# OWNER-SUPPLIED, NOT COMMITTED (this repository is public): the e-mail address(es) the allow-owner
+# policy admits. Pass with -e or from olympus-sdk's private vars (see the playbook header). The role
+# refuses to run with an empty list, so a missing value can never produce an empty Allow policy.
+cloudflare_access_owner_emails: []
+
+# Reusable policies are account-wide (Moneta's application lives in the same account), so the
+# spec's `allow-owner` and `service-auth` carry this prefix.
+cloudflare_access_policy_prefix: "memory-"
+
+# --- Managed OAuth (spec 2.3 / 11: claude.ai custom connector) ----------------------------------------
+# With it on, Access answers a non-browser request without credentials with 401 + WWW-Authenticate
+# (OAuth discovery) instead of the 302 login redirect. Browsers still get the 302.
+cloudflare_access_managed_oauth: true
+cloudflare_access_oauth_allowed_redirect_uris:
+  - "https://claude.ai/*"
+cloudflare_access_oauth_allow_localhost: false
+cloudflare_access_oauth_allow_loopback: false
+# Short access token, longer refresh grant (Cloudflare's recommendation for agents); policies are
+# re-evaluated at every refresh.
+cloudflare_access_oauth_access_token_lifetime: "15m"
+cloudflare_access_oauth_grant_session_duration: "336h"
+
+# --- Service tokens (spec 5.6: one per roaming host, 1 year, alert on) -------------------------------
+# Host names are the nix flake host names (`d.memory.host`, hosts/ in nix-darwin-hm): they name the
+# 1Password fields `<host>-id` / `<host>-secret` and the token `memory-<host>`. Personal hosts only:
+# work hosts never talk to this gateway (memory boundary, owner decision).
+cloudflare_access_service_token_hosts:
+  - ai-agent-host
+  - nwl-mstudio
+  - NWL-MBM2
+cloudflare_access_service_token_name_prefix: "memory-"
+cloudflare_access_service_token_duration: "8760h"
+# Opt-in maintenance, by host name (see docs/runbooks/memory-access-service-tokens.md in olympus-sdk):
+#   rotate:  new client secret, SAME client id (the gateway's client row needs no change); the old
+#            secret stays valid for cloudflare_access_rotate_grace_hours (0 = revoke immediately).
+#   refresh: extend the expiry by one year, secret unchanged.
+cloudflare_access_rotate_hosts: []
+cloudflare_access_rotate_grace_hours: 24
+cloudflare_access_refresh_hosts: []
+
+# --- 1Password (where the nix module reads the token: op://Dev/memory-access-tokens/<host>-id) -------
+cloudflare_access_op_vault: "Dev"
+# How the role runs `op` for the item it writes. The op CLI refuses `item create/edit/list` under
+# 1Password Connect, and the repos' .envrc exports both Connect and a service account, so the Connect
+# variables are dropped for these calls and the service account is used (it needs write access to the
+# vault above). The token lookup at the start may still go through Connect.
+# stdin is /dev/null: under Ansible stdin is a pipe, and `op item create/edit` then reads it as a JSON
+# item template ("invalid JSON in piped input"). /dev/null is a character device, which op treats like a
+# terminal. The arguments that follow are passed through "$@" unchanged (no shell parsing of values).
+cloudflare_access_op_cmd:
+  - sh
+  - -c
+  - exec env -u OP_CONNECT_HOST -u OP_CONNECT_TOKEN op "$@" </dev/null
+  - op
+cloudflare_access_op_item: "memory-access-tokens"
+
+# --- Tunnel public hostname and DNS -------------------------------------------------------------------
+# One hostname rule on the olympus cluster's remotely managed tunnel, inserted before every other rule;
+# the catch-all (Traefik) and the other hostname rules are kept as they are. Direct to the gateway
+# Service, not through Traefik: the gateway then has no LAN exposure (Traefik is a LoadBalancer on the
+# LAN) and its ingress NetworkPolicy admits the cloudflared pods only.
+cloudflare_access_tunnel_enabled: true
+cloudflare_access_tunnel_name: "compute-hub"
+cloudflare_access_tunnel_service: "http://memory-gateway.memory.svc.cluster.local:80"
+# originRequest for the rule. For the TLS option (gitops README, "Public path TLS") this becomes
+# {originServerName: ..., caPool: ...} and the service https://.
+cloudflare_access_tunnel_origin_request: {}
+cloudflare_access_dns_enabled: true
+cloudflare_access_dns_zone: "nwlnexus.io"

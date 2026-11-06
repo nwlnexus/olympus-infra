@@ -1,0 +1,37 @@
+---
+# Pure: the tunnel ingress list with the application's rule first (or removed). Inputs:
+# _cfa_tunnel_config (the `config` object of GET .../configurations). Outputs: _cfa_ingress_rule,
+# _cfa_ingress_new, _cfa_ingress_changed. tests/cloudflare-access exercises it offline.
+
+- name: Build the rule and the new ingress list
+  vars:
+    _old: "{{ _cfa_tunnel_config.ingress | default([], true) }}"
+    # Every rule except this domain's, in order; the catch-all has no `hostname` and is kept.
+    _others: >-
+      [{% for r in _old if r.get('hostname') != cloudflare_access_app_domain %}{{ r | to_json }},{% endfor %}null]
+  ansible.builtin.set_fact:
+    _cfa_ingress_rule: >-
+      {{ {'hostname': cloudflare_access_app_domain, 'service': cloudflare_access_tunnel_service}
+         | combine({'originRequest': cloudflare_access_tunnel_origin_request}
+                   if cloudflare_access_tunnel_origin_request | length > 0 else {}) }}
+    _cfa_ingress_old: "{{ _old }}"
+    _cfa_ingress_others: "{{ (_others | from_json)[:-1] }}"
+
+- name: Put the rule first (or leave it out)
+  ansible.builtin.set_fact:
+    _cfa_ingress_new: >-
+      {{ ([_cfa_ingress_rule] if cloudflare_access_tunnel_enabled | bool else []) + _cfa_ingress_others }}
+
+- name: Require a catch-all as the last rule
+  ansible.builtin.assert:
+    that:
+      - _cfa_ingress_new | length >= 2 or not cloudflare_access_tunnel_enabled | bool
+      - _cfa_ingress_new | length == 0 or (_cfa_ingress_new | last).get('hostname') is none
+    fail_msg: >-
+      The tunnel configuration has no catch-all rule as its last entry ({{ _cfa_ingress_old }}).
+      cloudflared refuses such a configuration; fix the tunnel (roles/cloudflared-k8s) first.
+    quiet: true
+
+- name: Note whether the list changes
+  ansible.builtin.set_fact:
+    _cfa_ingress_changed: "{{ _cfa_ingress_new != _cfa_ingress_old }}"

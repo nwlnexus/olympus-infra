@@ -1,0 +1,15 @@
+{#- Keys of `want` whose value differs from `cur` (JSON list). A key the API omits counts as equal to a
+    falsy desired value; oauth_configuration only has to contain the desired fields. -#}
+{%- set ns = namespace(diff=[]) -%}
+{%- for k, v in want.items() -%}
+{%-   set c = cur.get(k) -%}
+{%-   if k == 'oauth_configuration' -%}
+{%-     set base = c if c is mapping else {} -%}
+{%-     if (base | combine(v, recursive=true)) != base -%}{%- set ns.diff = ns.diff + [k] -%}{%- endif -%}
+{%-   elif c is none -%}
+{%-     if v not in [false, '', [], {}] -%}{%- set ns.diff = ns.diff + [k] -%}{%- endif -%}
+{%-   elif c != v -%}
+{%-     set ns.diff = ns.diff + [k] -%}
+{%-   endif -%}
+{%- endfor -%}
+{{ ns.diff | to_json }}

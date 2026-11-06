@@ -19,6 +19,7 @@ olympus-infra/
 │   ├── traefik               # Traefik ingress (Helm, for standalone hosts)
 │   ├── cloudflared           # Cloudflare Tunnel daemon
 │   ├── cloudflared-k8s       # cloudflared as k8s Deployment (via Helm)
+│   ├── cloudflare-access     # API-only: Access app/policies/service tokens, tunnel rule + DNS for memory.nwlnexus.io (olympus-sdk#736)
 │   ├── flux                  # Flux CD bootstrap
 │   ├── external-secrets      # ESO bootstrap (CRDs + ClusterSecretStore)
 │   ├── eso-bootstrap         # ExternalSecret for cluster secrets
@@ -199,6 +200,20 @@ Residency budget (64 GiB unified memory; computed from the GGUF sizes):
 - Both resident: about 7 GiB. With the 27B (about 22 GiB) and Postgres (4.5 GiB) retired
   in olympus-sdk#701, the rest of the 64 GiB (macOS 8, macOS CI runner budget 16) leaves
   roughly 32 GiB for the k3s agent VM and headroom.
+
+### Cloudflare Access for the memory gateway (olympus-sdk#736)
+
+`roles/cloudflare-access`, run with `playbooks/push/cloudflare-access.yml` on `localhost` (API calls only;
+the header there has the commands). It owns, look-up-before-create: one service token per roaming host
+(`memory-<host>`, 1 year; client id/secret into 1Password `Dev/memory-access-tokens` as `<host>-id` /
+`<host>-secret`), the reusable policies `memory-allow-owner` (Allow) and `memory-service-auth` (Service
+Auth, exactly those tokens), the self-hosted application `memory` on the bare host with Managed OAuth
+(DCR, redirect `https://claude.ai/*`), the `memory.nwlnexus.io` rule on the remotely managed `compute-hub`
+tunnel (inserted first, every other rule and the catch-all kept) and its proxied CNAME. The owner e-mail is
+passed with `-e` and never committed. It uses its own API token (1Password `CI/cloudflare-account` field
+`access_api_token`; scopes in the role defaults), not the Tunnel + DNS token of `cloudflared-k8s`.
+`tests/cloudflare-access` plans everything offline from fake API responses (CI). Runbook: olympus-sdk
+`docs/runbooks/memory-access-service-tokens.md`.
 
 ### Linux node QUIC tuning
 

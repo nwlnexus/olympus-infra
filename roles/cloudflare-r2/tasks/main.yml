@@ -1,0 +1,30 @@
+---
+# Private R2 bucket + bucket-scoped S3 credential in 1Password (olympus-sdk#847). See defaults/main.yml.
+
+- name: Resolve the Cloudflare API token
+  ansible.builtin.set_fact:
+    _r2_token: >-
+      {{ cloudflare_r2_api_token if cloudflare_r2_api_token != ''
+         else lookup('community.general.onepassword',
+                     cloudflare_r2_cf_token_op_item,
+                     field=cloudflare_r2_cf_token_op_field,
+                     vault=cloudflare_r2_cf_token_op_vault,
+                     errors='ignore') | default('', true) }}
+  no_log: true
+  when: cloudflare_r2_state == 'present'
+
+- name: Warn and skip when no Cloudflare API token could be resolved
+  ansible.builtin.debug:
+    msg: >-
+      cloudflare-r2: no API token (1Password {{ cloudflare_r2_cf_token_op_vault }}/{{
+      cloudflare_r2_cf_token_op_item }} field {{ cloudflare_r2_cf_token_op_field }}, or
+      cloudflare_r2_api_token). Nothing was read or changed.
+  when:
+    - cloudflare_r2_state == 'present'
+    - _r2_token | default('') == ''
+
+- name: Bucket, public-access check and bucket-scoped token
+  ansible.builtin.include_tasks: apply.yml
+  when:
+    - cloudflare_r2_state == 'present'
+    - _r2_token | default('') != ''

@@ -1,0 +1,221 @@
+---
+# Included from main.yml once an API token is resolved. GETs run in --check (check_mode: false); writes are
+# uri/command tasks, which Ansible skips in --check. Every task that carries a token or a secret is no_log.
+
+- name: Check the required inputs
+  ansible.builtin.assert:
+    that:
+      - cloudflare_r2_account_id | length > 0
+      - cloudflare_r2_bucket is match('^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$')
+    fail_msg: cloudflare-r2 needs cloudflare_r2_account_id and a valid bucket name.
+    quiet: true
+
+- name: Set the API base and headers
+  ansible.builtin.set_fact:
+    _r2_acct: "{{ cloudflare_r2_api_url }}/accounts/{{ cloudflare_r2_account_id }}"
+    _r2_headers:
+      Authorization: "Bearer {{ _r2_token }}"
+      Content-Type: "application/json"
+  no_log: true
+
+# ------------------------------------------------------------------------------------------------------
+# 1. The bucket: adopt or create.
+# ------------------------------------------------------------------------------------------------------
+- name: "Look up bucket {{ cloudflare_r2_bucket }}"
+  ansible.builtin.uri:
+    url: "{{ _r2_acct }}/r2/buckets/{{ cloudflare_r2_bucket }}"
+    method: GET
+    headers: "{{ _r2_headers }}"
+    status_code: [200, 404]
+  register: _r2_bucket_get
+  check_mode: false
+  no_log: true
+
+- name: "Create bucket {{ cloudflare_r2_bucket }}"
+  ansible.builtin.uri:
+    url: "{{ _r2_acct }}/r2/buckets"
+    method: POST
+    headers: "{{ _r2_headers }}"
+    body_format: json
+    body:
+      name: "{{ cloudflare_r2_bucket }}"
+      storageClass: "{{ cloudflare_r2_storage_class }}"
+    status_code: [200, 201]
+  changed_when: true
+  no_log: true
+  when: _r2_bucket_get.status == 404
+
+# ------------------------------------------------------------------------------------------------------
+# 2. No public access: r2.dev off, no custom domain.
+# ------------------------------------------------------------------------------------------------------
+- name: Read the r2.dev managed domain setting
+  ansible.builtin.uri:
+    url: "{{ _r2_acct }}/r2/buckets/{{ cloudflare_r2_bucket }}/domains/managed"
+    method: GET
+    headers: "{{ _r2_headers }}"
+    status_code: [200, 404]
+  register: _r2_managed
+  check_mode: false
+  no_log: true
+  when: _r2_bucket_get.status == 200
+
+- name: Disable the public r2.dev URL
+  ansible.builtin.uri:
+    url: "{{ _r2_acct }}/r2/buckets/{{ cloudflare_r2_bucket }}/domains/managed"
+    method: PUT
+    headers: "{{ _r2_headers }}"
+    body_format: json
+    body:
+      enabled: false
+    status_code: 200
+  changed_when: true
+  no_log: true
+  when:
+    - _r2_bucket_get.status == 200
+    - _r2_managed.json.result.enabled | default(false) | bool
+
+- name: Read custom domains on the bucket
+  ansible.builtin.uri:
+    url: "{{ _r2_acct }}/r2/buckets/{{ cloudflare_r2_bucket }}/domains/custom"
+    method: GET
+    headers: "{{ _r2_headers }}"
+    status_code: [200, 404]
+  register: _r2_custom
+  check_mode: false
+  no_log: true
+  when: _r2_bucket_get.status == 200
+
+- name: Stop if a custom domain makes the bucket public
+  ansible.builtin.fail:
+    msg: >-
+      Bucket {{ cloudflare_r2_bucket }} has custom domain(s)
+      {{ _r2_custom.json.result.domains | map(attribute='domain') | join(', ') }}. It must only be read
+      through the cookie-gated IRIS Worker: remove them in the dashboard (R2 > bucket > Settings), then re-run.
+  when:
+    - _r2_bucket_get.status == 200
+    - _r2_custom.json.result.domains | default([]) | length > 0
+
+# ------------------------------------------------------------------------------------------------------
+# 3. Bucket-scoped API token and its S3 credential in 1Password.
+# ------------------------------------------------------------------------------------------------------
+- name: List account API tokens
+  ansible.builtin.uri:
+    url: "{{ _r2_acct }}/tokens?per_page=50"
+    method: GET
+    headers: "{{ _r2_headers }}"
+    status_code: 200
+  register: _r2_tokens
+  check_mode: false
+  no_log: true
+
+- name: Find the bucket token
+  ansible.builtin.set_fact:
+    _r2_token_id: >-
+      {{ (_r2_tokens.json.result | default([], true)
+          | selectattr('name', 'equalto', cloudflare_r2_token_name) | map(attribute='id') | list + [''])[0] }}
+
+- name: "Look up the 1Password item {{ cloudflare_r2_op_item }}"
+  ansible.builtin.command:
+    argv: "{{ cloudflare_r2_op_cmd + ['item', 'get', cloudflare_r2_op_item, '--vault=' ~ cloudflare_r2_op_vault, '--format=json'] }}"
+  register: _r2_op_get
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Decide what to do with the token
+  ansible.builtin.set_fact:
+    _r2_op_item_exists: "{{ (_r2_op_get.rc | default(1)) == 0 }}"
+    # create: no token yet. roll: token exists but its secret is not in 1Password, or rotation was asked for.
+    _r2_token_action: >-
+      {{ 'create' if _r2_token_id == ''
+         else ('roll' if (cloudflare_r2_rotate | bool) or (_r2_op_get.rc | default(1)) != 0 else 'none') }}
+
+- name: Plan
+  ansible.builtin.debug:
+    msg: >-
+      bucket {{ cloudflare_r2_bucket }}: {{ 'exists (adopted)' if _r2_bucket_get.status == 200 else 'created' }};
+      r2.dev {{ 'was on, disabled' if (_r2_managed.json.result.enabled | default(false) | bool) else 'off' }};
+      token {{ cloudflare_r2_token_name }}: {{ _r2_token_action }};
+      1Password {{ cloudflare_r2_op_vault }}/{{ cloudflare_r2_op_item }}: {{ 'present' if _r2_op_item_exists | bool else 'missing' }}
+
+# A secret is shown only once, so check the 1Password write works before anything changes in Cloudflare.
+- name: Preflight the 1Password write (marker field only, no secret)
+  ansible.builtin.command:
+    argv: >-
+      {{ cloudflare_r2_op_cmd
+         + (['item', 'edit', cloudflare_r2_op_item] if (_r2_op_item_exists | bool)
+            else ['item', 'create', '--category=password', '--title=' ~ cloudflare_r2_op_item])
+         + ['--vault=' ~ cloudflare_r2_op_vault, 'managed-by[text]=olympus-infra roles/cloudflare-r2'] }}
+  register: _r2_op_preflight
+  changed_when: not (_r2_op_item_exists | bool)
+  failed_when: _r2_op_preflight.rc != 0
+  no_log: true
+  when: _r2_token_action != 'none'
+
+- name: Read the permission groups
+  ansible.builtin.uri:
+    url: "{{ _r2_acct }}/tokens/permission_groups"
+    method: GET
+    headers: "{{ _r2_headers }}"
+    status_code: 200
+  register: _r2_pgs
+  check_mode: false
+  no_log: true
+  when: _r2_token_action == 'create'
+
+- name: "Create token {{ cloudflare_r2_token_name }} (bucket {{ cloudflare_r2_bucket }} only)"
+  ansible.builtin.uri:
+    url: "{{ _r2_acct }}/tokens"
+    method: POST
+    headers: "{{ _r2_headers }}"
+    body_format: json
+    body:
+      name: "{{ cloudflare_r2_token_name }}"
+      policies:
+        - effect: allow
+          permission_groups:
+            - id: >-
+                {{ (_r2_pgs.json.result | selectattr('name', 'equalto', cloudflare_r2_token_permission_group)
+                    | map(attribute='id') | list)[0] }}
+          resources: "{{ {'com.cloudflare.edge.r2.bucket.' ~ cloudflare_r2_account_id ~ '_default_' ~ cloudflare_r2_bucket: '*'} }}"
+    status_code: [200, 201]
+  register: _r2_create
+  changed_when: true
+  no_log: true
+  when: _r2_token_action == 'create'
+
+- name: "Roll the value of token {{ cloudflare_r2_token_name }}"
+  ansible.builtin.uri:
+    url: "{{ _r2_acct }}/tokens/{{ _r2_token_id }}/value"
+    method: PUT
+    headers: "{{ _r2_headers }}"
+    body_format: json
+    body: {}
+    status_code: 200
+  register: _r2_roll
+  changed_when: true
+  no_log: true
+  when: _r2_token_action == 'roll'
+
+- name: Write the S3 credential to 1Password (access key id = token id, secret = SHA-256 of the value)
+  ansible.builtin.command:
+    argv: >-
+      {{ cloudflare_r2_op_cmd + ['item', 'edit', cloudflare_r2_op_item, '--vault=' ~ cloudflare_r2_op_vault,
+          'access_key_id[text]=' ~ _id, 'secret_access_key[password]=' ~ (_value | hash('sha256')),
+          'bucket[text]=' ~ cloudflare_r2_bucket] }}
+  vars:
+    _id: "{{ _r2_create.json.result.id if _r2_token_action == 'create' else _r2_token_id }}"
+    _value: "{{ _r2_create.json.result.value if _r2_token_action == 'create' else _r2_roll.json.result }}"
+  register: _r2_op_write
+  changed_when: true
+  failed_when: false
+  no_log: true
+  when: _r2_token_action != 'none'
+
+- name: Stop if the 1Password write failed (re-run with -e cloudflare_r2_rotate=true to issue a new secret)
+  ansible.builtin.fail:
+    msg: "op exited {{ _r2_op_write.rc }}; the token secret was not stored. Fix op access, then re-run with -e cloudflare_r2_rotate=true."
+  when:
+    - _r2_token_action != 'none'
+    - (_r2_op_write.rc | default(0)) != 0

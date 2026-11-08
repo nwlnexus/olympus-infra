@@ -1,0 +1,31 @@
+---
+# Private R2 bucket `olympus-docs` for the IRIS docs site and its bucket-scoped publish credential
+# (olympus-sdk#847; role roles/cloudflare-r2, defaults there). API calls only, from the controller.
+#
+# The bucket may already exist (created by hand on 2026-11-08); the role adopts it. It then makes sure the
+# bucket has no public access (r2.dev off, no custom domain) and that the 1Password item CI/r2-olympus-docs
+# holds an S3 credential that can write only this bucket (read by olympus-sdk .github/workflows/docs-site.yml).
+#
+# Prerequisites (owner):
+#   - 1Password CI/cloudflare-account field `r2_admin_api_token`: an account-owned Cloudflare API token with
+#     Account > Workers R2 Storage > Edit and Account > Account API Tokens > Edit.
+#   - OP_SERVICE_ACCOUNT_TOKEN exported and `op` on PATH (the account must be able to write vault CI).
+#
+# Dry run (reads everything, writes nothing, prints the plan):
+#   ansible-playbook playbooks/push/cloudflare-r2-docs.yml --check
+# Apply:
+#   ansible-playbook playbooks/push/cloudflare-r2-docs.yml
+# Issue a new secret for the same token (old one stops working at once):
+#   ansible-playbook playbooks/push/cloudflare-r2-docs.yml -e cloudflare_r2_rotate=true
+
+- name: R2 bucket for the IRIS docs site
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    # Same account as cloudflared_account_id in inventory/group_vars/compute_hub.yml.
+    cloudflare_r2_account_id: "1b15dcdab99d4e8d5babb3dc6b1adaec"
+    cloudflare_r2_bucket: "olympus-docs"
+  roles:
+    - role: cloudflare-r2
+      tags: [cloudflare-r2]

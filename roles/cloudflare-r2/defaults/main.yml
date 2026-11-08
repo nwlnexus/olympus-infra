@@ -1,0 +1,48 @@
+---
+# One private R2 bucket plus a bucket-scoped S3 credential in 1Password (olympus-sdk#847: the docs site
+# bucket `olympus-docs` that docs-site.yml publishes to and the IRIS edge Worker reads through its DOCS binding).
+#
+# Through the Cloudflare API from the controller (no host is touched):
+#   - adopt the bucket if it exists, else create it (storage class Standard);
+#   - make sure it has no public access: the r2.dev managed domain is disabled, and the play stops if a custom
+#     domain is attached (the bucket must only be read through the cookie-gated Worker);
+#   - an account-owned API token `<bucket>-publish` with "Workers R2 Storage Bucket Item Write" on that one
+#     bucket; its S3 credential (access key id = token id, secret = SHA-256 of the token value) goes to the
+#     1Password item `<op_item>` (fields access_key_id, secret_access_key) that docs-site.yml reads.
+#
+# Look-up-before-create everywhere; a second run changes nothing. Reads run in --check, writes do not.
+# Run with playbooks/push/cloudflare-r2-docs.yml (the header there has the commands).
+
+cloudflare_r2_state: present
+
+cloudflare_r2_bucket: "olympus-docs"
+cloudflare_r2_storage_class: "Standard"
+
+# --- Cloudflare API token used by this role -------------------------------------------------------------
+# Explicit override wins; otherwise the community.general.onepassword lookup (OP_SERVICE_ACCOUNT_TOKEN in the
+# environment, `op` on PATH). An account-owned token with:
+#   Account  Workers R2 Storage   Edit   (buckets, their domains)
+#   Account  Account API Tokens   Edit   (create/roll the bucket-scoped token)
+# With no token resolvable the role warns and skips (never fails the play).
+cloudflare_r2_api_token: ""
+cloudflare_r2_cf_token_op_item: "cloudflare-account"
+cloudflare_r2_cf_token_op_field: "r2_admin_api_token"
+cloudflare_r2_cf_token_op_vault: "CI"
+cloudflare_r2_account_id: ""
+cloudflare_r2_api_url: "https://api.cloudflare.com/client/v4"
+
+# --- The bucket-scoped credential ------------------------------------------------------------------------
+cloudflare_r2_token_name: "{{ cloudflare_r2_bucket }}-publish"
+cloudflare_r2_token_permission_group: "Workers R2 Storage Bucket Item Write"
+# Set true to issue a new secret for the existing token (rolls its value; the old one stops working at once).
+cloudflare_r2_rotate: false
+
+# 1Password item docs-site.yml reads (vault CI, through the Connect server in CI). Written with the CLI and a
+# service account (OP_SERVICE_ACCOUNT_TOKEN) that can write the vault; Connect variables are unset for `op`.
+cloudflare_r2_op_vault: "CI"
+cloudflare_r2_op_item: "r2-{{ cloudflare_r2_bucket }}"
+cloudflare_r2_op_cmd:
+  - sh
+  - -c
+  - exec env -u OP_CONNECT_HOST -u OP_CONNECT_TOKEN op "$@" </dev/null
+  - op

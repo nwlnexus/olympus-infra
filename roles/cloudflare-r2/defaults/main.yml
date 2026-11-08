@@ -37,8 +37,9 @@ cloudflare_r2_token_permission_group: "Workers R2 Storage Bucket Item Write"
 # Set true to issue a new secret for the existing token (rolls its value; the old one stops working at once).
 cloudflare_r2_rotate: false
 
-# 1Password item docs-site.yml reads (vault CI, through the Connect server in CI). Written with the CLI and a
-# service account (OP_SERVICE_ACCOUNT_TOKEN) that can write the vault; Connect variables are unset for `op`.
+# 1Password item docs-site.yml reads (vault CI, through the Connect server in CI). Written with the `op` CLI
+# signed in as an account that can write vault CI: the direnv service account cannot, so run the playbook with
+# OP_CONNECT_HOST, OP_CONNECT_TOKEN and OP_SERVICE_ACCOUNT_TOKEN unset after a personal `op signin` (playbook header).
 cloudflare_r2_op_vault: "CI"
 cloudflare_r2_op_item: "r2-{{ cloudflare_r2_bucket }}"
 cloudflare_r2_op_cmd:

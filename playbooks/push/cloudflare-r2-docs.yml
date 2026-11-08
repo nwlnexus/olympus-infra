@@ -9,14 +9,17 @@
 # Prerequisites (owner):
 #   - 1Password CI/cloudflare-account field `r2_admin_api_token`: an account-owned Cloudflare API token with
 #     Account > Workers R2 Storage > Edit and Account > Account API Tokens > Edit.
-#   - OP_SERVICE_ACCOUNT_TOKEN exported and `op` on PATH (the account must be able to write vault CI).
+#   - `op` on PATH, signed in as an account that can WRITE vault CI. The direnv service account
+#     (OP_SERVICE_ACCOUNT_TOKEN) cannot write vault CI, and the Connect variables route `op` to the
+#     read-only Connect server, so unset all three and sign in personally (`op signin`) first. That is how
+#     the first run succeeded on 2026-11-08 (ok=16 changed=3).
 #
 # Dry run (reads everything, writes nothing, prints the plan):
-#   ansible-playbook playbooks/push/cloudflare-r2-docs.yml --check
+#   env -u OP_CONNECT_HOST -u OP_CONNECT_TOKEN -u OP_SERVICE_ACCOUNT_TOKEN ansible-playbook playbooks/push/cloudflare-r2-docs.yml --check
 # Apply:
-#   ansible-playbook playbooks/push/cloudflare-r2-docs.yml
+#   env -u OP_CONNECT_HOST -u OP_CONNECT_TOKEN -u OP_SERVICE_ACCOUNT_TOKEN ansible-playbook playbooks/push/cloudflare-r2-docs.yml
 # Issue a new secret for the same token (old one stops working at once):
-#   ansible-playbook playbooks/push/cloudflare-r2-docs.yml -e cloudflare_r2_rotate=true
+#   env -u OP_CONNECT_HOST -u OP_CONNECT_TOKEN -u OP_SERVICE_ACCOUNT_TOKEN ansible-playbook playbooks/push/cloudflare-r2-docs.yml -e cloudflare_r2_rotate=true
 
 - name: R2 bucket for the IRIS docs site
   hosts: localhost

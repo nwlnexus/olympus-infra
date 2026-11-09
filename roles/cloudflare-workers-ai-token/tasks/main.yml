@@ -1,0 +1,30 @@
+---
+# Workers AI run-only API token in 1Password (olympus-sdk#852). See defaults/main.yml.
+
+- name: Resolve the Cloudflare API token
+  ansible.builtin.set_fact:
+    _wai_admin: >-
+      {{ cloudflare_wai_api_token if cloudflare_wai_api_token != ''
+         else lookup('community.general.onepassword',
+                     cloudflare_wai_cf_token_op_item,
+                     field=cloudflare_wai_cf_token_op_field,
+                     vault=cloudflare_wai_cf_token_op_vault,
+                     errors='ignore') | default('', true) }}
+  no_log: true
+  when: cloudflare_wai_state == 'present'
+
+- name: Warn and skip when no Cloudflare API token could be resolved
+  ansible.builtin.debug:
+    msg: >-
+      cloudflare-workers-ai-token: no API token (1Password {{ cloudflare_wai_cf_token_op_vault }}/{{
+      cloudflare_wai_cf_token_op_item }} field {{ cloudflare_wai_cf_token_op_field }}, or
+      cloudflare_wai_api_token). Nothing was read or changed.
+  when:
+    - cloudflare_wai_state == 'present'
+    - _wai_admin | default('') == ''
+
+- name: Token and 1Password item
+  ansible.builtin.include_tasks: apply.yml
+  when:
+    - cloudflare_wai_state == 'present'
+    - _wai_admin | default('') != ''

@@ -1,0 +1,30 @@
+---
+# Workers AI run-only Cloudflare API token for the code-knowledge pack job's inference fallback
+# (olympus-sdk#852; role roles/cloudflare-workers-ai-token, defaults there). API calls only, from the controller.
+#
+# Makes sure an account-owned token `knowledge-workers-ai` exists with the single permission "Workers AI Read",
+# and that the 1Password item CI/workers-ai-knowledge holds its value (field api_token) and the account id
+# (field account_id). Read by olympus-sdk .github/workflows/knowledge-pack.yml.
+#
+# Prerequisites (owner), the same as playbooks/push/cloudflare-r2-docs.yml:
+#   - 1Password CI/cloudflare-account field `r2_admin_api_token` (Account API Tokens > Edit is what this play uses).
+#   - `op` on PATH, signed in as an account that can WRITE vault CI, with OP_CONNECT_HOST, OP_CONNECT_TOKEN and
+#     OP_SERVICE_ACCOUNT_TOKEN unset (the direnv service account and Connect are read-only on vault CI).
+#
+# Dry run (reads everything, writes nothing, prints the plan):
+#   env -u OP_CONNECT_HOST -u OP_CONNECT_TOKEN -u OP_SERVICE_ACCOUNT_TOKEN ansible-playbook playbooks/push/workers-ai-token.yml --check
+# Apply:
+#   env -u OP_CONNECT_HOST -u OP_CONNECT_TOKEN -u OP_SERVICE_ACCOUNT_TOKEN ansible-playbook playbooks/push/workers-ai-token.yml
+# Issue a new value for the same token (the old one stops working at once):
+#   env -u OP_CONNECT_HOST -u OP_CONNECT_TOKEN -u OP_SERVICE_ACCOUNT_TOKEN ansible-playbook playbooks/push/workers-ai-token.yml -e cloudflare_wai_rotate=true
+
+- name: Workers AI token for the code-knowledge pack
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    # Same account as cloudflare_r2_account_id in playbooks/push/cloudflare-r2-docs.yml.
+    cloudflare_wai_account_id: "1b15dcdab99d4e8d5babb3dc6b1adaec"
+  roles:
+    - role: cloudflare-workers-ai-token
+      tags: [cloudflare-workers-ai-token]

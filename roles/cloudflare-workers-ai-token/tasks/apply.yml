@@ -1,0 +1,168 @@
+---
+# Included from main.yml once an admin token is resolved. GETs run in --check (check_mode: false); writes are
+# uri/command tasks, which Ansible skips in --check (the ones that template a created value also carry
+# `not ansible_check_mode`, since a skipped create registers no result). Every task that carries a token is no_log.
+
+- name: Check the required inputs
+  ansible.builtin.assert:
+    that:
+      - cloudflare_wai_account_id | length > 0
+      - cloudflare_wai_permission_groups | length > 0
+    fail_msg: cloudflare-workers-ai-token needs cloudflare_wai_account_id and at least one permission group.
+    quiet: true
+
+- name: Set the API base and headers
+  ansible.builtin.set_fact:
+    _wai_acct: "{{ cloudflare_wai_api_url }}/accounts/{{ cloudflare_wai_account_id }}"
+    _wai_headers:
+      Authorization: "Bearer {{ _wai_admin }}"
+      Content-Type: "application/json"
+  no_log: true
+
+- name: List account API tokens
+  ansible.builtin.uri:
+    url: "{{ _wai_acct }}/tokens?per_page=50"
+    method: GET
+    headers: "{{ _wai_headers }}"
+    status_code: 200
+  register: _wai_tokens
+  check_mode: false
+  no_log: true
+
+- name: Find the token
+  ansible.builtin.set_fact:
+    _wai_token_id: >-
+      {{ (_wai_tokens.json.result | default([], true)
+          | selectattr('name', 'equalto', cloudflare_wai_token_name) | map(attribute='id') | list + [''])[0] }}
+
+- name: "Look up the 1Password item {{ cloudflare_wai_op_item }}"
+  ansible.builtin.command:
+    argv: "{{ cloudflare_wai_op_cmd + ['item', 'get', cloudflare_wai_op_item, '--vault=' ~ cloudflare_wai_op_vault, '--format=json'] }}"
+  register: _wai_op_get
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Decide what to do with the token
+  ansible.builtin.set_fact:
+    _wai_op_item_exists: "{{ (_wai_op_get.rc | default(1)) == 0 }}"
+    # create: no token yet. roll: token exists but its value is not in 1Password, or rotation was asked for.
+    _wai_action: >-
+      {{ 'create' if _wai_token_id == ''
+         else ('roll' if (cloudflare_wai_rotate | bool) or (_wai_op_get.rc | default(1)) != 0 else 'none') }}
+
+- name: Plan
+  ansible.builtin.debug:
+    msg: >-
+      token {{ cloudflare_wai_token_name }} ({{ cloudflare_wai_permission_groups | join(', ') }}): {{ _wai_action }};
+      1Password {{ cloudflare_wai_op_vault }}/{{ cloudflare_wai_op_item }}: {{ 'present' if _wai_op_item_exists | bool else 'missing' }}
+
+# A token value is shown only once, so check the 1Password write works before anything changes in Cloudflare.
+- name: Preflight the 1Password write (marker field only, no secret)
+  ansible.builtin.command:
+    argv: >-
+      {{ cloudflare_wai_op_cmd
+         + (['item', 'edit', cloudflare_wai_op_item] if (_wai_op_item_exists | bool)
+            else ['item', 'create', '--category=password', '--title=' ~ cloudflare_wai_op_item])
+         + ['--vault=' ~ cloudflare_wai_op_vault, 'managed-by[text]=olympus-infra roles/cloudflare-workers-ai-token'] }}
+  register: _wai_op_preflight
+  changed_when: not (_wai_op_item_exists | bool)
+  failed_when: _wai_op_preflight.rc != 0
+  no_log: true
+  when: _wai_action != 'none'
+
+- name: Read the permission groups
+  ansible.builtin.uri:
+    url: "{{ _wai_acct }}/tokens/permission_groups"
+    method: GET
+    headers: "{{ _wai_headers }}"
+    status_code: 200
+  register: _wai_pgs
+  check_mode: false
+  no_log: true
+  when: _wai_action == 'create'
+
+- name: Resolve the permission group ids
+  ansible.builtin.set_fact:
+    _wai_pg_ids: >-
+      {{ _wai_pgs.json.result | selectattr('name', 'in', cloudflare_wai_permission_groups)
+         | map(attribute='id') | map('community.general.dict_kv', 'id') | list }}
+  when: _wai_action == 'create'
+
+- name: Stop if a permission group name did not resolve
+  ansible.builtin.assert:
+    that: _wai_pg_ids | length == cloudflare_wai_permission_groups | length
+    fail_msg: "Permission group(s) not found: {{ cloudflare_wai_permission_groups | join(', ') }}"
+    quiet: true
+  when: _wai_action == 'create'
+
+- name: "Create token {{ cloudflare_wai_token_name }} (this account only)"
+  ansible.builtin.uri:
+    url: "{{ _wai_acct }}/tokens"
+    method: POST
+    headers: "{{ _wai_headers }}"
+    body_format: json
+    body:
+      name: "{{ cloudflare_wai_token_name }}"
+      policies:
+        - effect: allow
+          permission_groups: "{{ _wai_pg_ids }}"
+          resources: "{{ {'com.cloudflare.api.account.' ~ cloudflare_wai_account_id: '*'} }}"
+    status_code: [200, 201]
+  register: _wai_create
+  changed_when: true
+  no_log: true
+  when: _wai_action == 'create'
+
+- name: "Roll the value of token {{ cloudflare_wai_token_name }}"
+  ansible.builtin.uri:
+    url: "{{ _wai_acct }}/tokens/{{ _wai_token_id }}/value"
+    method: PUT
+    headers: "{{ _wai_headers }}"
+    body_format: json
+    body: {}
+    status_code: 200
+  register: _wai_roll
+  changed_when: true
+  no_log: true
+  when: _wai_action == 'roll'
+
+- name: Write the token to 1Password
+  ansible.builtin.command:
+    argv: >-
+      {{ cloudflare_wai_op_cmd + ['item', 'edit', cloudflare_wai_op_item, '--vault=' ~ cloudflare_wai_op_vault,
+          'api_token[password]=' ~ _value, 'account_id[text]=' ~ cloudflare_wai_account_id,
+          'token_name[text]=' ~ cloudflare_wai_token_name] }}
+  vars:
+    _value: "{{ _wai_create.json.result.value if _wai_action == 'create' else _wai_roll.json.result }}"
+  register: _wai_op_write
+  changed_when: true
+  failed_when: false
+  no_log: true
+  when:
+    - _wai_action != 'none'
+    - not ansible_check_mode
+
+- name: Stop if the 1Password write failed (re-run with -e cloudflare_wai_rotate=true to issue a new value)
+  ansible.builtin.fail:
+    msg: "op exited {{ _wai_op_write.rc }}; the token was not stored. Fix op access, then re-run with -e cloudflare_wai_rotate=true."
+  when:
+    - not ansible_check_mode
+    - _wai_action != 'none'
+    - (_wai_op_write.rc | default(0)) != 0
+
+- name: Verify the stored token can list Workers AI models
+  ansible.builtin.uri:
+    url: "{{ _wai_acct }}/ai/models/search?per_page=1"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ _value }}"
+    status_code: 200
+  vars:
+    _value: "{{ _wai_create.json.result.value if _wai_action == 'create' else _wai_roll.json.result }}"
+  check_mode: false
+  no_log: true
+  when:
+    - _wai_action != 'none'
+    - not ansible_check_mode

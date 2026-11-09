@@ -1,0 +1,41 @@
+---
+# Account-owned Cloudflare API token that can only run Workers AI models, stored in 1Password
+# (olympus-sdk#852: the inference fallback of the code-knowledge pack job; spec
+# 2026-11-08-code-knowledge-layer-design §4.4, D4). Read by olympus-sdk .github/workflows/knowledge-pack.yml.
+#
+# Through the Cloudflare API from the controller (no host is touched):
+#   - an account-owned API token `<token_name>` with the single permission group "Workers AI Read" on the
+#     account (enough for POST /accounts/<id>/ai/run/<model> and /ai/v1/chat/completions);
+#   - its value goes to the 1Password item `<op_item>` (fields api_token, account_id).
+#
+# Look-up-before-create; a second run changes nothing. Reads run in --check, writes do not.
+# Run with playbooks/push/workers-ai-token.yml (the header there has the commands).
+
+cloudflare_wai_state: present
+
+# --- Cloudflare API token used by this role (the same admin token as roles/cloudflare-r2) ---------------
+# Account > Account API Tokens > Edit is what it needs here. With no token resolvable the role warns and skips.
+cloudflare_wai_api_token: ""
+cloudflare_wai_cf_token_op_item: "cloudflare-account"
+cloudflare_wai_cf_token_op_field: "r2_admin_api_token"
+cloudflare_wai_cf_token_op_vault: "CI"
+cloudflare_wai_account_id: ""
+cloudflare_wai_api_url: "https://api.cloudflare.com/client/v4"
+
+# --- The scoped token --------------------------------------------------------------------------------
+cloudflare_wai_token_name: "knowledge-workers-ai"
+cloudflare_wai_permission_groups:
+  - "Workers AI Read"
+# Set true to issue a new value for the existing token (the old one stops working at once).
+cloudflare_wai_rotate: false
+
+# 1Password item the workflow reads (vault CI, through the Connect server in CI). Written with the `op` CLI
+# signed in as an account that can write vault CI; the direnv service account cannot, so run the playbook
+# with OP_CONNECT_HOST, OP_CONNECT_TOKEN and OP_SERVICE_ACCOUNT_TOKEN unset after a personal `op signin`.
+cloudflare_wai_op_vault: "CI"
+cloudflare_wai_op_item: "workers-ai-knowledge"
+cloudflare_wai_op_cmd:
+  - sh
+  - -c
+  - exec env -u OP_CONNECT_HOST -u OP_CONNECT_TOKEN op "$@" </dev/null
+  - op

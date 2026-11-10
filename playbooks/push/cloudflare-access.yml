@@ -7,7 +7,9 @@
 #   - 1Password CI/cloudflare-account field `access_api_token` (an account-owned token: verify it at
 #     /accounts/<id>/tokens/verify, not /user/tokens/verify): a Cloudflare API token with the
 #     permissions listed in roles/cloudflare-access/defaults/main.yml (Access apps/policies and service
-#     tokens Edit, Access organizations Read, Tunnel Edit, DNS Edit + Zone Read on nwlnexus.io).
+#     tokens Edit, Access organizations Read, Tunnel Edit, DNS Edit + Zone Read on nwlnexus.io; with the
+#     MCP portal on, also MCP Portals Edit, which the API calls "MCP Portals Write" and which covers both
+#     the portals and the servers endpoints).
 #   - OP_SERVICE_ACCOUNT_TOKEN exported and `op` on PATH (the account must be able to write vault Dev).
 #   - The owner e-mail, passed on the command line (never committed: this repository is public).
 #
@@ -25,6 +27,17 @@
 #     "cloudflare_access_rotate_hosts": ["NWL-MBM2"]}'
 # Extend one host's token by a year: cloudflare_access_refresh_hosts instead.
 # Take the public path down (Access stays): -e cloudflare_access_tunnel_enabled=false.
+#
+# Owner MCP server portal https://mcp.nwlnexus.io/mcp in front of the gateway (olympus-sdk#923; off by
+# default). Add "cloudflare_access_mcp_portal_enabled": true to the -e JSON of the commands above:
+#   ansible-playbook playbooks/push/cloudflare-access.yml --check \
+#     -e '{"cloudflare_access_owner_emails": ["OWNER@EXAMPLE"], "cloudflare_access_mcp_portal_enabled": true}'
+# The first apply creates the MCP server, the portal, their two Access applications and the CNAME, and
+# adds the portal callbacks to the memory application's redirect URIs. Then authenticate the server in
+# Zero Trust > Access controls > AI controls > MCP servers > memory, and re-run: the tool curation
+# (forget off) can only be applied once the server's tools have synced. Keep the flag on in later runs
+# (with it off the memory application's redirect URIs lose the portal callbacks).
+# Runbook: olympus-sdk docs/runbooks/mcp-portal.md.
 
 - name: Cloudflare Access for the memory gateway
   hosts: localhost

@@ -284,7 +284,14 @@
   when: _cfa_app_ready | bool or not cloudflare_access_tunnel_enabled | bool
 
 # ------------------------------------------------------------------------------------------------
-# 5. Values for olympus-gitops clusters/olympus/memory/gateway/gateway.yaml (not secret).
+# 5. Opt-in: the owner MCP server portal in front of the gateway (olympus-sdk#923).
+# ------------------------------------------------------------------------------------------------
+- name: MCP server, portal, their Access applications and DNS
+  ansible.builtin.include_tasks: mcp.yml
+  when: cloudflare_access_mcp_portal_enabled | bool
+
+# ------------------------------------------------------------------------------------------------
+# 6. Values for olympus-gitops clusters/olympus/memory/gateway/gateway.yaml (not secret).
 # ------------------------------------------------------------------------------------------------
 - name: Values for the gateway ConfigMap (olympus-gitops, memory-gateway-config)
   ansible.builtin.debug:

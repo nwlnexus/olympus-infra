@@ -1,6 +1,7 @@
 ---
 # Desired self-hosted application and its diff against the API (pure: tests/cloudflare-access runs it
 # offline with fake responses). Inputs: _cfa_apps (GET /access/apps result), _cfa_policy_ids.
+# With cloudflare_access_mcp_portal_enabled the DCR redirect URIs also allow the portal callbacks (#923).
 # Outputs: _cfa_app_desired, _cfa_app_matches, _cfa_app_current, _cfa_app_action, _cfa_app_diff_keys.
 
 - name: Build the desired application
@@ -31,7 +32,9 @@
         {{ {'enabled': true,
             'dynamic_client_registration': {
               'enabled': true,
-              'allowed_uris': cloudflare_access_oauth_allowed_redirect_uris,
+              'allowed_uris': (cloudflare_access_oauth_allowed_redirect_uris
+                               + (cloudflare_access_mcp_memory_callback_uris
+                                  if cloudflare_access_mcp_portal_enabled | bool else [])) | unique,
               'allow_any_on_localhost': cloudflare_access_oauth_allow_localhost | bool,
               'allow_any_on_loopback': cloudflare_access_oauth_allow_loopback | bool},
             'grant': {

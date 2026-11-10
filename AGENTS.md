@@ -19,7 +19,7 @@ olympus-infra/
 │   ├── traefik               # Traefik ingress (Helm, for standalone hosts)
 │   ├── cloudflared           # Cloudflare Tunnel daemon
 │   ├── cloudflared-k8s       # cloudflared as k8s Deployment (via Helm)
-│   ├── cloudflare-access     # API-only: Access app/policies/service tokens, tunnel rule + DNS for memory.nwlnexus.io (olympus-sdk#736)
+│   ├── cloudflare-access     # API-only: Access app/policies/service tokens, tunnel rule + DNS for memory.nwlnexus.io (olympus-sdk#736); opt-in MCP owner portal (#923)
 │   ├── flux                  # Flux CD bootstrap
 │   ├── external-secrets      # ESO bootstrap (CRDs + ClusterSecretStore)
 │   ├── eso-bootstrap         # ExternalSecret for cluster secrets
@@ -214,6 +214,15 @@ passed with `-e` and never committed. It uses its own API token (1Password `CI/c
 `access_api_token`; scopes in the role defaults), not the Tunnel + DNS token of `cloudflared-k8s`.
 `tests/cloudflare-access` plans everything offline from fake API responses (CI). Runbook: olympus-sdk
 `docs/runbooks/memory-access-service-tokens.md`.
+
+Opt-in `cloudflare_access_mcp_portal_enabled` (olympus-sdk#923, off by default) adds the owner MCP server
+portal: MCP server `memory` (OAuth) on the gateway's `/mcp`, portal `owner` on `mcp.nwlnexus.io` (Code Mode
+off, per-user auth), an `mcp_portal` and an `mcp` Access application with `memory-allow-owner` only, the
+proxied CNAME to `gateway.agents.cloudflare.com`, and the portal callbacks in the memory application's DCR
+redirect URIs (merged in `compute-app.yml`, the one writer of that application). Tool curation (`forget`
+off) is applied only once the server's tools have synced, i.e. on a re-run after the owner authenticates
+the server in the dashboard. Needs the token permission MCP Portals Edit. Runbook: olympus-sdk
+`docs/runbooks/mcp-portal.md`.
 
 ### Linux node QUIC tuning
 

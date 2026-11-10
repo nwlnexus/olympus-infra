@@ -18,6 +18,14 @@
     _token_tasks: "{{ lookup('ansible.builtin.file', _role ~ '/tasks/service-token.yml') | from_yaml }}"
     _catch_all: {service: "https://traefik.traefik.svc.cluster.local:443", originRequest: {noTLSVerify: true}}
     _other_rule: {hostname: other.nwlnexus.net, service: "http://other.other:80"}
+    _acct_placeholder: "0000000000000000000000000000000a"
+    _memory_tools:
+      - {name: append}
+      - {name: digest}
+      - {name: forget}
+      - {name: recall}
+      - {name: status}
+    _owner_ids: {memory-allow-owner: pol-1, memory-service-auth: pol-2}
   tasks:
     # --- wiring ------------------------------------------------------------------------------------
     - name: The playbook targets the same account as the cluster tunnel and hard-codes no owner e-mail
@@ -32,7 +40,8 @@
     - name: Every task that talks to the API or 1Password is no_log, and reads run in --check
       vars:
         _all: "{{ _apply + _token_tasks + (lookup('ansible.builtin.file', _role ~ '/tasks/tunnel.yml') | from_yaml)
-                  + (lookup('ansible.builtin.file', _role ~ '/tasks/policy.yml') | from_yaml) }}"
+                  + (lookup('ansible.builtin.file', _role ~ '/tasks/policy.yml') | from_yaml)
+                  + (lookup('ansible.builtin.file', _role ~ '/tasks/mcp.yml') | from_yaml) }}"
         _api: >-
           [{% for t in _all if 'ansible.builtin.uri' in t or 'ansible.builtin.command' in t %}{{ t | to_json }},{% endfor %}null]
         _gets: >-
@@ -43,7 +52,7 @@
         that:
           - _api_l | length > 15
           - _api_l | map(attribute='no_log', default=false) | reject('equalto', true) | list | length == 0
-          - _gets_l | length >= 8
+          - _gets_l | length >= 13
           - _gets_l | map(attribute='check_mode', default=true) | reject('equalto', false) | list | length == 0
         fail_msg: "{{ _api_l | map(attribute='name') | zip(_api_l | map(attribute='no_log', default=false)) | list | to_json }}"
         quiet: true
@@ -215,4 +224,201 @@
         that:
           - _cfa_ingress_changed
           - _cfa_ingress_new == [_other_rule, _catch_all]
+        quiet: true
+
+    # --- MCP portal (olympus-sdk#923) --------------------------------------------------------------
+    - name: The MCP portal is off by default and leaves the memory app's redirect URIs alone
+      ansible.builtin.assert:
+        that:
+          - not cloudflare_access_mcp_portal_enabled
+          - cloudflare_access_mcp_disabled_tools == ['forget']
+          - cloudflare_access_mcp_portal_code_mode == 'off'
+        quiet: true
+
+    - name: Plan the memory application with the portal on (portal callbacks in its DCR redirect URIs)
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-app.yml"
+      vars:
+        cloudflare_access_mcp_portal_enabled: true
+        cloudflare_access_account_id: "{{ _acct_placeholder }}"
+        _cfa_policy_ids: "{{ _owner_ids }}"
+        _cfa_apps:
+          - id: app-1
+            name: memory
+            type: self_hosted
+            domain: memory.nwlnexus.io
+            destinations: [{type: public, uri: memory.nwlnexus.io}]
+            session_duration: 24h
+            app_launcher_visible: false
+            http_only_cookie_attribute: true
+            same_site_cookie_attribute: lax
+            policies: [{id: pol-1, precedence: 1}, {id: pol-2, precedence: 2}]
+            oauth_configuration:
+              enabled: true
+              dynamic_client_registration:
+                enabled: true
+                allowed_uris: ["https://claude.ai/*"]
+                allow_any_on_localhost: false
+                allow_any_on_loopback: false
+              grant: {access_token_lifetime: 15m, session_duration: 336h}
+
+    - name: claude.ai is kept first, both callbacks are added, and the existing app is updated (not a second writer)
+      ansible.builtin.assert:
+        that:
+          - _cfa_app_action == 'update'
+          - _cfa_app_diff_keys == ['oauth_configuration']
+          - >-
+            _cfa_app_desired.oauth_configuration.dynamic_client_registration.allowed_uris ==
+            ['https://claude.ai/*',
+             'https://dash.cloudflare.com/' ~ _acct_placeholder ~ '/one/access-controls/ai-controls/mcp-server/oauth-callback/memory',
+             'https://mcp.nwlnexus.io/servers-callback']
+        fail_msg: "{{ _cfa_app_desired.oauth_configuration | to_json }}"
+        quiet: true
+
+    - name: Plan the MCP objects when nothing exists yet
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-mcp.yml"
+      vars:
+        _cfa_mcp_servers: []
+        _cfa_mcp_portals: []
+        _cfa_all_apps: [{id: app-1, name: memory, type: self_hosted, domain: memory.nwlnexus.io}]
+        _cfa_policy_ids: "{{ _owner_ids }}"
+
+    - name: Everything is created; curation waits for the tools to sync; both apps use allow-owner only
+      ansible.builtin.assert:
+        that:
+          - _cfa_mcp_server_action == 'create'
+          - "_cfa_mcp_server_desired == {'id': 'memory', 'name': 'memory', 'hostname': 'https://memory.nwlnexus.io/mcp', 'auth_type': 'oauth'}"
+          - _cfa_mcp_portal_action == 'create'
+          - _cfa_mcp_curation_state == 'pending'
+          - _cfa_mcp_portal_desired.hostname == 'mcp.nwlnexus.io'
+          - _cfa_mcp_portal_desired.code_mode == 'off'
+          - "_cfa_mcp_portal_desired.servers == [{'server_id': 'memory', 'on_behalf': true, 'default_disabled': false}]"
+          - _cfa_mcp_portal_app_action == 'create'
+          - _cfa_mcp_server_app_action == 'create'
+          - _cfa_mcp_portal_app_desired.type == 'mcp_portal'
+          - _cfa_mcp_portal_app_desired.domain == 'mcp.nwlnexus.io'
+          - "_cfa_mcp_portal_app_desired.destinations == [{'type': 'public', 'uri': 'mcp.nwlnexus.io'}]"
+          - "_cfa_mcp_portal_app_desired.policies == [{'id': 'pol-1', 'precedence': 1}]"
+          - _cfa_mcp_portal_app_desired.oauth_configuration.enabled
+          - _cfa_mcp_portal_app_desired.oauth_configuration.dynamic_client_registration.allowed_uris == ['https://claude.ai/*']
+          - _cfa_mcp_portal_app_desired.oauth_configuration.dynamic_client_registration.allow_any_on_localhost
+          - _cfa_mcp_portal_app_desired.oauth_configuration.dynamic_client_registration.allow_any_on_loopback
+          - _cfa_mcp_server_app_desired.type == 'mcp'
+          - "_cfa_mcp_server_app_desired.destinations == [{'type': 'via_mcp_server_portal', 'mcp_server_id': 'memory'}]"
+          - "_cfa_mcp_server_app_desired.policies == [{'id': 'pol-1', 'precedence': 1}]"
+        fail_msg: "{{ {'portal': _cfa_mcp_portal_desired, 'server': _cfa_mcp_server_desired} | to_json }}"
+        quiet: true
+
+    - name: Plan once the server is authenticated (tools synced) and the portal exists uncurated
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-mcp.yml"
+      vars:
+        _cfa_policy_ids: "{{ _owner_ids }}"
+        _cfa_mcp_servers:
+          - {id: memory, name: memory, hostname: "https://memory.nwlnexus.io/mcp", auth_type: oauth,
+             status: ready, authentication_status: connected, tools: "{{ _memory_tools }}", prompts: []}
+        _cfa_mcp_portals:
+          - id: owner
+            name: owner
+            hostname: mcp.nwlnexus.io
+            allow_code_mode: false
+            servers:
+              - {id: memory, server_id: memory, on_behalf: true, tools: "{{ _memory_tools }}", updated_tools: []}
+        _cfa_all_apps:
+          - id: app-p
+            name: mcp-portal-owner
+            type: mcp_portal
+            domain: mcp.nwlnexus.io
+            destinations: [{type: public, uri: mcp.nwlnexus.io}]
+            session_duration: 24h
+            app_launcher_visible: false
+            policies: [{id: pol-1, precedence: 1, name: memory-allow-owner}]
+            oauth_configuration:
+              enabled: true
+              dynamic_client_registration:
+                enabled: true
+                allowed_uris: ["https://claude.ai/*"]
+                allow_any_on_localhost: true
+                allow_any_on_loopback: true
+              grant: {access_token_lifetime: 15m, session_duration: 336h}
+          - id: app-s
+            name: mcp-server-memory
+            type: mcp
+            destinations: [{type: via_mcp_server_portal, mcp_server_id: memory}]
+            policies: [{id: pol-1, precedence: 1}]
+
+    - name: The server and apps are unchanged; the portal is updated with every tool listed and forget off
+      ansible.builtin.assert:
+        that:
+          - _cfa_mcp_server_action == 'unchanged'
+          - _cfa_mcp_portal_app_action == 'unchanged'
+          - _cfa_mcp_server_app_action == 'unchanged'
+          - _cfa_mcp_curation_state == 'to_apply'
+          - _cfa_mcp_portal_action == 'update'
+          - _cfa_mcp_portal_diff_keys == ['updated_tools']
+          - >-
+            _cfa_mcp_portal_desired.servers[0].updated_tools ==
+            [{'name': 'append', 'enabled': true}, {'name': 'digest', 'enabled': true},
+             {'name': 'forget', 'enabled': false}, {'name': 'recall', 'enabled': true},
+             {'name': 'status', 'enabled': true}]
+          - _cfa_mcp_portal_desired.name == 'owner'
+          - _cfa_mcp_portal_desired.hostname == 'mcp.nwlnexus.io'
+        fail_msg: >-
+          {{ {'portal': _cfa_mcp_portal_desired, 'diff': _cfa_mcp_portal_diff_keys,
+              'apps': [_cfa_mcp_portal_app_diff_keys, _cfa_mcp_server_app_diff_keys]} | to_json }}
+        quiet: true
+
+    - name: Plan again after the curation PUT (the API echoes overrides with portal_/server_ aliases)
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-mcp.yml"
+      vars:
+        _cfa_policy_ids: "{{ _owner_ids }}"
+        _cfa_mcp_servers:
+          - {id: memory, name: memory, hostname: "https://memory.nwlnexus.io/mcp", auth_type: oauth,
+             status: ready, tools: "{{ _memory_tools }}"}
+        _cfa_mcp_portals:
+          - id: owner
+            name: owner
+            hostname: mcp.nwlnexus.io
+            code_mode: "off"
+            servers:
+              - id: memory
+                server_id: memory
+                on_behalf: true
+                default_disabled: false
+                updated_tools:
+                  - {name: forget, enabled: false, portal_alias: null, server_alias: null}
+                  - {name: recall, enabled: true}
+        _cfa_all_apps: []
+
+    - name: A curated portal is unchanged (second run changes nothing)
+      ansible.builtin.assert:
+        that:
+          - _cfa_mcp_curation_state == 'applied'
+          - _cfa_mcp_portal_action == 'unchanged'
+          - _cfa_mcp_portal_diff_keys == []
+        fail_msg: "{{ _cfa_mcp_portal_diff_keys | to_json }}"
+        quiet: true
+
+    - name: Plan against a portal changed in the dashboard (Code Mode on, a tool off, per-user auth off)
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-mcp.yml"
+      vars:
+        _cfa_policy_ids: "{{ _owner_ids }}"
+        _cfa_mcp_servers:
+          - {id: memory, name: memory, hostname: "https://memory.nwlnexus.io/mcp", auth_type: oauth, tools: "{{ _memory_tools }}"}
+        _cfa_mcp_portals:
+          - id: owner
+            name: owner
+            hostname: mcp.nwlnexus.io
+            code_mode: default_on
+            servers:
+              - server_id: memory
+                on_behalf: false
+                updated_tools: [{name: forget, enabled: false}, {name: recall, enabled: false}]
+        _cfa_all_apps: []
+
+    - name: It is put back
+      ansible.builtin.assert:
+        that:
+          - _cfa_mcp_portal_action == 'update'
+          - _cfa_mcp_portal_diff_keys == ['code_mode', 'servers', 'updated_tools']
+          - _cfa_mcp_portal_desired.servers[0].on_behalf
+        fail_msg: "{{ _cfa_mcp_portal_diff_keys | to_json }}"
         quiet: true

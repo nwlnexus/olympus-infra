@@ -11,7 +11,10 @@
 #   - the self-hosted Access application on the bare host (every path: /, /mcp, /healthz, /readyz),
 #     with Managed OAuth + dynamic client registration for the claude.ai connector;
 #   - the tunnel public hostname (one ingress rule, inserted before the catch-all) and its proxied CNAME;
-#   - a printed summary with MEMORY_ACCESS_TEAM_DOMAIN and MEMORY_ACCESS_AUD for the gitops ConfigMap.
+#   - a printed summary with MEMORY_ACCESS_TEAM_DOMAIN and MEMORY_ACCESS_AUD for the gitops ConfigMap;
+#   - opt-in (cloudflare_access_mcp_portal_enabled, olympus-sdk#923): the owner MCP server portal in front
+#     of the memory gateway (MCP server, portal, its two Access applications, proxied CNAME, tool curation)
+#     and the portal callbacks in the memory application's DCR redirect URIs.
 #
 # Look-up-before-create everywhere; a second run changes nothing. Reads run in --check, writes do not.
 # Run with playbooks/push/cloudflare-access.yml (the header there has the commands).
@@ -28,6 +31,9 @@ cloudflare_access_state: present
 #   Account  Cloudflare Tunnel               Edit   (only for the public hostname rule)
 #   Zone     DNS                             Edit   (zone nwlnexus.io only)
 #   Zone     Zone                            Read   (zone nwlnexus.io only)
+#   Account  MCP Portals                     Edit   (only with cloudflare_access_mcp_portal_enabled; the API
+#                                                    reference names it "MCP Portals Write" and it covers both
+#                                                    /ai-controls/mcp/portals and /ai-controls/mcp/servers)
 # With no token resolvable the role warns and skips (never fails the play).
 cloudflare_access_api_token: ""
 cloudflare_access_cf_token_op_item: "cloudflare-account"
@@ -116,3 +122,52 @@ cloudflare_access_tunnel_service: "http://memory-gateway.memory.svc.cluster.loca
 cloudflare_access_tunnel_origin_request: {}
 cloudflare_access_dns_enabled: true
 cloudflare_access_dns_zone: "nwlnexus.io"
+
+# --- MCP server portal (olympus-sdk#923, follow-up to spike #909) --------------------------------------
+# Off by default, so a run without it is unchanged. With it on, the role also manages (look-up-before-
+# create, after the memory application and tunnel):
+#   - the MCP server `memory` (auth_type oauth) pointing at the gateway's /mcp;
+#   - the portal `owner` on cloudflare_access_mcp_portal_hostname, Code Mode off (the personal/work guard
+#     must see tool names), the server attached with per-user auth (on_behalf);
+#   - tool curation: every synced tool enabled except cloudflare_access_mcp_disabled_tools. The API refuses
+#     `updated_tools` until the server's tools have synced (after the owner authenticates the server in the
+#     dashboard), so before that the role skips curation and says to re-run;
+#   - an `mcp_portal` Access application (a portal created through the API gets none) with Managed OAuth,
+#     DCR for claude.ai and localhost/loopback (Claude Code), and an `mcp` application for the server, both
+#     with the reusable <prefix>allow-owner policy only (no service tokens: bots stay on direct paths);
+#   - the proxied CNAME <portal hostname> -> gateway.agents.cloudflare.com;
+#   - the dashboard and portal OAuth callbacks added to the memory application's DCR allowed_uris
+#     (cloudflare_access_mcp_memory_callback_uris), after cloudflare_access_oauth_allowed_redirect_uris.
+# Once the portal is applied, keep this on for every later run: a run with it off resets the memory
+# application's redirect URIs to cloudflare_access_oauth_allowed_redirect_uris and the server can no
+# longer re-authenticate (the portal objects themselves are left alone, never deleted).
+cloudflare_access_mcp_portal_enabled: false
+cloudflare_access_mcp_server_id: "memory"
+cloudflare_access_mcp_server_name: "memory"
+cloudflare_access_mcp_server_url: "https://{{ cloudflare_access_app_domain }}/mcp"
+cloudflare_access_mcp_portal_id: "owner"
+cloudflare_access_mcp_portal_name: "owner"
+cloudflare_access_mcp_portal_hostname: "mcp.nwlnexus.io"
+# off | opt_in | default_on | enforced. Off: Code Mode would hide the tool names the guard matches.
+cloudflare_access_mcp_portal_code_mode: "off"
+# Per-user auth through the portal (each person's own OAuth grant to the server).
+cloudflare_access_mcp_on_behalf: true
+# Tools turned off in the portal. The gateway also refuses `forget` without the forget scope; this keeps
+# it out of the portal's tool list as well. The memory gateway has no admin tools on /mcp today; add any
+# that appear here.
+cloudflare_access_mcp_disabled_tools:
+  - forget
+cloudflare_access_mcp_portal_app_name: "mcp-portal-owner"
+cloudflare_access_mcp_server_app_name: "mcp-server-memory"
+cloudflare_access_mcp_portal_oauth_allowed_redirect_uris:
+  - "https://claude.ai/*"
+# Claude Code registers a localhost/loopback redirect.
+cloudflare_access_mcp_portal_oauth_allow_localhost: true
+cloudflare_access_mcp_portal_oauth_allow_loopback: true
+cloudflare_access_mcp_dns_target: "gateway.agents.cloudflare.com"
+# Callbacks the memory application's OAuth (DCR) must allow, or registering the server fails with
+# "An error occurred while registering the MCP server" (spike #909): the dashboard's admin callback for
+# this server id and the portal's per-user callback.
+cloudflare_access_mcp_memory_callback_uris:
+  - "https://dash.cloudflare.com/{{ cloudflare_access_account_id }}/one/access-controls/ai-controls/mcp-server/oauth-callback/{{ cloudflare_access_mcp_server_id }}"
+  - "https://{{ cloudflare_access_mcp_portal_hostname }}/servers-callback"

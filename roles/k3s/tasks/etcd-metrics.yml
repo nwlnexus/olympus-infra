@@ -69,6 +69,8 @@
     state: started
     daemon_reload: true
   become: true
+  # In check mode on a first run the unit file was not written, so systemd does not know it yet.
+  ignore_errors: "{{ ansible_check_mode }}"
 
 # Apply the reload now, before the config block below: the port must be filtered
 # before k3s can ever open it on the node address.

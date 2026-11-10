@@ -151,3 +151,8 @@ k3s_kubelet_args:
   # Per-pod PID cap so a fork bomb in a CI runner pod cannot exhaust the node's PIDs
   # (security review #394 M1).
   - "pod-max-pids=4096"
+
+# etcd metrics on the node address for Prometheus (roles/k3s/tasks/etcd-metrics.yml).
+# Applied with playbooks/push/k3s-etcd-metrics.yml, one server at a time; takes
+# effect at each server's next k3s restart.
+k3s_etcd_expose_metrics: true

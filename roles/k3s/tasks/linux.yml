@@ -129,6 +129,11 @@
       etcd-snapshot-schedule-cron: "{{ k3s_etcd_snapshot_schedule }}"
       etcd-snapshot-retention: {{ k3s_etcd_snapshot_retention }}
       {% endif %}
+      {% if k3s_etcd_expose_metrics | default(false) | bool %}
+      # BEGIN ANSIBLE MANAGED - k3s_etcd_expose_metrics
+      etcd-expose-metrics: true
+      # END ANSIBLE MANAGED - k3s_etcd_expose_metrics
+      {% endif %}
     owner: root
     group: root
     mode: "0600"
@@ -343,6 +348,18 @@
   when:
     - _k3s_state == 'present'
     - k3s_kubelet_args | default([]) | length > 0
+    - (_k3s_config_stat.stat.exists | default(false)) or not ansible_check_mode
+
+# ── etcd metrics on the node address (HA servers) ────────────────────────────
+# The marked config block plus the nftables source restriction for the metrics
+# port. Never restarts k3s (see tasks/etcd-metrics.yml).
+- name: Expose etcd metrics on the node address
+  ansible.builtin.include_tasks: etcd-metrics.yml
+  when:
+    - _k3s_state == 'present'
+    - k3s_ha | default(false)
+    - not (k3s_agent | default(false))
+    - k3s_etcd_expose_metrics | default(false) | bool
     - (_k3s_config_stat.stat.exists | default(false)) or not ansible_check_mode
 
 # Leftover from the old *.skip mechanism; notifies a k3s restart when it changes

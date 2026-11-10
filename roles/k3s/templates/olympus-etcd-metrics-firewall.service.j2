@@ -1,0 +1,15 @@
+# Managed by Ansible (roles/k3s, tasks/etcd-metrics.yml) - do not edit by hand.
+[Unit]
+Description=Restrict the etcd metrics port to the cluster (nftables)
+Before=network-pre.target k3s.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/usr/sbin/nft -f {{ k3s_etcd_metrics_nft_file }}
+ExecReload=/usr/sbin/nft -f {{ k3s_etcd_metrics_nft_file }}
+ExecStop=/usr/sbin/nft delete table inet olympus_etcd_metrics
+
+[Install]
+WantedBy=multi-user.target

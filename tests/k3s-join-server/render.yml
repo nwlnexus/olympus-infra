@@ -6,8 +6,8 @@
 #    and cannot become a cluster-init / primary node.
 # 2. roles/k3s/templates/config-server-join.yaml.j2 renders a joining-server config
 #    (no cluster-init; VIP; disable traefik; tls-san; labels; taint; kubelet args).
-# 3. The marked node-ip and kubelet-arg blocks are byte-identical to what
-#    tasks/node-ip.yml and tasks/kubelet-args.yml write, so blockinfile is a no-op
+# 3. The marked node-ip, etcd-expose-metrics and kubelet-arg blocks are byte-identical
+#    to what tasks/node-ip.yml, tasks/etcd-metrics.yml and tasks/kubelet-args.yml write, so blockinfile is a no-op
 #    and k3s needs no restart after the join.
 - name: k3s join-server render checks
   hosts: localhost
@@ -27,7 +27,7 @@
         that: gv_agent_services[item] == gv_compute_hub[item]
         fail_msg: "{{ item }} differs: agent_services={{ gv_agent_services[item] }} compute_hub={{ gv_compute_hub[item] }}"
         quiet: true
-      loop: [k3s_ha, k3s_vip, k3s_token_op_ref, k3s_disable, k3s_tls_san, k3s_kubelet_args,
+      loop: [k3s_ha, k3s_vip, k3s_token_op_ref, k3s_disable, k3s_tls_san, k3s_kubelet_args, k3s_etcd_expose_metrics,
              k3s_external_server, k3s_kubeconfig_path, tailscale_tags, tailscale_accept_dns,
              tailscale_accept_routes, tailscale_services, ansible_pull_skip_tags,
              baseline_unattended_auto_reboot, baseline_k8s_node_network, iscsi_mode, atlas_state]
@@ -70,6 +70,7 @@
         k3s_node_labels: "{{ gv_agent_services.k3s_node_labels }}"
         k3s_node_taints: "{{ gv_agent_services.k3s_node_taints }}"
         k3s_kubelet_args: "{{ gv_agent_services.k3s_kubelet_args }}"
+        k3s_etcd_expose_metrics: "{{ gv_agent_services.k3s_etcd_expose_metrics }}"
 
     - name: Read the rendered config
       ansible.builtin.slurp:
@@ -93,6 +94,7 @@
           - cfg['node-taint'] == gv_agent_services.k3s_node_taints
           - cfg['kubelet-arg'] == gv_agent_services.k3s_kubelet_args
           - cfg['write-kubeconfig-mode'] == '0600'
+          - cfg['etcd-expose-metrics'] is sameas true
 
     # Same marker and block as roles/k3s/tasks/node-ip.yml and kubelet-args.yml.
     - name: node-ip blockinfile is a no-op on the rendered file
@@ -118,17 +120,29 @@
         create: false
       register: _bi_kubelet
 
+    - name: etcd-expose-metrics blockinfile is a no-op on the rendered file
+      ansible.builtin.blockinfile:
+        path: "{{ out_dir }}/config.yaml"
+        marker: "# {mark} ANSIBLE MANAGED - k3s_etcd_expose_metrics"
+        block: |
+          etcd-expose-metrics: true
+        insertafter: EOF
+        create: false
+      register: _bi_etcd_metrics
+
     - name: Neither marked block changed
       ansible.builtin.assert:
         that:
           - not _bi_nodeip.changed
           - not _bi_kubelet.changed
+          - not _bi_etcd_metrics.changed
 
     - name: The role task files still use the markers this test mirrors
       ansible.builtin.assert:
         that:
           - lookup('file', repo ~ '/roles/k3s/tasks/node-ip.yml') is search('ANSIBLE MANAGED - k3s_node_ip')
           - lookup('file', repo ~ '/roles/k3s/tasks/kubelet-args.yml') is search('ANSIBLE MANAGED - k3s_kubelet_args')
+          - lookup('file', repo ~ '/roles/k3s/tasks/etcd-metrics.yml') is search('ANSIBLE MANAGED - k3s_etcd_expose_metrics')
 
     - name: Remove the output directory
       ansible.builtin.file:

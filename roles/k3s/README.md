@@ -24,3 +24,9 @@ etcd snapshots go to `k3s_etcd_snapshot_dir` (mount it first, e.g. QNAP NFS).
 time. `tasks/cni-bridge-fixer-retire.yml` removes the retired
 k3s-cni-bridge-fixer. `playbooks/push/k3s-node-network.yml` runs both (and the
 baseline node-network tasks) on their own, without restarting anything.
+`k3s_etcd_expose_metrics` (servers, default false) writes `etcd-expose-metrics: true`
+as a marked block (`tasks/etcd-metrics.yml`) so etcd serves /metrics on the node
+address (port 2381), and first installs an nftables table that admits only
+loopback, the pod network and the cluster nodes to that port.
+`playbooks/push/k3s-etcd-metrics.yml` applies it without restarting k3s; restart
+one server at a time with `scripts/k3s-health-gate.sh` between servers.

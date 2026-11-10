@@ -1,0 +1,21 @@
+# Managed by Ansible (roles/k3s, tasks/etcd-metrics.yml) - do not edit by hand.
+# Only loopback, the pod network and the cluster nodes may reach the embedded etcd's
+# metrics port. Own table, so ufw/iptables/kube-proxy rules elsewhere are untouched;
+# a drop here is final, an accept still passes through the other tables.
+add table inet olympus_etcd_metrics
+delete table inet olympus_etcd_metrics
+
+table inet olympus_etcd_metrics {
+  set allowed_v4 {
+    type ipv4_addr
+    flags interval
+    elements = { {{ _k3s_etcd_metrics_sources | join(', ') }} }
+  }
+
+  chain input {
+    type filter hook input priority -10; policy accept;
+    tcp dport {{ k3s_etcd_metrics_port }} iifname "lo" accept
+    tcp dport {{ k3s_etcd_metrics_port }} ip saddr @allowed_v4 accept
+    tcp dport {{ k3s_etcd_metrics_port }} drop
+  }
+}

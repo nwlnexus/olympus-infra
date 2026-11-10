@@ -4,3 +4,12 @@
     name: k3s
     state: restarted
   become: true
+
+# Re-reads the nftables file: one atomic transaction that deletes and re-adds its
+# own table, so the port is never unfiltered. Never touches k3s.
+- name: Reload etcd metrics firewall
+  ansible.builtin.systemd:
+    name: olympus-etcd-metrics-firewall
+    state: reloaded
+    daemon_reload: true
+  become: true

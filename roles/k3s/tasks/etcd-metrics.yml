@@ -1,0 +1,89 @@
+---
+# Expose the embedded etcd's metrics on the node address, for the in-cluster
+# Prometheus (olympus-gitops, scrape job `etcd`).
+#
+# 1. An nftables table (own table, priority -10, so ufw/iptables/kube-proxy rules
+#    are untouched) that drops connections to the metrics port unless they come
+#    from loopback, the pod network or a cluster node. A NetworkPolicy cannot do
+#    this: the port is on the host network. Applied first, so the port is never
+#    open to the LAN, and a systemd oneshot reloads it at boot.
+# 2. `etcd-expose-metrics: true` as a marked block in /etc/rancher/k3s/config.yaml
+#    (the rest of the file, token included, is never rewritten).
+#
+# This never restarts k3s: it reads the file only at start. Restart one server at
+# a time, the canary first, and run scripts/k3s-health-gate.sh before the next.
+# Turning the flag off later leaves the block and the table in place (like the
+# other marked blocks); remove them by hand if ever needed.
+
+- name: Build the allowed source list for the etcd metrics port
+  ansible.builtin.set_fact:
+    _k3s_etcd_metrics_sources: >-
+      {{
+        (k3s_etcd_metrics_allowed_cidrs
+         + (k3s_etcd_metrics_node_groups
+            | map('extract', groups) | select('defined') | flatten | unique
+            | map('extract', hostvars)
+            | map(attribute='k3s_node_ip', default='')
+            | select('match', '^(\d{1,3}\.){3}\d{1,3}$')
+            | list))
+        | unique | sort
+      }}
+
+- name: The allowed sources include this server's own address
+  ansible.builtin.assert:
+    that:
+      - k3s_node_ip | default('') != ''
+      - k3s_node_ip in _k3s_etcd_metrics_sources
+      - _k3s_etcd_metrics_sources | length > (k3s_etcd_metrics_allowed_cidrs | length)
+    fail_msg: >-
+      The node address list for the etcd metrics port is empty or misses
+      {{ inventory_hostname }} (k3s_node_ip='{{ k3s_node_ip | default('') }}').
+      Run with inventory/olympus.yml, which has every k3s group.
+    quiet: true
+
+- name: Deploy the etcd metrics port restriction (nftables)
+  ansible.builtin.template:
+    src: etcd-metrics.nft.j2
+    dest: "{{ k3s_etcd_metrics_nft_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: nft -c -f %s
+  become: true
+  notify: Reload etcd metrics firewall
+
+- name: Deploy the etcd metrics firewall unit
+  ansible.builtin.template:
+    src: olympus-etcd-metrics-firewall.service.j2
+    dest: /etc/systemd/system/olympus-etcd-metrics-firewall.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload etcd metrics firewall
+
+- name: Enable and start the etcd metrics firewall unit
+  ansible.builtin.systemd:
+    name: olympus-etcd-metrics-firewall
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true
+
+# Apply the reload now, before the config block below: the port must be filtered
+# before k3s can ever open it on the node address.
+- name: Apply the firewall before the config change
+  ansible.builtin.meta: flush_handlers
+
+- name: Expose etcd metrics in k3s config
+  ansible.builtin.blockinfile:
+    path: /etc/rancher/k3s/config.yaml
+    marker: "# {mark} ANSIBLE MANAGED - k3s_etcd_expose_metrics"
+    block: |
+      etcd-expose-metrics: true
+    insertafter: EOF
+    # The file must already exist; its owner and mode (0600, it holds the token) are kept.
+    create: false
+  become: true
+  # The diff would print the whole file, cluster token included.
+  diff: false

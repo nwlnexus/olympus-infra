@@ -68,6 +68,11 @@ k3s_kubelet_args:
   - "eviction-hard=memory.available<1Gi,nodefs.available<10%,imagefs.available<10%"
   - "pod-max-pids=4096"
 
+# etcd metrics on the node address for Prometheus (roles/k3s/tasks/etcd-metrics.yml).
+# Applied with playbooks/push/k3s-etcd-metrics.yml, one server at a time; takes
+# effect at each server's next k3s restart.
+k3s_etcd_expose_metrics: true
+
 # --- Tailscale (tagged device, no key expiry, no personal login) ---
 tailscale_state: present
 tailscale_ephemeral: false

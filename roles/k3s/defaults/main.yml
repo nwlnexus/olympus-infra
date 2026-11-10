@@ -81,3 +81,25 @@ k3s_remove_disable_skip_files: true
 # whichever server runs the role (Traefik is Flux-managed now), so it is opt-in:
 # set true only for a one-off cleanup, on purpose.
 k3s_cleanup_orphan_traefik_crds: false
+
+# --- etcd metrics (HA servers; tasks/etcd-metrics.yml) ---
+# true writes `etcd-expose-metrics: true` as a marked block in config.yaml, so the
+# embedded etcd also serves /metrics on <node-ip>:2381 (k3s default: 127.0.0.1 only),
+# and installs an nftables table that lets only loopback, the pod network and the
+# cluster nodes reach that port. Off by default. The k3s role is push-only (never in
+# ansible-pull), and the task never restarts k3s: k3s reads the file at start, so
+# restart one server at a time with scripts/k3s-health-gate.sh between servers.
+k3s_etcd_expose_metrics: false
+k3s_etcd_metrics_port: 2381
+# Sources allowed to reach the metrics port, besides loopback: the pod network
+# (a scrape from a pod on the same node keeps its pod address) and every cluster
+# node's address (a scrape from a pod on another node is masqueraded to that
+# node's address). Node addresses come from k3s_node_ip of the hosts in these
+# inventory groups (ansible_host when unset).
+k3s_etcd_metrics_allowed_cidrs:
+  - "10.42.0.0/16"
+k3s_etcd_metrics_node_groups:
+  - k3s_servers
+  - k3s_agents
+  - k3s_mac_agents
+k3s_etcd_metrics_nft_file: /etc/olympus/etcd-metrics.nft

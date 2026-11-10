@@ -1,0 +1,56 @@
+---
+# Expose the embedded etcd's metrics on each k3s server's node address, for the
+# in-cluster Prometheus (olympus-gitops scrape job `etcd`). One server at a time
+# (serial: 1), --limit to one server per run during a rollout.
+#
+#   roles/k3s/tasks/etcd-metrics.yml:
+#     - nftables table olympus_etcd_metrics: the metrics port (2381) only from
+#       loopback, the pod network and the cluster nodes (systemd oneshot
+#       olympus-etcd-metrics-firewall reloads it at boot);
+#     - `etcd-expose-metrics: true`, a marked block in /etc/rancher/k3s/config.yaml.
+#
+# This play NEVER restarts k3s. The setting takes effect when k3s restarts on that
+# server. Per server, the canary first, one at a time:
+#   1. scripts/k3s-health-gate.sh passes;
+#   2. this play with --limit <server> (--check --diff first; the config diff is hidden
+#      because it would print the cluster token);
+#   3. `sudo systemctl restart k3s` on that server, wait for the node to be Ready;
+#   4. `curl -s http://<node-ip>:2381/metrics` answers from another node, and
+#      scripts/k3s-health-gate.sh passes again before the next server.
+# Needs no secrets. Run from olympus-infra with inventory/olympus.yml (the role reads
+# every k3s group to build the allowed source list).
+
+- name: etcd metrics on the k3s servers
+  hosts: k3s_servers
+  gather_facts: true
+  serial: 1
+  max_fail_percentage: 0
+
+  pre_tasks:
+    - name: Only HA servers with the flag on, and an existing k3s config
+      ansible.builtin.assert:
+        that:
+          - k3s_ha | default(false) | bool
+          - not (k3s_agent | default(false) | bool)
+          - k3s_etcd_expose_metrics | default(false) | bool
+        fail_msg: "{{ inventory_hostname }} is not an HA k3s server with k3s_etcd_expose_metrics: true."
+        quiet: true
+
+    - name: Check for the k3s config file
+      ansible.builtin.stat:
+        path: /etc/rancher/k3s/config.yaml
+      register: _cfg
+      become: true
+
+    - name: The k3s config exists (this play never creates it)
+      ansible.builtin.assert:
+        that: _cfg.stat.exists
+        fail_msg: "/etc/rancher/k3s/config.yaml is missing on {{ inventory_hostname }}."
+        quiet: true
+
+  tasks:
+    - name: Restrict the metrics port and expose etcd metrics
+      ansible.builtin.import_role:
+        name: k3s
+        tasks_from: etcd-metrics.yml
+      tags: [etcd-metrics]

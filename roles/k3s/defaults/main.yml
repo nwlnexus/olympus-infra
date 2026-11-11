@@ -126,3 +126,10 @@ k3s_audit_always_log_users:
   - "system:serviceaccount:atlas-system:k8s-mcp"
 k3s_audit_always_log_groups:
   - "olympus:agents-view"
+# Leases in kube-system whose get/update is never logged, matched by name for every
+# user: the kube-vip control-plane and Service elections, whose client uses the admin
+# identity (so it cannot be dropped by user). Create/delete are still logged. An
+# empty list omits the rule.
+k3s_audit_drop_lease_names:
+  - "plndr-cp-lock"
+  - "plndr-svcs-lock"

@@ -60,6 +60,7 @@ arguments to this block instead. `tests/k3s-join-server` fails if the key appear
 | `k3s_audit_log_maxsize` | `100` | MB per file before rotation |
 | `k3s_audit_always_log_users` | `[system:serviceaccount:atlas-system:k8s-mcp]` | Users whose every request is recorded |
 | `k3s_audit_always_log_groups` | `[olympus:agents-view]` | Groups whose every request is recorded |
+| `k3s_audit_drop_lease_names` | `[plndr-cp-lock, plndr-svcs-lock]` | kube-system Leases whose get/update is never recorded, for any user (empty omits the rule) |
 
 Disk use per server is bounded by maxsize x (maxbackup + 1): 600 MB with the defaults.
 
@@ -69,6 +70,12 @@ response code, never a body; Request adds the request body, never the response):
 - dropped: `/healthz*`, `/readyz*`, `/livez*`, `/metrics`, `/version`, `/openapi*`;
 - Metadata for every request (reads included) by the always-logged users and groups,
   ahead of all noise rules (an empty list omits its rule);
+- dropped: get/update/patch of the kube-system Leases in `k3s_audit_drop_lease_names`
+  (the kube-vip VIP and Service elections, every few seconds), for every user: kube-vip
+  uses the admin identity, which a person can also use, so it is matched by Lease name,
+  not by user. Create and delete of those Leases are still recorded, and so are list and
+  watch of Leases without a name (a `resourceNames` rule never matches a request without a
+  name; they are recorded at Metadata);
 - dropped: reads by `system:nodes`, and by the control plane and k3s itself
   (`system:kube-proxy`, `system:kube-controller-manager`, `system:kube-scheduler`,
   `system:apiserver`, `system:k3s-supervisor`, `system:k3s-controller`,
@@ -100,6 +107,11 @@ the timestamps:
 ```sh
 sudo test -s /var/lib/rancher/k3s/server/logs/audit.log && sudo stat -c '%s %Y' /var/lib/rancher/k3s/server/logs/audit.log
 ```
+
+A change to the policy (the template or its variables) takes effect only when the file
+is re-staged with `playbooks/push/k3s-audit-log.yml` and k3s is restarted on that server:
+kube-apiserver reads the policy once, at start. Roll it out like the flags, one server
+at a time with the health gate.
 
 ### What to check on the first server
 

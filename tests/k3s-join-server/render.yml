@@ -327,13 +327,17 @@
         dest: "{{ out_dir }}/audit-{{ item.name }}.yaml"
         mode: "0600"
       loop:
-        - {name: default, users: "{{ k3s_def.k3s_audit_always_log_users }}", groups: "{{ k3s_def.k3s_audit_always_log_groups }}"}
-        - {name: empty, users: [], groups: []}
+        - name: default
+          users: "{{ k3s_def.k3s_audit_always_log_users }}"
+          groups: "{{ k3s_def.k3s_audit_always_log_groups }}"
+          leases: "{{ k3s_def.k3s_audit_drop_lease_names }}"
+        - {name: empty, users: [], groups: [], leases: []}
       loop_control:
         label: "{{ item.name }}"
       vars:
         k3s_audit_always_log_users: "{{ item.users }}"
         k3s_audit_always_log_groups: "{{ item.groups }}"
+        k3s_audit_drop_lease_names: "{{ item.leases }}"
 
     - name: Read the audit policy renders
       ansible.builtin.slurp:
@@ -369,6 +373,13 @@
         _sensitive:
           - {group: "", resources: [secrets, configmaps, serviceaccounts/token]}
           - {group: authentication.k8s.io, resources: [tokenreviews]}
+        # The named-Lease drop (kube-vip election), first in c; absent with an empty list.
+        _vip:
+          level: None
+          verbs: "{{ _lease_verbs }}"
+          namespaces: [kube-system]
+          resources: [{group: coordination.k8s.io, resources: [leases], resourceNames: "{{ k3s_def.k3s_audit_drop_lease_names }}"}]
+        _vip_rules: "{{ [_vip] if _agents else [] }}"
         # Expected rules from c on, in order (the agent rules b come before them).
         _tail:
           - {level: None, userGroups: [system:nodes], verbs: "{{ _reads }}"}
@@ -388,8 +399,11 @@
         _names: "{{ _r | map(attribute='resources', default=[]) | map('map', attribute='resources') | map('flatten') | list }}"
         # Index of the first rule that names secrets (rule d).
         _d: "{{ _names | map('intersect', ['secrets']) | map('length') | list | ansible.builtin.flatten }}"
+        _r_unnamed: "{{ _r | reject('equalto', _vip) | list }}"
         _scoped: "{{ (_r | selectattr('users', 'defined') | list) + (_r | rejectattr('users', 'defined') | selectattr('userGroups', 'defined') | list) }}"
-        _le_all: "{{ _names | map('intersect', ['leases', 'events']) | select | list | length }}"
+        _le_all: >-
+          {{ _r_unnamed | map(attribute='resources', default=[]) | map('map', attribute='resources') | map('flatten')
+             | map('intersect', ['leases', 'events']) | select | list | length }}
         _le_scoped: >-
           {{ _scoped | map(attribute='resources', default=[]) | map('map', attribute='resources') | map('flatten')
              | map('intersect', ['leases', 'events']) | select | list | length }}
@@ -412,7 +426,16 @@
           - "_agents or (_r | selectattr('users', 'defined') | map(attribute='users') | flatten
                | select('equalto', 'system:serviceaccount:atlas-system:k8s-mcp') | list | length == 0)"
           # c to g, exactly and in order
-          - _r[1 + (_o | int):] == _tail
+          - _r[1 + (_o | int):] == _vip_rules + _tail
+          # the named-Lease drop: once with the defaults, after b and before d; absent when empty
+          - (_r | select('equalto', _vip) | list | length) == (1 if _agents else 0)
+          - (not _agents) or (2 < _r.index(_vip) < _d.index(1))
+          - _r | selectattr('resources', 'defined') | map(attribute='resources') | flatten
+            | selectattr('resourceNames', 'defined') | list | length == (1 if _agents else 0)
+          # no rule drops leases for every user without naming them
+          - _r | selectattr('level', 'equalto', 'None') | rejectattr('users', 'defined') | rejectattr('userGroups', 'defined')
+            | selectattr('resources', 'defined') | map(attribute='resources') | flatten
+            | rejectattr('resourceNames', 'defined') | selectattr('resources', 'contains', 'leases') | list | length == 0
           # Rule d is the first rule that names secrets, is unconditional Metadata, and no rule
           # above Metadata comes before it (first match wins, so none can reach a secret).
           - "_r[_d.index(1)] == {'level': 'Metadata', 'resources': _sensitive}"

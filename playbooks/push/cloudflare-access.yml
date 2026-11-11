@@ -28,15 +28,14 @@
 # Extend one host's token by a year: cloudflare_access_refresh_hosts instead.
 # Take the public path down (Access stays): -e cloudflare_access_tunnel_enabled=false.
 #
-# Owner MCP server portal https://mcp.nwlnexus.io/mcp in front of the gateway (olympus-sdk#923; off by
-# default). Add "cloudflare_access_mcp_portal_enabled": true to the -e JSON of the commands above:
-#   ansible-playbook playbooks/push/cloudflare-access.yml --check \
-#     -e '{"cloudflare_access_owner_emails": ["OWNER@EXAMPLE"], "cloudflare_access_mcp_portal_enabled": true}'
+# Owner MCP server portal https://mcp.nwlnexus.io/mcp in front of the gateway (olympus-sdk#923). Applied in
+# production on 2026-11-10, so this playbook turns it on (the role default stays off). Every command above
+# manages the portal too; -e cloudflare_access_mcp_portal_enabled=false leaves it out, but then the memory
+# application's redirect URIs lose the portal callbacks and the portal's server can no longer re-authenticate.
 # The first apply creates the MCP server, the portal, their two Access applications and the CNAME, and
 # adds the portal callbacks to the memory application's redirect URIs. Then authenticate the server in
 # Zero Trust > Access controls > AI controls > MCP servers > memory, and re-run: the tool curation
-# (forget off) can only be applied once the server's tools have synced. Keep the flag on in later runs
-# (with it off the memory application's redirect URIs lose the portal callbacks).
+# (forget off) can only be applied once the server's tools have synced.
 # Runbook: olympus-sdk docs/runbooks/mcp-portal.md.
 
 - name: Cloudflare Access for the memory gateway
@@ -46,6 +45,8 @@
   vars:
     # Same account as cloudflared_account_id in inventory/group_vars/compute_hub.yml (tests check it).
     cloudflare_access_account_id: "1b15dcdab99d4e8d5babb3dc6b1adaec"
+    # The owner MCP portal is live (olympus-sdk#923): keep managing it on every run.
+    cloudflare_access_mcp_portal_enabled: true
   roles:
     - role: cloudflare-access
       tags: [cloudflare-access]

@@ -1,0 +1,43 @@
+---
+# The application list with every per-application default filled in (pure: tests/cloudflare-access runs
+# it offline). Input: cloudflare_access_applications. Output: _cfa_applications.
+
+- name: Fill in the per-application defaults
+  vars:
+    _defaults:
+      tunnel_origin_request: {}
+      tunnel_enabled: "{{ cloudflare_access_tunnel_enabled | bool }}"
+      dns_zone: "{{ cloudflare_access_dns_zone }}"
+      service_token_hosts: []
+      oauth_allowed_redirect_uris: "{{ cloudflare_access_oauth_allowed_redirect_uris }}"
+      oauth_allow_localhost: false
+      oauth_allow_loopback: false
+      portal_callback_uris: []
+      backend_env: {team_domain: ACCESS_TEAM_DOMAIN, aud: ACCESS_AUD}
+      backend_config: ""
+      session_duration: "{{ cloudflare_access_session_duration }}"
+      oauth_access_token_lifetime: "{{ cloudflare_access_oauth_access_token_lifetime }}"
+      oauth_grant_session_duration: "{{ cloudflare_access_oauth_grant_session_duration }}"
+    _filled: >-
+      [{% for a in cloudflare_access_applications %}{{ _defaults
+         | combine({'dns_comment': (a.name | default('?')) ~ ' public host (olympus-infra roles/cloudflare-access)',
+                    'service_token_name_prefix': (a.name | default('?')) ~ '-',
+                    'op_item': (a.name | default('?')) ~ '-access-tokens'})
+         | combine(a) | to_json }},{% endfor %}null]
+  ansible.builtin.set_fact:
+    _cfa_applications: "{{ (_filled | from_json)[:-1] }}"
+
+- name: Check the application list
+  ansible.builtin.assert:
+    that:
+      - _cfa_applications | length > 0
+      - _cfa_applications | selectattr('name', 'defined') | selectattr('domain', 'defined')
+        | selectattr('tunnel_service', 'defined') | selectattr('policy_prefix', 'defined') | list | length
+        == _cfa_applications | length
+      - _cfa_applications | map(attribute='name') | unique | length == _cfa_applications | length
+      - _cfa_applications | map(attribute='domain') | unique | length == _cfa_applications | length
+      - _cfa_applications | map(attribute='policy_prefix') | unique | length == _cfa_applications | length
+    fail_msg: >-
+      cloudflare_access_applications: every entry needs name, domain, tunnel_service and policy_prefix,
+      and names, domains and policy prefixes must be unique.
+    quiet: true

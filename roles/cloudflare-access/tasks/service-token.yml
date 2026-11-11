@@ -1,5 +1,5 @@
 ---
-# One service token for host `_cfa_host`: create (`_cfa_action: create`) or rotate its secret
+# One service token for host `_cfa_host` of application `_cfa_a` (from application.yml): create (`_cfa_action: create`) or rotate its secret
 # (`_cfa_action: rotate`, the client id and so the gateway's client row stay the same). Cloudflare shows
 # the secret only in this response, so it goes to 1Password in the same include. Every task is no_log.
 #
@@ -10,14 +10,14 @@
 # `op` gets the values on its argv, as in roles/cloudflared-k8s/tasks/onepassword.yml (no stdin
 # template support for custom fields in `op item edit`): run this from a single-user controller.
 
-- name: "Create service token {{ cloudflare_access_service_token_name_prefix ~ _cfa_host }}"
+- name: "Create service token {{ _cfa_a.service_token_name_prefix ~ _cfa_host }}"
   ansible.builtin.uri:
     url: "{{ _cfa_acct }}/access/service_tokens"
     method: POST
     headers: "{{ _cfa_headers }}"
     body_format: json
     body:
-      name: "{{ cloudflare_access_service_token_name_prefix ~ _cfa_host }}"
+      name: "{{ _cfa_a.service_token_name_prefix ~ _cfa_host }}"
       duration: "{{ cloudflare_access_service_token_duration }}"
     status_code: [200, 201]
   register: _cfa_st_create
@@ -25,9 +25,9 @@
   no_log: true
   when: _cfa_action == 'create'
 
-- name: "Rotate the secret of {{ cloudflare_access_service_token_name_prefix ~ _cfa_host }}"
+- name: "Rotate the secret of {{ _cfa_a.service_token_name_prefix ~ _cfa_host }}"
   ansible.builtin.uri:
-    url: "{{ _cfa_acct }}/access/service_tokens/{{ _cfa_tokens[cloudflare_access_service_token_name_prefix ~ _cfa_host] }}/rotate"
+    url: "{{ _cfa_acct }}/access/service_tokens/{{ _cfa_tokens[_cfa_a.service_token_name_prefix ~ _cfa_host] }}/rotate"
     method: POST
     headers: "{{ _cfa_headers }}"
     body_format: json
@@ -46,7 +46,7 @@
 - name: "Field assignments (op field[type]=value) for {{ _cfa_host }}"
   ansible.builtin.set_fact:
     _cfa_op_fields:
-      - "{{ _cfa_host }}-id[text]={{ _cfa_st.client_id | default(_cfa_token_client_ids[cloudflare_access_service_token_name_prefix ~ _cfa_host]) }}"
+      - "{{ _cfa_host }}-id[text]={{ _cfa_st.client_id | default(_cfa_token_client_ids[_cfa_a.service_token_name_prefix ~ _cfa_host]) }}"
       - "{{ _cfa_host }}-secret[password]={{ _cfa_st.client_secret }}"
   vars:
     # A skipped task still registers, so each action has its own variable.
@@ -57,7 +57,7 @@
   ansible.builtin.command:
     argv: >-
       {{ cloudflare_access_op_cmd + ['item', 'create', '--category=password',
-          '--title=' ~ cloudflare_access_op_item,
+          '--title=' ~ _cfa_a.op_item,
           '--vault=' ~ cloudflare_access_op_vault] + _cfa_op_fields }}
   register: _cfa_op_create
   changed_when: true
@@ -68,7 +68,7 @@
 - name: "Write into the 1Password item the token of {{ _cfa_host }}"
   ansible.builtin.command:
     argv: >-
-      {{ cloudflare_access_op_cmd + ['item', 'edit', cloudflare_access_op_item,
+      {{ cloudflare_access_op_cmd + ['item', 'edit', _cfa_a.op_item,
           '--vault=' ~ cloudflare_access_op_vault] + _cfa_op_fields }}
   register: _cfa_op_edit
   changed_when: true

@@ -1,35 +1,38 @@
 ---
 # Desired reusable policies (pure: no API call; tests/cloudflare-access exercises it offline).
-# Inputs: cloudflare_access_owner_emails, cloudflare_access_service_token_hosts, _cfa_tokens (name -> id).
-# Exactly two policies, and neither is a Bypass. A service token that does not exist yet (--check before
-# the first run) is left out of service-auth and reported.
+# Inputs: cloudflare_access_owner_emails, _cfa_a (one application), _cfa_tokens (name -> id).
+# allow-owner always; service-auth only when the application has service tokens; never a Bypass. A service
+# token that does not exist yet (--check before the first run) is left out of service-auth and reported.
 
 - name: Build the allow-owner and service-auth policies
+  vars:
+    _allow_owner:
+      name: "{{ _cfa_a.policy_prefix }}allow-owner"
+      decision: allow
+      include: >-
+        {{ cloudflare_access_owner_emails | map('lower') | unique
+           | map('community.general.dict_kv', 'email') | map('community.general.dict_kv', 'email') | list }}
+      exclude: []
+      require: []
+    _service_auth:
+      name: "{{ _cfa_a.policy_prefix }}service-auth"
+      decision: non_identity
+      include: >-
+        {{ _cfa_a.service_token_hosts
+           | map('regex_replace', '^', _cfa_a.service_token_name_prefix)
+           | select('in', _cfa_tokens.keys())
+           | map('extract', _cfa_tokens)
+           | map('community.general.dict_kv', 'token_id') | map('community.general.dict_kv', 'service_token') | list }}
+      exclude: []
+      require: []
   ansible.builtin.set_fact:
-    _cfa_policies_desired:
-      - name: "{{ cloudflare_access_policy_prefix }}allow-owner"
-        decision: allow
-        include: >-
-          {{ cloudflare_access_owner_emails | map('lower') | unique
-             | map('community.general.dict_kv', 'email') | map('community.general.dict_kv', 'email') | list }}
-        exclude: []
-        require: []
-      - name: "{{ cloudflare_access_policy_prefix }}service-auth"
-        decision: non_identity
-        include: >-
-          {{ cloudflare_access_service_token_hosts
-             | map('regex_replace', '^', cloudflare_access_service_token_name_prefix)
-             | select('in', _cfa_tokens.keys())
-             | map('extract', _cfa_tokens)
-             | map('community.general.dict_kv', 'token_id') | map('community.general.dict_kv', 'service_token') | list }}
-        exclude: []
-        require: []
+    _cfa_policies_desired: "{{ [_allow_owner] + ([_service_auth] if _cfa_a.service_token_hosts | length > 0 else []) }}"
 
 - name: Never an empty or Bypass policy
   ansible.builtin.assert:
     that:
       - _cfa_policies_desired | selectattr('decision', 'equalto', 'bypass') | list | length == 0
       - _cfa_policies_desired[0].include | length > 0
-      - _cfa_policies_desired[1].include | length > 0 or ansible_check_mode
+      - _cfa_policies_desired[1:] | rejectattr('include') | list | length == 0 or ansible_check_mode
     fail_msg: "allow-owner or service-auth would be empty, or a Bypass policy was built: refusing."
     quiet: true

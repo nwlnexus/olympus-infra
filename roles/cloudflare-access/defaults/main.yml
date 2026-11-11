@@ -1,9 +1,11 @@
 ---
-# Cloudflare Access for the memory gateway's public host (olympus-sdk#736, findings F4/F8/F12 of the
+# Cloudflare Access for the applications in cloudflare_access_applications (below): the memory gateway's
+# public host (olympus-sdk#736) and the Kubernetes MCP backend (olympus-sdk#916). Memory: findings F4/F8/F12 of the
 # #458 review; design docs/superpowers/specs/2026-10-21-memory-gateway-contract-design.md sections 2.3,
 # 5.2, 5.6 and 11 in olympus-sdk).
 #
-# Everything here goes through the Cloudflare API from the controller (no host is touched):
+# Everything here goes through the Cloudflare API from the controller (no host is touched); per application
+# (memory shown, the others the same without tokens unless they list hosts):
 #   - one service token per roaming host (`memory-<host>`, 1 year), client id and secret written to the
 #     1Password item `memory-access-tokens` (fields `<host>-id`, `<host>-secret`) the nix module reads;
 #   - two reusable Access policies, `<prefix>allow-owner` (Allow, owner email) and
@@ -11,7 +13,7 @@
 #   - the self-hosted Access application on the bare host (every path: /, /mcp, /healthz, /readyz),
 #     with Managed OAuth + dynamic client registration for the claude.ai connector;
 #   - the tunnel public hostname (one ingress rule, inserted before the catch-all) and its proxied CNAME;
-#   - a printed summary with MEMORY_ACCESS_TEAM_DOMAIN and MEMORY_ACCESS_AUD for the gitops ConfigMap;
+#   - a printed summary per application with its team domain and AUD for the backend's manifest;
 #   - opt-in (cloudflare_access_mcp_portal_enabled, olympus-sdk#923): the owner MCP server portal in front
 #     of the memory gateway (MCP server, portal, its two Access applications, proxied CNAME, tool curation)
 #     and the portal callbacks in the memory application's DCR redirect URIs.
@@ -29,8 +31,8 @@ cloudflare_access_state: present
 #   Account  Access: Service Tokens          Edit
 #   Account  Access: Organizations, Identity Providers, and Groups  Read   (team domain lookup)
 #   Account  Cloudflare Tunnel               Edit   (only for the public hostname rule)
-#   Zone     DNS                             Edit   (zone nwlnexus.io only)
-#   Zone     Zone                            Read   (zone nwlnexus.io only)
+#   Zone     DNS                             Edit   (zone nwlnexus.io, and every application's dns_zone)
+#   Zone     Zone                            Read   (zone nwlnexus.io, and every application's dns_zone)
 #   Account  MCP Portals                     Edit   (only with cloudflare_access_mcp_portal_enabled; the API
 #                                                    reference names it "MCP Portals Write" and it covers both
 #                                                    /ai-controls/mcp/portals and /ai-controls/mcp/servers)
@@ -43,7 +45,7 @@ cloudflare_access_account_id: ""
 # Only tests point this elsewhere (a local fake of the API).
 cloudflare_access_api_url: "https://api.cloudflare.com/client/v4"
 
-# --- Application ------------------------------------------------------------------------------------
+# --- The memory application (cloudflare_access_memory_app below reads these) -------------------------
 cloudflare_access_app_name: "memory"
 # Bare host = every path (design 6.1: the claude.ai connector URL is the bare host, MCP is also on /).
 cloudflare_access_app_domain: "memory.nwlnexus.io"
@@ -122,6 +124,79 @@ cloudflare_access_tunnel_service: "http://memory-gateway.memory.svc.cluster.loca
 cloudflare_access_tunnel_origin_request: {}
 cloudflare_access_dns_enabled: true
 cloudflare_access_dns_zone: "nwlnexus.io"
+
+# --- Applications (olympus-sdk#916) ------------------------------------------------------------------
+# Every Access-protected backend is one entry; the role runs the same tasks for each, in list order:
+# service tokens (only if `service_token_hosts` is not empty), the reusable policies <policy_prefix>allow-owner
+# (always) and <policy_prefix>service-auth (only with service tokens), the self-hosted application with
+# Managed OAuth/DCR, its proxied CNAME, and one tunnel rule per entry (all of them, in list order, before
+# every other rule and the catch-all, in one configuration write).
+#
+# The memory entry reads the single-application variables above, so existing invocations, the runbooks and
+# their -e overrides keep working unchanged; they are its only source. A new application is a new dict here
+# (copy the k8s-mcp one). Keys and their defaults (applied in tasks/compute-applications.yml):
+#   name, domain, tunnel_service, policy_prefix         required
+#   tunnel_origin_request: {}                           originRequest for its tunnel rule
+#   tunnel_enabled: cloudflare_access_tunnel_enabled    false = its tunnel rule is removed (Access stays)
+#   dns_zone: cloudflare_access_dns_zone                the API token needs DNS Edit + Zone Read on it
+#   dns_comment                                         comment on the CNAME
+#   service_token_hosts: []                             one token <service_token_name_prefix><host> each,
+#   service_token_name_prefix: <name>-                  stored in 1Password <op_item> (<host>-id/-secret)
+#   op_item: <name>-access-tokens
+#   oauth_allowed_redirect_uris: cloudflare_access_oauth_allowed_redirect_uris   DCR redirect allow-list
+#   oauth_allow_localhost / oauth_allow_loopback: false
+#   portal_callback_uris: []                            added to the DCR list while
+#                                                       cloudflare_access_mcp_portal_enabled is on
+#   backend_env: {team_domain: ACCESS_TEAM_DOMAIN, aud: ACCESS_AUD}   names printed for the backend
+#   backend_config: ""                                  where the operator pastes those values
+#   session_duration: cloudflare_access_session_duration                    Access session
+#   oauth_access_token_lifetime: cloudflare_access_oauth_access_token_lifetime    OAuth access token
+#   oauth_grant_session_duration: cloudflare_access_oauth_grant_session_duration  OAuth refresh grant
+# cloudflare_access_rotate_hosts / _refresh_hosts are host names; they act on every entry that lists the host.
+#
+# Removing an entry deletes nothing: its application, policies, tokens, DNS record and tunnel rule stay
+# (the rule keeps its place among the unmanaged rules). Delete them by hand in the dashboard.
+cloudflare_access_applications:
+  - "{{ cloudflare_access_memory_app }}"
+  - "{{ cloudflare_access_k8s_mcp_app }}"
+
+cloudflare_access_memory_app:
+  name: "{{ cloudflare_access_app_name }}"
+  domain: "{{ cloudflare_access_app_domain }}"
+  policy_prefix: "{{ cloudflare_access_policy_prefix }}"
+  tunnel_service: "{{ cloudflare_access_tunnel_service }}"
+  tunnel_origin_request: "{{ cloudflare_access_tunnel_origin_request }}"
+  dns_comment: "memory gateway public host (olympus-infra roles/cloudflare-access, olympus-sdk#736)"
+  service_token_hosts: "{{ cloudflare_access_service_token_hosts }}"
+  service_token_name_prefix: "{{ cloudflare_access_service_token_name_prefix }}"
+  op_item: "{{ cloudflare_access_op_item }}"
+  oauth_allowed_redirect_uris: "{{ cloudflare_access_oauth_allowed_redirect_uris }}"
+  oauth_allow_localhost: "{{ cloudflare_access_oauth_allow_localhost }}"
+  oauth_allow_loopback: "{{ cloudflare_access_oauth_allow_loopback }}"
+  portal_callback_uris: "{{ cloudflare_access_mcp_memory_callback_uris }}"
+  backend_env: {team_domain: MEMORY_ACCESS_TEAM_DOMAIN, aud: MEMORY_ACCESS_AUD}
+  backend_config: "olympus-gitops clusters/olympus/memory/gateway/gateway.yaml (memory-gateway-config)"
+
+# The read-only Kubernetes MCP backend (olympus-sdk#916): owner only, no service tokens yet (a later issue
+# adds host tokens: list the hosts in service_token_hosts then), not in any MCP portal yet.
+# Decision: k8s-mcp uses the same session and grant lifetimes as memory (owner-only, read-only backend); set
+# the per-application keys (session_duration, oauth_access_token_lifetime, oauth_grant_session_duration) to
+# tighten them.
+cloudflare_access_k8s_mcp_oauth_allowed_redirect_uris: "{{ cloudflare_access_oauth_allowed_redirect_uris }}"
+# Intentionally empty until the server is added to a portal; then the dashboard and portal callbacks, as
+# cloudflare_access_mcp_memory_callback_uris has them for memory.
+cloudflare_access_k8s_mcp_portal_callback_uris: []
+cloudflare_access_k8s_mcp_app:
+  name: "k8s-mcp"
+  domain: "k8s-mcp.nwlnexus.io"
+  policy_prefix: "k8s-mcp-"
+  tunnel_service: "http://k8s-mcp.atlas-system.svc.cluster.local:80"
+  dns_comment: "Kubernetes MCP backend public host (olympus-infra roles/cloudflare-access, olympus-sdk#916)"
+  service_token_hosts: []
+  oauth_allowed_redirect_uris: "{{ cloudflare_access_k8s_mcp_oauth_allowed_redirect_uris }}"
+  portal_callback_uris: "{{ cloudflare_access_k8s_mcp_portal_callback_uris }}"
+  backend_env: {team_domain: ACCESS_TEAM_DOMAIN, aud: ACCESS_AUD}
+  backend_config: "the k8s-mcp-proxy container env in the olympus-gitops atlas-system manifests"
 
 # --- MCP server portal (olympus-sdk#923, follow-up to spike #909) --------------------------------------
 # Off by default, so a run without it is unchanged. With it on, the role also manages (look-up-before-

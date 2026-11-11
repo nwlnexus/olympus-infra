@@ -19,7 +19,7 @@ olympus-infra/
 │   ├── traefik               # Traefik ingress (Helm, for standalone hosts)
 │   ├── cloudflared           # Cloudflare Tunnel daemon
 │   ├── cloudflared-k8s       # cloudflared as k8s Deployment (via Helm)
-│   ├── cloudflare-access     # API-only: Access app/policies/service tokens, tunnel rule + DNS for memory.nwlnexus.io (olympus-sdk#736); opt-in MCP owner portal (#923)
+│   ├── cloudflare-access     # API-only: Access apps/policies/service tokens, tunnel rules + DNS for memory.nwlnexus.io (olympus-sdk#736) and k8s-mcp.nwlnexus.io (#916); MCP owner portal (#923)
 │   ├── flux                  # Flux CD bootstrap
 │   ├── external-secrets      # ESO bootstrap (CRDs + ClusterSecretStore)
 │   ├── eso-bootstrap         # ExternalSecret for cluster secrets
@@ -214,6 +214,18 @@ passed with `-e` and never committed. It uses its own API token (1Password `CI/c
 `access_api_token`; scopes in the role defaults), not the Tunnel + DNS token of `cloudflared-k8s`.
 `tests/cloudflare-access` plans everything offline from fake API responses (CI). Runbook: olympus-sdk
 `docs/runbooks/memory-access-service-tokens.md`.
+
+Several applications (olympus-sdk#916): `cloudflare_access_applications` is a list, memory first (its entry
+reads the single-application variables above, so existing `-e` overrides still apply) and `k8s-mcp`
+(`k8s-mcp.nwlnexus.io` -> `http://k8s-mcp.atlas-system.svc.cluster.local:80`, policy `k8s-mcp-allow-owner`
+only, no service tokens, Managed OAuth/DCR for claude.ai, not in the portal). Each entry gets the same tasks;
+service tokens and the service-auth policy only when its `service_token_hosts` is not empty; all tunnel
+rules go first in list order in one write. The play prints each application's team domain and AUD by name.
+Removing an entry deletes nothing. k8s-mcp uses the same session and grant lifetimes as memory (owner-only,
+read-only backend); set the per-application keys (`session_duration`, `oauth_access_token_lifetime`,
+`oauth_grant_session_duration`) to tighten them. With the portal on, the memory entry must stay in the list
+(asserted before any request). `tests/cloudflare-access/plan_test.py` runs the whole role against a local
+fake API and requires memory's requests to equal the fixture recorded before the change, byte for byte.
 
 Opt-in `cloudflare_access_mcp_portal_enabled` (olympus-sdk#923, off by default) adds the owner MCP server
 portal: MCP server `memory` (OAuth) on the gateway's `/mcp`, portal `owner` on `mcp.nwlnexus.io` (Code Mode

@@ -1,11 +1,12 @@
 ---
-# The tunnel public hostname rule and the proxied CNAME for the application domain. Only reached when
-# the Access application exists (apply.yml), so the host is never routable before Access protects it.
+# The tunnel public hostname rules and the proxied CNAMEs for the application domains (_cfa_tunnel_apps,
+# from apply.yml: only applications whose Access application exists, so a host is never routable before
+# Access protects it). One configuration write for every rule; then dns.yml once per application.
 #
 # The olympus cluster's tunnel is remotely managed: its ingress lives in the Cloudflare API, not in
 # olympus-gitops clusters/olympus/cloudflared/configmap.yaml. This keeps every other rule as it is (the
 # catch-all to Traefik included) and only inserts, moves to the top, or (tunnel_enabled: false) removes
-# the one rule for the application domain. roles/cloudflared-k8s keeps hostname rules when it rewrites
+# the rules for the application domains. roles/cloudflared-k8s keeps hostname rules when it rewrites
 # the catch-all, so the two roles do not fight.
 
 - name: Look up the tunnel by name
@@ -43,10 +44,9 @@
 - name: Report the tunnel plan
   ansible.builtin.debug:
     msg: >-
-      tunnel {{ cloudflare_access_tunnel_name }}: rule for {{ cloudflare_access_app_domain }}
-      {{ 'unchanged' if not _cfa_ingress_changed else ('set to ' ~ _cfa_ingress_rule.service
-         if cloudflare_access_tunnel_enabled | bool else 'removed') }}; {{ _cfa_ingress_new | length }} rule(s),
-      last {{ _cfa_ingress_new | last }}
+      tunnel {{ cloudflare_access_tunnel_name }}: rules for {{ _cfa_tunnel_apps | map(attribute='domain') | join(', ') }}
+      {{ 'unchanged' if not _cfa_ingress_changed else 'set to ' ~ (_cfa_ingress_rules | to_json) }};
+      {{ _cfa_ingress_new | length }} rule(s), last {{ _cfa_ingress_new | last }}
 
 - name: Write the tunnel configuration (other rules and keys unchanged)
   ansible.builtin.uri:
@@ -61,67 +61,9 @@
   no_log: true
   when: _cfa_ingress_changed | bool
 
-# --- DNS: memory.nwlnexus.io CNAME <tunnel-id>.cfargotunnel.com, proxied ------------------------------
-# Not external-dns: the gitops external-dns only publishes Services/Ingresses/IngressRoutes and this host
-# has none (it bypasses Traefik). external-dns (policy sync) never deletes a record it does not own
-# (TXT registry prefix olympus-), so it leaves this one alone.
-- name: Look up the zone
-  ansible.builtin.uri:
-    url: "{{ _cfa_api }}/zones?name={{ cloudflare_access_dns_zone | urlencode }}"
-    method: GET
-    headers: "{{ _cfa_headers }}"
-    status_code: 200
-  register: _cfa_zone
-  check_mode: false
-  no_log: true
-  when: cloudflare_access_dns_enabled | bool
-
-- name: Look up existing records for the host (any type)
-  ansible.builtin.uri:
-    url: "{{ _cfa_api }}/zones/{{ _cfa_zone.json.result[0].id }}/dns_records?name={{ cloudflare_access_app_domain | urlencode }}"
-    method: GET
-    headers: "{{ _cfa_headers }}"
-    status_code: 200
-  register: _cfa_dns
-  check_mode: false
-  no_log: true
-  when: cloudflare_access_dns_enabled | bool
-
-- name: Classify the DNS record
-  ansible.builtin.set_fact:
-    _cfa_dns_target: "{{ _cfa_tunnel_list.json.result[0].id }}.cfargotunnel.com"
-    _cfa_dns_records: "{{ _cfa_dns.json.result | default([], true) }}"
-  when: cloudflare_access_dns_enabled | bool
-
-- name: Refuse to overwrite a record that is not this tunnel's proxied CNAME
-  ansible.builtin.assert:
-    that: >-
-      _cfa_dns_records | length == 0 or
-      (_cfa_dns_records | length == 1 and _cfa_dns_records[0].type == 'CNAME'
-       and _cfa_dns_records[0].content == _cfa_dns_target and _cfa_dns_records[0].proxied | bool)
-    fail_msg: >-
-      {{ cloudflare_access_app_domain }} already has {{ _cfa_dns_records | map(attribute='type') | list }}
-      record(s) that are not a proxied CNAME to {{ _cfa_dns_target }}. Remove or fix them by hand first.
-    quiet: true
-  when: cloudflare_access_dns_enabled | bool
-
-- name: Create the proxied CNAME
-  ansible.builtin.uri:
-    url: "{{ _cfa_api }}/zones/{{ _cfa_zone.json.result[0].id }}/dns_records"
-    method: POST
-    headers: "{{ _cfa_headers }}"
-    body_format: json
-    body:
-      type: CNAME
-      name: "{{ cloudflare_access_app_domain }}"
-      content: "{{ _cfa_dns_target }}"
-      proxied: true
-      ttl: 1
-      comment: "memory gateway public host (olympus-infra roles/cloudflare-access, olympus-sdk#736)"
-    status_code: 200
-  changed_when: true
-  no_log: true
-  when:
-    - cloudflare_access_dns_enabled | bool
-    - cloudflare_access_tunnel_enabled | bool
-    - _cfa_dns_records | length == 0
+- name: DNS record of each application
+  ansible.builtin.include_tasks: dns.yml
+  loop: "{{ _cfa_tunnel_apps }}"
+  loop_control:
+    loop_var: _cfa_a
+    label: "{{ _cfa_a.domain }}"

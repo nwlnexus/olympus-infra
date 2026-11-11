@@ -1,0 +1,17 @@
+---
+# Driver for tests/cloudflare-access/plan_test.py: the real role against the local fake API that script
+# starts (CFA_FAKE_API). Not run on its own. The placeholders below are not credentials; `op` is replaced by a
+# shell that only appends its arguments to CFA_OP_LOG.
+- name: Run roles/cloudflare-access against a fake Cloudflare API
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    cloudflare_access_account_id: "0000000000000000000000000000000a"
+    cloudflare_access_api_url: "{{ lookup('ansible.builtin.env', 'CFA_FAKE_API') }}"
+    cloudflare_access_api_token: "fake-token-not-a-credential"
+    cloudflare_access_owner_emails: [owner@example.invalid]
+    cloudflare_access_op_cmd: [sh, -c, 'printf "%s\n" "$*" >> "$CFA_OP_LOG"', op]
+  roles:
+    - role: cloudflare-access

@@ -1,0 +1,65 @@
+---
+# DNS for one application (`_cfa_a`, from tunnel.yml): <domain> CNAME <tunnel-id>.cfargotunnel.com, proxied.
+# Not external-dns: the gitops external-dns only publishes Services/Ingresses/IngressRoutes and this host
+# has none (it bypasses Traefik). external-dns (policy sync) never deletes a record it does not own
+# (TXT registry prefix olympus-), so it leaves this one alone.
+- name: Look up the zone
+  ansible.builtin.uri:
+    url: "{{ _cfa_api }}/zones?name={{ _cfa_a.dns_zone | urlencode }}"
+    method: GET
+    headers: "{{ _cfa_headers }}"
+    status_code: 200
+  register: _cfa_zone
+  check_mode: false
+  no_log: true
+  when: cloudflare_access_dns_enabled | bool
+
+- name: Look up existing records for the host (any type)
+  ansible.builtin.uri:
+    url: "{{ _cfa_api }}/zones/{{ _cfa_zone.json.result[0].id }}/dns_records?name={{ _cfa_a.domain | urlencode }}"
+    method: GET
+    headers: "{{ _cfa_headers }}"
+    status_code: 200
+  register: _cfa_dns
+  check_mode: false
+  no_log: true
+  when: cloudflare_access_dns_enabled | bool
+
+- name: Classify the DNS record
+  ansible.builtin.set_fact:
+    _cfa_dns_target: "{{ _cfa_tunnel_list.json.result[0].id }}.cfargotunnel.com"
+    _cfa_dns_records: "{{ _cfa_dns.json.result | default([], true) }}"
+  when: cloudflare_access_dns_enabled | bool
+
+- name: Refuse to overwrite a record that is not this tunnel's proxied CNAME
+  ansible.builtin.assert:
+    that: >-
+      _cfa_dns_records | length == 0 or
+      (_cfa_dns_records | length == 1 and _cfa_dns_records[0].type == 'CNAME'
+       and _cfa_dns_records[0].content == _cfa_dns_target and _cfa_dns_records[0].proxied | bool)
+    fail_msg: >-
+      {{ _cfa_a.domain }} already has {{ _cfa_dns_records | map(attribute='type') | list }}
+      record(s) that are not a proxied CNAME to {{ _cfa_dns_target }}. Remove or fix them by hand first.
+    quiet: true
+  when: cloudflare_access_dns_enabled | bool
+
+- name: Create the proxied CNAME
+  ansible.builtin.uri:
+    url: "{{ _cfa_api }}/zones/{{ _cfa_zone.json.result[0].id }}/dns_records"
+    method: POST
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body:
+      type: CNAME
+      name: "{{ _cfa_a.domain }}"
+      content: "{{ _cfa_dns_target }}"
+      proxied: true
+      ttl: 1
+      comment: "{{ _cfa_a.dns_comment }}"
+    status_code: 200
+  changed_when: true
+  no_log: true
+  when:
+    - cloudflare_access_dns_enabled | bool
+    - _cfa_a.tunnel_enabled | bool
+    - _cfa_dns_records | length == 0

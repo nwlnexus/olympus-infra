@@ -1,0 +1,8 @@
+---
+# Plan one MCP server (`_cfa_ms`) and add it to _cfa_mcp_server_plans. Included from mcp.yml per server.
+- name: "Plan the MCP server {{ _cfa_ms.id }}"
+  ansible.builtin.include_tasks: compute-mcp-server.yml
+
+- name: "Add the plan of {{ _cfa_ms.id }}"
+  ansible.builtin.set_fact:
+    _cfa_mcp_server_plans: "{{ _cfa_mcp_server_plans + [_cfa_mcp_server_plan] }}"

@@ -1,0 +1,143 @@
+---
+# One MCP portal (`_cfa_mp`, an entry of _cfa_mcp_portal_list), the curation of each of its servers and its
+# `mcp_portal` Access application: desired state and diff against the API (pure: tests/cloudflare-access runs
+# it offline with fake responses). olympus-sdk#923 (one portal), #929 (several).
+# Inputs: _cfa_mp, _cfa_mcp_servers (GET .../ai-controls/mcp/servers result), _cfa_mcp_portals (GET
+# .../portals result), _cfa_all_apps (GET /access/apps result), _cfa_policy_ids.
+# Outputs: _cfa_mcp_curation (one entry per server of the portal: server_id, tools, want_disabled,
+# cur_disabled, state), _cfa_mcp_portal_{desired,current,action,diff_keys},
+# _cfa_mcp_portal_app_{desired,current,matches,diff_keys,action}, and _cfa_mcp_portal_plan (all in one dict).
+#
+# Curation per server: every synced tool listed (so a tool turned off in the dashboard is turned back on),
+# the server's disabled_tools off. The API refuses `updated_tools` until that server's tools have synced
+# (after the owner authenticates it in the dashboard): until then its state is `pending` and its entry in
+# the portal body carries no updated_tools.
+
+- name: "Read the portal {{ _cfa_mp.id }} and the current curation of each of its servers"
+  vars:
+    _cur: "{{ _cfa_mcp_portals | selectattr('id', 'defined') | selectattr('id', 'equalto', _cfa_mp.id) | first | default({}) }}"
+    _plan: >-
+      [{% for e in _cfa_mp.servers %}{%
+          set srv = _cfa_mcp_servers | selectattr('id', 'defined') | selectattr('id', 'equalto', e.server_id) | first | default({}) %}{%
+          set tools = srv.tools | default([], true) | selectattr('name', 'defined') | map(attribute='name') | unique | sort %}{%
+          set cs = _cur.servers | default([], true) | selectattr('server_id', 'defined')
+                   | selectattr('server_id', 'equalto', e.server_id) | first | default({}) %}{%
+          set cur_off = cs.updated_tools | default([], true) | selectattr('enabled', 'defined')
+                        | selectattr('enabled', 'equalto', false) | map(attribute='name') | unique | sort %}{%
+          set want_off = tools | select('in', e.disabled_tools) | list %}{{
+         {'server_id': e.server_id, 'tools': tools, 'disabled_tools': e.disabled_tools,
+          'want_disabled': want_off, 'cur_disabled': cur_off,
+          'state': 'pending' if tools | length == 0
+                   else ('applied' if _cur | length > 0 and cs | length > 0 and cur_off == want_off else 'to_apply')}
+         | to_json }},{% endfor %}null]
+  ansible.builtin.set_fact:
+    _cfa_mcp_portal_current: "{{ _cur }}"
+    _cfa_mcp_curation: "{{ (_plan | from_json)[:-1] }}"
+
+- name: "Build the desired portal {{ _cfa_mp.id }} (full body; the PUT replaces the portal)"
+  vars:
+    _servers: >-
+      [{% for e in _cfa_mp.servers %}{%
+          set c = _cfa_mcp_curation | selectattr('server_id', 'equalto', e.server_id) | first %}{%
+          set ns = namespace(ut=[]) %}{% for t in c.tools %}{%
+            set ns.ut = ns.ut + [{'name': t, 'enabled': t not in e.disabled_tools}] %}{% endfor %}{{
+         ({'server_id': e.server_id, 'on_behalf': e.on_behalf | bool, 'default_disabled': e.default_disabled | bool}
+          | combine({'updated_tools': ns.ut} if ns.ut | length > 0 else {})) | to_json }},{% endfor %}null]
+  ansible.builtin.set_fact:
+    _cfa_mcp_portal_desired:
+      name: "{{ _cfa_mp.name }}"
+      hostname: "{{ _cfa_mp.hostname }}"
+      code_mode: "{{ _cfa_mp.code_mode }}"
+      servers: "{{ (_servers | from_json)[:-1] }}"
+
+- name: "Compare the portal {{ _cfa_mp.id }} (curation aside) and decide"
+  vars:
+    _cur: "{{ _cfa_mcp_portal_current }}"
+    # The API may return only the deprecated allow_code_mode.
+    _cur_code_mode: >-
+      {{ _cur.code_mode | default('off' if not (_cur.allow_code_mode | default(false)) else 'opt_in', true) }}
+    _cur_servers: >-
+      [{% for s in _cur.servers | default([], true) %}{{ {'server_id': s.server_id | default(s.id | default('')),
+        'on_behalf': s.on_behalf | default(false) | bool,
+        'default_disabled': s.default_disabled | default(false) | bool} | to_json }},{% endfor %}null]
+    _want_servers: >-
+      {{ _cfa_mcp_portal_desired.servers
+         | community.general.keep_keys(target=['server_id', 'on_behalf', 'default_disabled']) }}
+    _diff: >-
+      {{ (['name'] if _cur.name | default('') != _cfa_mcp_portal_desired.name else [])
+         + (['hostname'] if _cur.hostname | default('') != _cfa_mcp_portal_desired.hostname else [])
+         + (['code_mode'] if _cur_code_mode != _cfa_mcp_portal_desired.code_mode else [])
+         + (['servers'] if (_cur_servers | from_json)[:-1] | sort(attribute='server_id')
+                           != _want_servers | sort(attribute='server_id') else [])
+         + (['updated_tools'] if _cfa_mcp_curation | selectattr('state', 'equalto', 'to_apply') | list | length > 0
+            else []) }}
+  ansible.builtin.set_fact:
+    _cfa_mcp_portal_diff_keys: "{{ _diff if _cur | length > 0 else [] }}"
+    _cfa_mcp_portal_action: >-
+      {{ 'create' if _cur | length == 0 else ('update' if _diff | length > 0 else 'unchanged') }}
+
+# --- The portal's Access application (a portal created through the API gets none) ----------------------
+- name: "Build the desired mcp_portal application of {{ _cfa_mp.id }} and find the existing one"
+  ansible.builtin.set_fact:
+    _cfa_mcp_portal_app_desired:
+      name: "{{ _cfa_mp.app_name }}"
+      type: mcp_portal
+      domain: "{{ _cfa_mp.hostname }}"
+      destinations:
+        - type: public
+          uri: "{{ _cfa_mp.hostname }}"
+      session_duration: "{{ cloudflare_access_session_duration }}"
+      app_launcher_visible: false
+      allowed_idps: "{{ cloudflare_access_allowed_idps }}"
+      auto_redirect_to_identity: "{{ cloudflare_access_allowed_idps | length == 1 }}"
+      policies: "{{ [{'id': _cfa_policy_ids[cloudflare_access_policy_prefix ~ 'allow-owner'], 'precedence': 1}] }}"
+      oauth_configuration:
+        enabled: true
+        dynamic_client_registration:
+          enabled: true
+          allowed_uris: "{{ _cfa_mp.oauth_allowed_redirect_uris }}"
+          allow_any_on_localhost: "{{ _cfa_mp.oauth_allow_localhost | bool }}"
+          allow_any_on_loopback: "{{ _cfa_mp.oauth_allow_loopback | bool }}"
+        grant:
+          access_token_lifetime: "{{ cloudflare_access_oauth_access_token_lifetime }}"
+          session_duration: "{{ cloudflare_access_oauth_grant_session_duration }}"
+    _cfa_mcp_portal_app_matches: >-
+      {{ _cfa_all_apps | selectattr('type', 'defined') | selectattr('type', 'equalto', 'mcp_portal')
+         | selectattr('domain', 'defined')
+         | selectattr('domain', 'in', [_cfa_mp.hostname, _cfa_mp.hostname ~ '/*'])
+         | list }}
+
+- name: "Compare the mcp_portal application of {{ _cfa_mp.id }} field by field"
+  vars:
+    _cur: "{{ _cfa_mcp_portal_app_matches | first | default({}) }}"
+    _cur_norm: >-
+      {{ _cur | combine({
+           'policies': _cur.policies | default([], true) | community.general.keep_keys(target=['id', 'precedence']),
+           'destinations': _cur.destinations | default([], true)
+                           | community.general.keep_keys(target=['type', 'uri', 'mcp_server_id'])}) }}
+  ansible.builtin.set_fact:
+    _cfa_mcp_portal_app_current: "{{ _cur }}"
+    _cfa_mcp_portal_app_diff_keys: >-
+      {{ lookup('ansible.builtin.template', _cfa_templates ~ '/app-diff.j2',
+                template_vars={'cur': _cur_norm, 'want': _cfa_mcp_portal_app_desired}) | from_json }}
+
+- name: "Decide what to do with the mcp_portal application of {{ _cfa_mp.id }}"
+  ansible.builtin.set_fact:
+    _cfa_mcp_portal_app_action: >-
+      {{ 'create' if _cfa_mcp_portal_app_matches | length == 0
+         else ('update' if _cfa_mcp_portal_app_diff_keys | length > 0 else 'unchanged') }}
+
+- name: "Record the plan of portal {{ _cfa_mp.id }}"
+  ansible.builtin.set_fact:
+    _cfa_mcp_portal_plan:
+      portal: "{{ _cfa_mp }}"
+      desired: "{{ _cfa_mcp_portal_desired }}"
+      current: "{{ _cfa_mcp_portal_current }}"
+      action: "{{ _cfa_mcp_portal_action }}"
+      diff_keys: "{{ _cfa_mcp_portal_diff_keys }}"
+      curation: "{{ _cfa_mcp_curation }}"
+      app_desired: "{{ _cfa_mcp_portal_app_desired }}"
+      app_current: "{{ _cfa_mcp_portal_app_current }}"
+      app_matches: "{{ _cfa_mcp_portal_app_matches }}"
+      app_diff_keys: "{{ _cfa_mcp_portal_app_diff_keys }}"
+      app_action: "{{ _cfa_mcp_portal_app_action }}"

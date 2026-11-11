@@ -27,9 +27,10 @@
 #            clusters/olympus/memory/gateway/gateway.yaml, and each token's client id for its gateway client row;
 #   k8s-mcp: the `k8s-mcp-proxy` container env in the olympus-gitops `atlas-system` manifests
 #            (ACCESS_TEAM_DOMAIN, ACCESS_AUD). Commit them there; the proxy rejects every request until they match.
-# k8s-mcp is in no MCP portal: its portal callback list (cloudflare_access_k8s_mcp_portal_callback_uris) is
-# intentionally empty until the server is added to a portal. It uses the same session and grant lifetimes as
-# memory (owner-only, read-only backend); set the per-application keys to tighten them.
+# k8s-mcp is the MCP server `k8s` in the owner and hosts portals (olympus-sdk#929): its DCR redirect URIs
+# carry the portal callbacks set below (cloudflare_access_k8s_mcp_portal_callback_uris). It uses the same
+# session and grant lifetimes as memory (owner-only, read-only backend); set the per-application keys to
+# tighten them.
 #
 # Add an application: add a dict to cloudflare_access_applications in roles/cloudflare-access/defaults/main.yml
 # (copy cloudflare_access_k8s_mcp_app: name, domain, policy_prefix, tunnel_service; service_token_hosts empty
@@ -55,6 +56,13 @@
 # Zero Trust > Access controls > AI controls > MCP servers > memory, and re-run: the tool curation
 # (forget off) can only be applied once the server's tools have synced.
 # Runbook: olympus-sdk docs/runbooks/mcp-portal.md.
+#
+# MCP server `k8s` (https://k8s-mcp.nwlnexus.io/mcp, read-only) and the hosts portal
+# https://mcp-hosts.nwlnexus.io/mcp (k8s only, Claude Code only), olympus-sdk#929: the first apply after #929
+# creates the server, its `mcp` application, the hosts portal, its `mcp_portal` application and CNAME, adds k8s
+# to the owner portal (memory and its curation unchanged) and the portal callbacks to the k8s-mcp
+# application's redirect URIs. Then authenticate the server in Zero Trust > Access controls > AI controls >
+# MCP servers > k8s, and re-run (nothing of k8s is turned off, so the re-run normally writes nothing).
 
 - name: Cloudflare Access applications (memory gateway, Kubernetes MCP backend)
   hosts: localhost
@@ -65,6 +73,12 @@
     cloudflare_access_account_id: "1b15dcdab99d4e8d5babb3dc6b1adaec"
     # The owner MCP portal is live (olympus-sdk#923): keep managing it on every run.
     cloudflare_access_mcp_portal_enabled: true
+    # The k8s-mcp backend's DCR must allow the dashboard callback for server id k8s and the per-user callback
+    # of both portals that hold it (olympus-sdk#929); without them authenticating the server fails.
+    cloudflare_access_k8s_mcp_portal_callback_uris:
+      - "https://dash.cloudflare.com/{{ cloudflare_access_account_id }}/one/access-controls/ai-controls/mcp-server/oauth-callback/k8s"
+      - "https://{{ cloudflare_access_mcp_hosts_portal_hostname }}/servers-callback"
+      - "https://{{ cloudflare_access_mcp_portal_hostname }}/servers-callback"
   roles:
     - role: cloudflare-access
       tags: [cloudflare-access]

@@ -1,26 +1,12 @@
 ---
-# The owner MCP server portal in front of the memory gateway (olympus-sdk#923; spike #909). Included from
-# apply.yml after the memory application and tunnel, only with cloudflare_access_mcp_portal_enabled.
-# Same rules as the rest of the role: look up before create, GETs run in --check, writes are skipped
-# there, every API task is no_log. Order: server, its `mcp` application, portal, the portal's
-# `mcp_portal` application, then DNS (the host is routable only once Access protects it).
-
-- name: Check the MCP portal inputs
-  ansible.builtin.assert:
-    that:
-      - cloudflare_access_mcp_server_id | length >= 1
-      - cloudflare_access_mcp_server_id | length <= 32
-      - cloudflare_access_mcp_portal_id | length >= 1
-      - cloudflare_access_mcp_portal_id | length <= 32
-      - cloudflare_access_mcp_server_url is match('^https://')
-      - cloudflare_access_mcp_portal_code_mode in ['off', 'opt_in', 'default_on', 'enforced']
-      - cloudflare_access_mcp_portal_hostname is search('(^|\.)' ~ (cloudflare_access_dns_zone | regex_escape) ~ '$')
-      - "'https://claude.ai/*' in cloudflare_access_oauth_allowed_redirect_uris"
-    fail_msg: >-
-      cloudflare-access MCP portal: ids must be 1-32 characters, the server URL https, code_mode one of
-      off/opt_in/default_on/enforced, the portal hostname inside {{ cloudflare_access_dns_zone }}, and the
-      memory application must keep https://claude.ai/* in its redirect URIs.
-    quiet: true
+# MCP servers and server portals (olympus-sdk#923, one server and the `owner` portal; #929, lists: the
+# Kubernetes server `k8s` and the `hosts` portal). Included from apply.yml after the applications and the
+# tunnel, only with cloudflare_access_mcp_portal_enabled. Same rules as the rest of the role: look up before
+# create, GETs run in --check, writes are skipped there, every API task is no_log.
+# Everything is planned first (and checked: no second application for a portal host or a server), then
+# written in this order: per server, the server and its `mcp` application; then per portal, the portal
+# (servers must exist first), its `mcp_portal` application, then its DNS record (the host is routable only
+# once Access protects it).
 
 - name: List MCP servers
   ansible.builtin.uri:
@@ -52,228 +38,112 @@
   check_mode: false
   no_log: true
 
-- name: Build the desired MCP objects and compare them with what exists
-  ansible.builtin.include_tasks: compute-mcp.yml
-  vars:
+- name: Keep the API view and reset the plans
+  ansible.builtin.set_fact:
     _cfa_mcp_servers: "{{ _cfa_mcp_servers_resp.json.result | default([], true) }}"
     _cfa_mcp_portals: "{{ _cfa_mcp_portals_resp.json.result | default([], true) }}"
     _cfa_all_apps: "{{ _cfa_all_apps_resp.json.result | default([], true) }}"
+    _cfa_mcp_server_plans: []
+    _cfa_mcp_portal_plans: []
 
-- name: Refuse to touch a second application for the portal host or the server
+- name: Plan each MCP server and its mcp application
+  ansible.builtin.include_tasks: mcp-plan-server.yml
+  loop: "{{ _cfa_mcp_server_list }}"
+  loop_control:
+    loop_var: _cfa_ms
+    label: "{{ _cfa_ms.id }}"
+
+- name: Plan each MCP portal, its curation and its mcp_portal application
+  ansible.builtin.include_tasks: mcp-plan-portal.yml
+  loop: "{{ _cfa_mcp_portal_list }}"
+  loop_control:
+    loop_var: _cfa_mp
+    label: "{{ _cfa_mp.id }}"
+
+- name: Refuse to touch a second application for a portal host or a server
   ansible.builtin.assert:
     that:
-      - _cfa_mcp_portal_app_matches | length <= 1
-      - _cfa_mcp_server_app_matches | length <= 1
+      - _cfa_mcp_server_plans | map(attribute='app_matches') | map('length') | select('gt', 1) | list | length == 0
+      - _cfa_mcp_portal_plans | map(attribute='app_matches') | map('length') | select('gt', 1) | list | length == 0
     fail_msg: >-
-      More than one Access application for {{ cloudflare_access_mcp_portal_hostname }}
-      ({{ _cfa_mcp_portal_app_matches | map(attribute='name') | list }}) or for MCP server
-      {{ cloudflare_access_mcp_server_id }} ({{ _cfa_mcp_server_app_matches | map(attribute='name') | list }}).
-      Resolve that in the dashboard first.
+      More than one Access application for an MCP portal host or server:
+      {{ (_cfa_mcp_server_plans + _cfa_mcp_portal_plans) | map(attribute='app_matches')
+         | select | map('map', attribute='name') | map('list') | list }}.
+      Resolve that in the dashboard first. Nothing was changed.
     quiet: true
 
 - name: Report the MCP plan
+  vars:
+    _lines: >-
+      [{% for p in _cfa_mcp_server_plans %}{{ ('MCP server ' ~ p.server.id ~ ' -> ' ~ p.server.url ~ ': ' ~ p.action) | to_json }},{{
+         ('Access app ' ~ p.server.app_name ~ ' (mcp): ' ~ p.app_action
+          ~ ((' (' ~ p.app_diff_keys | join(', ') ~ ')') if p.app_action == 'update' else '')) | to_json }},{% endfor %}{%
+        for p in _cfa_mcp_portal_plans %}{{ ('MCP portal ' ~ p.portal.id ~ ' on ' ~ p.portal.hostname ~ ' (servers: '
+          ~ p.portal.servers | map(attribute='server_id') | join(', ') ~ '): ' ~ p.action
+          ~ ((' (' ~ p.diff_keys | join(', ') ~ ')') if p.action == 'update' else '')) | to_json }},{%
+          for c in p.curation %}{{ ('Tool curation ' ~ p.portal.id ~ '/' ~ c.server_id ~ ' (off: '
+            ~ (c.disabled_tools | join(', ') or 'nothing') ~ '): ' ~ c.state ~ ', '
+            ~ c.tools | length ~ ' synced tool(s)') | to_json }},{% endfor %}{{
+         ('Access app ' ~ p.portal.app_name ~ ' (mcp_portal): ' ~ p.app_action
+          ~ ((' (' ~ p.app_diff_keys | join(', ') ~ ')') if p.app_action == 'update' else '')) | to_json }},{% endfor %}null]
   ansible.builtin.debug:
-    msg:
-      - "MCP server {{ cloudflare_access_mcp_server_id }} -> {{ cloudflare_access_mcp_server_url }}: {{ _cfa_mcp_server_action }}"
-      - "Access app {{ cloudflare_access_mcp_server_app_name }} (mcp): {{ _cfa_mcp_server_app_action }}{{
-         (' (' ~ _cfa_mcp_server_app_diff_keys | join(', ') ~ ')') if _cfa_mcp_server_app_action == 'update' else '' }}"
-      - "MCP portal {{ cloudflare_access_mcp_portal_id }} on {{ cloudflare_access_mcp_portal_hostname }}: {{ _cfa_mcp_portal_action }}{{
-         (' (' ~ _cfa_mcp_portal_diff_keys | join(', ') ~ ')') if _cfa_mcp_portal_action == 'update' else '' }}"
-      - "Tool curation (off: {{ cloudflare_access_mcp_disabled_tools | join(', ') }}): {{ _cfa_mcp_curation_state }}, {{ _cfa_mcp_tools | length }} synced tool(s)"
-      - "Access app {{ cloudflare_access_mcp_portal_app_name }} (mcp_portal): {{ _cfa_mcp_portal_app_action }}{{
-         (' (' ~ _cfa_mcp_portal_app_diff_keys | join(', ') ~ ')') if _cfa_mcp_portal_app_action == 'update' else '' }}"
+    msg: "{{ (_lines | from_json)[:-1] }}"
 
-# --- 1. MCP server --------------------------------------------------------------------------------------
-- name: Create the MCP server
-  ansible.builtin.uri:
-    url: "{{ _cfa_acct }}/access/ai-controls/mcp/servers"
-    method: POST
-    headers: "{{ _cfa_headers }}"
-    body_format: json
-    body: "{{ _cfa_mcp_server_desired }}"
-    status_code: [200, 201]
-  register: _cfa_mcp_server_created
-  changed_when: true
-  no_log: true
-  when: _cfa_mcp_server_action == 'create'
-
-- name: Update the MCP server (auth configuration kept)
-  ansible.builtin.uri:
-    url: "{{ _cfa_acct }}/access/ai-controls/mcp/servers/{{ cloudflare_access_mcp_server_id }}"
-    method: PUT
-    headers: "{{ _cfa_headers }}"
-    body_format: json
-    body: "{{ _cfa_mcp_server_desired | dict2items | rejectattr('key', 'equalto', 'id') | items2dict }}"
-    status_code: 200
-  register: _cfa_mcp_server_updated
-  changed_when: true
-  no_log: true
-  when: _cfa_mcp_server_action == 'update'
-
-# --- 2. The server's Access application ------------------------------------------------------------------
-- name: Create the MCP server application
-  ansible.builtin.uri:
-    url: "{{ _cfa_acct }}/access/apps"
-    method: POST
-    headers: "{{ _cfa_headers }}"
-    body_format: json
-    body: "{{ _cfa_mcp_server_app_desired }}"
-    status_code: [200, 201]
-  changed_when: true
-  no_log: true
-  when: _cfa_mcp_server_app_action == 'create'
-
-- name: Update the MCP server application (full object from GET, desired fields on top)
-  ansible.builtin.uri:
-    url: "{{ _cfa_acct }}/access/apps/{{ _cfa_mcp_server_app_current.id }}"
-    method: PUT
-    headers: "{{ _cfa_headers }}"
-    body_format: json
-    body: "{{ _cfa_mcp_server_app_current | combine(_cfa_mcp_server_app_desired) }}"
-    status_code: 200
-  changed_when: true
-  no_log: true
-  when: _cfa_mcp_server_app_action == 'update'
-
-# --- 3. Portal (curation only once the server's tools have synced) --------------------------------------
-- name: Create the MCP portal
-  ansible.builtin.uri:
-    url: "{{ _cfa_acct }}/access/ai-controls/mcp/portals"
-    method: POST
-    headers: "{{ _cfa_headers }}"
-    body_format: json
-    body: "{{ {'id': cloudflare_access_mcp_portal_id} | combine(_cfa_mcp_portal_desired) }}"
-    status_code: [200, 201]
-  register: _cfa_mcp_portal_created
-  changed_when: true
-  no_log: true
-  when: _cfa_mcp_portal_action == 'create'
-
-- name: Update the MCP portal (full body, curation included when the tools have synced)
-  ansible.builtin.uri:
-    url: "{{ _cfa_acct }}/access/ai-controls/mcp/portals/{{ cloudflare_access_mcp_portal_id }}"
-    method: PUT
-    headers: "{{ _cfa_headers }}"
-    body_format: json
-    body: "{{ _cfa_mcp_portal_desired }}"
-    status_code: 200
-  register: _cfa_mcp_portal_updated
-  changed_when: true
-  no_log: true
-  when: _cfa_mcp_portal_action == 'update'
-
-# --- 4. The portal's Access application (an API-created portal gets none) -------------------------------
-- name: Create the MCP portal application
-  ansible.builtin.uri:
-    url: "{{ _cfa_acct }}/access/apps"
-    method: POST
-    headers: "{{ _cfa_headers }}"
-    body_format: json
-    body: "{{ _cfa_mcp_portal_app_desired }}"
-    status_code: [200, 201]
-  register: _cfa_mcp_portal_app_created
-  changed_when: true
-  no_log: true
-  when: _cfa_mcp_portal_app_action == 'create'
-
-- name: Update the MCP portal application (full object from GET, desired fields on top)
-  ansible.builtin.uri:
-    url: "{{ _cfa_acct }}/access/apps/{{ _cfa_mcp_portal_app_current.id }}"
-    method: PUT
-    headers: "{{ _cfa_headers }}"
-    body_format: json
-    body: "{{ _cfa_mcp_portal_app_current | combine(_cfa_mcp_portal_app_desired) }}"
-    status_code: 200
-  changed_when: true
-  no_log: true
-  when: _cfa_mcp_portal_app_action == 'update'
-
-# --- 5. DNS: <portal host> CNAME gateway.agents.cloudflare.com, proxied --------------------------------
-# The API does not create it (the dashboard does); without it the portal answers 522.
-- name: Look up the zone for the portal host
-  ansible.builtin.uri:
-    url: "{{ _cfa_api }}/zones?name={{ cloudflare_access_dns_zone | urlencode }}"
-    method: GET
-    headers: "{{ _cfa_headers }}"
-    status_code: 200
-  register: _cfa_mcp_zone
-  check_mode: false
-  no_log: true
-
-- name: Look up existing records for the portal host (any type)
-  ansible.builtin.uri:
-    url: "{{ _cfa_api }}/zones/{{ _cfa_mcp_zone.json.result[0].id }}/dns_records?name={{ cloudflare_access_mcp_portal_hostname | urlencode }}"
-    method: GET
-    headers: "{{ _cfa_headers }}"
-    status_code: 200
-  register: _cfa_mcp_dns
-  check_mode: false
-  no_log: true
-
-- name: Classify the portal DNS record
-  ansible.builtin.set_fact:
-    _cfa_mcp_dns_records: "{{ _cfa_mcp_dns.json.result | default([], true) }}"
-    # Only once Access protects the host: the application existed, or was created in this run.
-    _cfa_mcp_portal_app_ready: "{{ _cfa_mcp_portal_app_action != 'create' or _cfa_mcp_portal_app_created.json is defined }}"
-
-- name: Refuse to overwrite a record that is not the portal's proxied CNAME
-  ansible.builtin.assert:
-    that: >-
-      _cfa_mcp_dns_records | length == 0 or
-      (_cfa_mcp_dns_records | length == 1 and _cfa_mcp_dns_records[0].type == 'CNAME'
-       and _cfa_mcp_dns_records[0].content == cloudflare_access_mcp_dns_target
-       and _cfa_mcp_dns_records[0].proxied | bool)
-    fail_msg: >-
-      {{ cloudflare_access_mcp_portal_hostname }} already has {{ _cfa_mcp_dns_records | map(attribute='type') | list }}
-      record(s) that are not a proxied CNAME to {{ cloudflare_access_mcp_dns_target }}. Remove or fix them by hand first.
-    quiet: true
-
-- name: Report the portal DNS plan
+- name: Callback hint for each server's backend application (the server cannot authenticate without them)
+  # A server's own Access application (when it is one of cloudflare_access_applications) must allow the
+  # dashboard callback for the server id and the per-user callback of every portal that holds the server.
+  vars:
+    _missing: >-
+      [{% for s in _cfa_mcp_server_list %}{%
+          set app = _cfa_applications | selectattr('domain', 'equalto', s.url | urlsplit('hostname')) | first | default(none) %}{%
+          if app is not none %}{%
+            set ns = namespace(want=['https://dash.cloudflare.com/' ~ cloudflare_access_account_id
+                                     ~ '/one/access-controls/ai-controls/mcp-server/oauth-callback/' ~ s.id]) %}{%
+            for p in _cfa_mcp_portal_list if s.id in p.servers | map(attribute='server_id') | list %}{%
+              set ns.want = ns.want + ['https://' ~ p.hostname ~ '/servers-callback'] %}{% endfor %}{%
+            set want = ns.want %}{%
+            set miss = want | difference(app.portal_callback_uris) %}{%
+            if miss | length > 0 %}{{ {'server': s.id, 'application': app.name, 'missing': miss} | to_json }},{% endif %}{%
+          endif %}{% endfor %}null]
   ansible.builtin.debug:
     msg: >-
-      DNS {{ cloudflare_access_mcp_portal_hostname }} CNAME {{ cloudflare_access_mcp_dns_target }} (proxied):
-      {{ 'unchanged' if _cfa_mcp_dns_records | length > 0 else 'create' }}
+      WARNING: {{ (_missing | from_json)[:-1] | to_json }}: add these to the application's portal_callback_uris,
+      or authenticating the server fails with "An error occurred while registering the MCP server".
+  when: (_missing | from_json)[:-1] | length > 0
 
-- name: Create the portal's proxied CNAME
-  ansible.builtin.uri:
-    url: "{{ _cfa_api }}/zones/{{ _cfa_mcp_zone.json.result[0].id }}/dns_records"
-    method: POST
-    headers: "{{ _cfa_headers }}"
-    body_format: json
-    body:
-      type: CNAME
-      name: "{{ cloudflare_access_mcp_portal_hostname }}"
-      content: "{{ cloudflare_access_mcp_dns_target }}"
-      proxied: true
-      ttl: 1
-      comment: "MCP server portal (olympus-infra roles/cloudflare-access, olympus-sdk#923)"
-    status_code: 200
-  changed_when: true
-  no_log: true
-  when:
-    - _cfa_mcp_dns_records | length == 0
-    - _cfa_mcp_portal_app_ready | bool
+- name: Create or update each MCP server and its mcp application
+  ansible.builtin.include_tasks: mcp-server.yml
+  loop: "{{ _cfa_mcp_server_plans }}"
+  loop_control:
+    loop_var: _p
+    label: "{{ _p.server.id }}"
 
-# --- 6. Summary --------------------------------------------------------------------------------------------
+- name: Create or update each MCP portal, its mcp_portal application and its DNS record
+  ansible.builtin.include_tasks: mcp-portal.yml
+  loop: "{{ _cfa_mcp_portal_plans }}"
+  loop_control:
+    loop_var: _p
+    label: "{{ _p.portal.id }}"
+
+# --- Summary -------------------------------------------------------------------------------------------
 - name: MCP portal summary
   vars:
-    _srv: >-
-      {{ _cfa_mcp_server_created.json.result if _cfa_mcp_server_created.json is defined
-         else _cfa_mcp_server_current }}
-    _curation_msg: >-
-      {{ {'applied': 'applied (' ~ (_cfa_mcp_want_disabled | join(', ') or 'nothing') ~ ' turned off)',
-          'to_apply': ('applied in this run' if not ansible_check_mode else 'would be applied')
-                      ~ ' (' ~ (_cfa_mcp_want_disabled | join(', ') or 'nothing') ~ ' turned off)',
-          'pending': 'NOT applied: the server has no synced tools yet'}[_cfa_mcp_curation_state] }}
+    _lines: >-
+      [{% for p in _cfa_mcp_portal_plans %}{{ ('Portal ' ~ p.portal.id ~ ': https://' ~ p.portal.hostname ~ '/mcp') | to_json }},{%
+        endfor %}{% for p in _cfa_mcp_server_plans %}{%
+          set srv = _cfa_mcp_server_results[p.server.id] | default(p.current, true) %}{{
+         ('Server ' ~ p.server.id ~ ': status ' ~ (srv.status | default('(not created yet)')) ~ ', authentication '
+          ~ (srv.authentication_status | default('-'))
+          ~ ((', error: ' ~ srv.error) if srv.error | default('') | length > 0 else '')) | to_json }},{% endfor %}{%
+        for p in _cfa_mcp_portal_plans %}{% for c in p.curation %}{{
+         ('Tool curation ' ~ p.portal.id ~ '/' ~ c.server_id ~ ': '
+          ~ {'applied': 'applied (' ~ (c.want_disabled | join(', ') or 'nothing') ~ ' turned off)',
+             'to_apply': ('applied in this run' if not ansible_check_mode else 'would be applied')
+                         ~ ' (' ~ (c.want_disabled | join(', ') or 'nothing') ~ ' turned off)',
+             'pending': 'NOT applied: the server has no synced tools yet'}[c.state]) | to_json }},{% endfor %}{% endfor %}{%
+        for p in _cfa_mcp_server_plans if p.tools | length == 0 %}{{
+         ('Next (owner): Zero Trust > Access controls > AI controls > MCP servers > ' ~ p.server.id
+          ~ ' > Authenticate server (sign in as the owner), wait for status ready, then re-run this playbook to apply its tool curation.')
+         | to_json }},{% endfor %}null]
   ansible.builtin.debug:
-    msg:
-      - "Portal URL: https://{{ cloudflare_access_mcp_portal_hostname }}/mcp"
-      - "Server {{ cloudflare_access_mcp_server_id }}: status {{ _srv.status | default('(not created yet)') }},
-         authentication {{ _srv.authentication_status | default('-') }}{{
-         (', error: ' ~ _srv.error) if _srv.error | default('') | length > 0 else '' }}"
-      - "Tool curation: {{ _curation_msg }}"
-      - "{{ 'Next (owner): Zero Trust > Access controls > AI controls > MCP servers > '
-            ~ cloudflare_access_mcp_server_id ~ ' > Authenticate server (sign in as the owner), wait for status ready, then re-run this playbook to apply the tool curation.'
-            if _cfa_mcp_curation_state == 'pending'
-            else 'Next (owner): connect claude.ai or Claude Code to https://' ~ cloudflare_access_mcp_portal_hostname
-                 ~ '/mcp and check that memory status returns client owner.' }}"
+    msg: "{{ (_lines | from_json)[:-1] }}"

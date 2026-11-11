@@ -1,0 +1,119 @@
+---
+# Writes for one planned MCP portal (`_p`, an entry of _cfa_mcp_portal_plans): the portal (full body, the
+# curation of every server whose tools have synced included), its `mcp_portal` Access application, then its
+# proxied CNAME. Included from mcp.yml per portal, after every server exists. Skipped in --check (uri writes).
+- name: "Create the MCP portal {{ _p.portal.id }}"
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/ai-controls/mcp/portals"
+    method: POST
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body: "{{ {'id': _p.portal.id} | combine(_p.desired) }}"
+    status_code: [200, 201]
+  changed_when: true
+  no_log: true
+  when: _p.action == 'create'
+
+- name: "Update the MCP portal {{ _p.portal.id }} (full body, curation included where the tools have synced)"
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/ai-controls/mcp/portals/{{ _p.portal.id }}"
+    method: PUT
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body: "{{ _p.desired }}"
+    status_code: 200
+  changed_when: true
+  no_log: true
+  when: _p.action == 'update'
+
+# --- The portal's Access application (an API-created portal gets none) -----------------------------------
+- name: "Create the mcp_portal application of {{ _p.portal.id }}"
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/apps"
+    method: POST
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body: "{{ _p.app_desired }}"
+    status_code: [200, 201]
+  register: _cfa_mcp_portal_app_created
+  changed_when: true
+  no_log: true
+  when: _p.app_action == 'create'
+
+- name: "Update the mcp_portal application of {{ _p.portal.id }} (full object from GET, desired fields on top)"
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/apps/{{ _p.app_current.id }}"
+    method: PUT
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body: "{{ _p.app_current | combine(_p.app_desired) }}"
+    status_code: 200
+  changed_when: true
+  no_log: true
+  when: _p.app_action == 'update'
+
+# --- DNS: <portal host> CNAME gateway.agents.cloudflare.com, proxied ------------------------------------
+# The API does not create it (the dashboard does); without it the portal answers 522.
+- name: "Look up the zone for {{ _p.portal.hostname }}"
+  ansible.builtin.uri:
+    url: "{{ _cfa_api }}/zones?name={{ cloudflare_access_dns_zone | urlencode }}"
+    method: GET
+    headers: "{{ _cfa_headers }}"
+    status_code: 200
+  register: _cfa_mcp_zone
+  check_mode: false
+  no_log: true
+
+- name: "Look up existing records for {{ _p.portal.hostname }} (any type)"
+  ansible.builtin.uri:
+    url: "{{ _cfa_api }}/zones/{{ _cfa_mcp_zone.json.result[0].id }}/dns_records?name={{ _p.portal.hostname | urlencode }}"
+    method: GET
+    headers: "{{ _cfa_headers }}"
+    status_code: 200
+  register: _cfa_mcp_dns
+  check_mode: false
+  no_log: true
+
+- name: "Classify the DNS record of {{ _p.portal.hostname }}"
+  ansible.builtin.set_fact:
+    _cfa_mcp_dns_records: "{{ _cfa_mcp_dns.json.result | default([], true) }}"
+    # Only once Access protects the host: the application existed, or was created in this run.
+    _cfa_mcp_portal_app_ready: "{{ _p.app_action != 'create' or _cfa_mcp_portal_app_created.json is defined }}"
+
+- name: "Refuse to overwrite a record of {{ _p.portal.hostname }} that is not the portal's proxied CNAME"
+  ansible.builtin.assert:
+    that: >-
+      _cfa_mcp_dns_records | length == 0 or
+      (_cfa_mcp_dns_records | length == 1 and _cfa_mcp_dns_records[0].type == 'CNAME'
+       and _cfa_mcp_dns_records[0].content == cloudflare_access_mcp_dns_target
+       and _cfa_mcp_dns_records[0].proxied | bool)
+    fail_msg: >-
+      {{ _p.portal.hostname }} already has {{ _cfa_mcp_dns_records | map(attribute='type') | list }}
+      record(s) that are not a proxied CNAME to {{ cloudflare_access_mcp_dns_target }}. Remove or fix them by hand first.
+    quiet: true
+
+- name: "Report the DNS plan of {{ _p.portal.hostname }}"
+  ansible.builtin.debug:
+    msg: >-
+      DNS {{ _p.portal.hostname }} CNAME {{ cloudflare_access_mcp_dns_target }} (proxied):
+      {{ 'unchanged' if _cfa_mcp_dns_records | length > 0 else 'create' }}
+
+- name: "Create the proxied CNAME of {{ _p.portal.hostname }}"
+  ansible.builtin.uri:
+    url: "{{ _cfa_api }}/zones/{{ _cfa_mcp_zone.json.result[0].id }}/dns_records"
+    method: POST
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body:
+      type: CNAME
+      name: "{{ _p.portal.hostname }}"
+      content: "{{ cloudflare_access_mcp_dns_target }}"
+      proxied: true
+      ttl: 1
+      comment: "{{ _p.portal.dns_comment }}"
+    status_code: 200
+  changed_when: true
+  no_log: true
+  when:
+    - _cfa_mcp_dns_records | length == 0
+    - _cfa_mcp_portal_app_ready | bool

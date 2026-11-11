@@ -134,9 +134,11 @@
           - _cfa_applications[1].policy_prefix == 'k8s-mcp-'
           - _cfa_applications[1].tunnel_service == 'http://k8s-mcp.atlas-system.svc.cluster.local:80'
           - _cfa_applications[1].service_token_hosts == []
-          - _cfa_applications[1].oauth_allowed_redirect_uris == ['https://claude.ai/*']
+          # No direct claude.ai connector for k8s-mcp (olympus-sdk#929): portal callbacks only.
+          - _cfa_applications[1].oauth_allowed_redirect_uris == []
           - _cfa_applications[1].portal_callback_uris == []
           - not _cfa_applications[1].oauth_allow_localhost
+          - not _cfa_applications[1].oauth_allow_loopback
           - _cfa_applications[1].dns_zone == 'nwlnexus.io'
           - "_cfa_applications[1].backend_env == {'team_domain': 'ACCESS_TEAM_DOMAIN', 'aud': 'ACCESS_AUD'}"
         fail_msg: "{{ _cfa_applications | to_json }}"
@@ -164,13 +166,36 @@
         _cfa_apps: []
         _cfa_policy_ids: {k8s-mcp-allow-owner: pol-k}
 
-    - name: One policy, Managed OAuth with the claude.ai redirect
+    - name: One policy, Managed OAuth with no redirect URI at all while the portal is off
       ansible.builtin.assert:
         that:
           - _cfa_app_action == 'create'
           - "_cfa_app_desired.policies == [{'id': 'pol-k', 'precedence': 1}]"
-          - _cfa_app_desired.oauth_configuration.dynamic_client_registration.allowed_uris == ['https://claude.ai/*']
+          - "_cfa_app_desired.oauth_configuration.dynamic_client_registration == {'enabled': true, 'allowed_uris': [],
+             'allow_any_on_localhost': false, 'allow_any_on_loopback': false}"
         fail_msg: "{{ _cfa_app_desired | to_json }}"
+        quiet: true
+
+    - name: Plan the k8s-mcp application with the portal on and the playbook's callbacks
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-app.yml"
+      vars:
+        cloudflare_access_mcp_portal_enabled: true
+        _cfa_a: "{{ _cfa_applications[1] | combine({'portal_callback_uris': _k8s_callbacks}) }}"
+        _cfa_apps: []
+        _cfa_policy_ids: {k8s-mcp-allow-owner: pol-k}
+        _k8s_callbacks:
+          - "https://dash.cloudflare.com/{{ _acct_placeholder }}/one/access-controls/ai-controls/mcp-server/oauth-callback/k8s"
+          - "https://mcp-hosts.nwlnexus.io/servers-callback"
+          - "https://mcp.nwlnexus.io/servers-callback"
+
+    - name: The k8s-mcp DCR allows exactly the three portal callbacks (no claude.ai, no localhost or loopback)
+      ansible.builtin.assert:
+        that:
+          - "_cfa_app_desired.oauth_configuration.dynamic_client_registration == {'enabled': true, 'allowed_uris': [
+             'https://dash.cloudflare.com/' ~ _acct_placeholder ~ '/one/access-controls/ai-controls/mcp-server/oauth-callback/k8s',
+             'https://mcp-hosts.nwlnexus.io/servers-callback', 'https://mcp.nwlnexus.io/servers-callback'],
+             'allow_any_on_localhost': false, 'allow_any_on_loopback': false}"
+        fail_msg: "{{ _cfa_app_desired.oauth_configuration | to_json }}"
         quiet: true
 
     # --- policies ----------------------------------------------------------------------------------
@@ -490,10 +515,34 @@
             portals: [{id: hosts, hostname: mcp-hosts.example.invalid, servers: [{server_id: memory}]}]
           - servers: [{id: memory, url: "https://memory.nwlnexus.io/mcp"}]
             portals: [{id: hosts, hostname: mcp-hosts.nwlnexus.io, servers: []}]
+          # olympus-sdk#929 security review: a guarded server renamed away from its id, an alias on a guarded
+          # server or portal entry, and memory in the hosts portal (valid hostname).
+          - servers: [{id: memory, name: mem, url: "https://memory.nwlnexus.io/mcp"}]
+            portals: [{id: owner, hostname: mcp.nwlnexus.io, servers: [{server_id: memory}]}]
+          - servers: [{id: k8s, url: "https://k8s-mcp.nwlnexus.io/mcp", server_alias: kube}]
+            portals: [{id: owner, hostname: mcp.nwlnexus.io, servers: [{server_id: k8s}]}]
+          - servers: [{id: k8s, url: "https://k8s-mcp.nwlnexus.io/mcp"}]
+            portals: [{id: owner, hostname: mcp.nwlnexus.io, servers: [{server_id: k8s, portal_alias: kube}]}]
+          - servers: [{id: memory, url: "https://memory.nwlnexus.io/mcp"}, {id: k8s, url: "https://k8s-mcp.nwlnexus.io/mcp"}]
+            portals: [{id: hosts, hostname: mcp-hosts.nwlnexus.io, servers: [{server_id: k8s}, {server_id: memory}]}]
       ansible.builtin.include_tasks: refuse-mcp.yml
       loop: "{{ _cases }}"
       loop_control:
         loop_var: _case
+
+    - name: A k8s-mcp application that allows claude.ai, localhost or loopback is refused
+      ansible.builtin.include_tasks: refuse-mcp.yml
+      vars:
+        _case:
+          servers: [{id: memory, url: "https://memory.nwlnexus.io/mcp"}, {id: k8s, url: "https://k8s-mcp.nwlnexus.io/mcp"}]
+          portals: [{id: owner, hostname: mcp.nwlnexus.io, servers: [{server_id: memory}, {server_id: k8s}]}]
+          k8s_app: "{{ _k8s_bad }}"
+      loop:
+        - {oauth_allowed_redirect_uris: ["https://claude.ai/*"]}
+        - {oauth_allow_localhost: true}
+        - {oauth_allow_loopback: true}
+      loop_control:
+        loop_var: _k8s_bad
 
     - name: Fill in the default MCP lists again (the refused cases overwrote them)
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-mcp.yml"

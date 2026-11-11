@@ -7,6 +7,8 @@
       vars:
         cloudflare_access_mcp_servers: "{{ _case.servers }}"
         cloudflare_access_mcp_portals: "{{ _case.portals }}"
+        # Optional: the k8s-mcp application's redirect keys (only what compute-mcp.yml checks of it).
+        cloudflare_access_k8s_mcp_app: "{{ {'oauth_allowed_redirect_uris': []} | combine(_case.k8s_app | default({})) }}"
 
     - name: Not reached when the checks refuse it
       ansible.builtin.set_fact:

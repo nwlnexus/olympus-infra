@@ -122,8 +122,15 @@ k3s_audit_log_maxbackup: 5
 k3s_audit_log_maxsize: 100
 # Identities whose every request (reads included) is recorded at Metadata level,
 # ahead of the noise rules. An empty list omits the rule.
+# The Tailscale operator is listed because kube-apiserver matches policy rules
+# against the authenticated user, not the impersonated one: requests through its
+# API-server proxy (agent hosts as group olympus:agents-view, olympus-sdk#935)
+# arrive as the operator's ServiceAccount, so the group rule below never matches
+# them and rule e would drop their reads. The impersonated identity is in the
+# event's impersonatedUser. This also records the operator's own reads.
 k3s_audit_always_log_users:
   - "system:serviceaccount:atlas-system:k8s-mcp"
+  - "system:serviceaccount:tailscale:operator"
 k3s_audit_always_log_groups:
   - "olympus:agents-view"
 # Leases in kube-system whose get/update is never logged, matched by name for every

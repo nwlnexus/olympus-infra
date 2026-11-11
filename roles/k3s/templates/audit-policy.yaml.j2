@@ -1,8 +1,30 @@
 {# Kubernetes API audit policy for the k3s servers (tasks/audit-log.yml).
    kube-apiserver applies the FIRST rule that matches a request, so the order is
    the policy. Metadata never records request or response bodies; Request records
-   the request body only (never the response). tests/k3s-join-server checks the
-   order and the keys. #}
+   the request body only (never the response). Within one rule `users` and
+   `userGroups` are ANDed, so machine identities get two sibling rules: one by
+   group, one by the control-plane user list below. tests/k3s-join-server checks
+   the order and the keys. #}
+{# Control-plane and k3s identities (k3s v1.35 pkg/daemons/control/deps/deps.go,
+   pkg/server/handlers/handlers.go). One list, used by every machine rule. #}
+{% set _cp_users = [
+     'system:kube-proxy',
+     'system:kube-controller-manager',
+     'system:kube-scheduler',
+     'system:apiserver',
+     'system:k3s-supervisor',
+     'system:k3s-controller',
+     'k3s-cloud-controller-manager',
+   ] %}
+{% set _machine_groups = ['system:nodes', 'system:serviceaccounts'] %}
+{% macro cp_users() %}
+    users:
+      - "{{ _cp_users | join('"\n      - "') }}"
+{%- endmacro %}
+{% macro machine_groups() %}
+    userGroups:
+      - "{{ _machine_groups | join('"\n      - "') }}"
+{%- endmacro %}
 # Managed by Ansible (roles/k3s, tasks/audit-log.yml); local edits are overwritten.
 apiVersion: audit.k8s.io/v1
 kind: Policy
@@ -41,30 +63,48 @@ rules:
     verbs: ["get", "list", "watch"]
   # c. Control-plane and k3s supervisor reads: constant watch traffic.
   - level: None
-    users:
-      - "system:kube-proxy"
-      - "system:kube-controller-manager"
-      - "system:kube-scheduler"
-      - "system:apiserver"
-      - "system:k3s-supervisor"
-      - "system:k3s-controller"
-      - "k3s-cloud-controller-manager"
+{{ cp_users() }}
     verbs: ["get", "list", "watch"]
-  # c. Leader-election leases: renewed every few seconds by many components.
+  # c. Kubelet status heartbeats.
   - level: None
+    userGroups:
+      - "system:nodes"
+    verbs: ["update", "patch"]
+    resources:
+      - group: ""
+        resources: ["nodes/status", "pods/status"]
+  # c. Leader-election leases renewed by nodes and ServiceAccounts (people fall through).
+  - level: None
+{{ machine_groups() }}
+    verbs: ["get", "list", "watch", "update", "patch"]
     resources:
       - group: "coordination.k8s.io"
         resources: ["leases"]
-    verbs: ["get", "list", "watch", "update", "patch"]
-  # c. Events: high volume, and they are already a record of their own.
+  # c. Leader-election leases renewed by the control plane.
   - level: None
+{{ cp_users() }}
+    verbs: ["get", "list", "watch", "update", "patch"]
+    resources:
+      - group: "coordination.k8s.io"
+        resources: ["leases"]
+  # c. Events written and read by nodes and ServiceAccounts (people fall through).
+  - level: None
+{{ machine_groups() }}
+    resources:
+      - group: ""
+        resources: ["events"]
+      - group: "events.k8s.io"
+        resources: ["events"]
+  # c. Events written and read by the control plane.
+  - level: None
+{{ cp_users() }}
     resources:
       - group: ""
         resources: ["events"]
       - group: "events.k8s.io"
         resources: ["events"]
   # d. Secrets, ConfigMaps, token requests and token reviews: who touched what,
-  #    never the content (Metadata records no bodies).
+  #    never the content (Metadata records no bodies). Before every Request rule.
   - level: Metadata
     resources:
       - group: ""
@@ -77,7 +117,15 @@ rules:
     userGroups:
       - "system:serviceaccounts"
     verbs: ["get", "list", "watch"]
-  # f. Every other write: with its request body.
+  # f1. Writes by nodes and ServiceAccounts: recorded without bodies.
+  - level: Metadata
+{{ machine_groups() }}
+    verbs: ["create", "update", "patch", "delete", "deletecollection"]
+  # f1. Writes by the control plane: recorded without bodies.
+  - level: Metadata
+{{ cp_users() }}
+    verbs: ["create", "update", "patch", "delete", "deletecollection"]
+  # f2. Writes by everyone else (people): with the request body.
   - level: Request
     verbs: ["create", "update", "patch", "delete", "deletecollection"]
   # g. Everything else (remaining reads by people and other clients).

@@ -72,10 +72,17 @@ response code, never a body; Request adds the request body, never the response):
 - dropped: reads by `system:nodes`, and by the control plane and k3s itself
   (`system:kube-proxy`, `system:kube-controller-manager`, `system:kube-scheduler`,
   `system:apiserver`, `system:k3s-supervisor`, `system:k3s-controller`,
-  `k3s-cloud-controller-manager`); lease get/list/watch/update/patch; all events;
-- Metadata for Secrets, ConfigMaps, `serviceaccounts/token` and token reviews;
+  `k3s-cloud-controller-manager`; one list in the template, used by every machine rule);
+  kubelet `nodes/status` and `pods/status` update/patch heartbeats by `system:nodes`;
+  lease get/list/watch/update/patch and all event requests, but only by nodes,
+  ServiceAccounts and that control-plane list (a person touching a lease or deleting
+  events falls through and is recorded);
+- Metadata for Secrets, ConfigMaps, `serviceaccounts/token` and token reviews, for every
+  user, ahead of every Request rule, so no body of those is ever recorded;
 - dropped: other ServiceAccount reads (controller watch traffic);
-- Request for every other create/update/patch/delete/deletecollection;
+- Metadata (no body) for create/update/patch/delete/deletecollection by nodes,
+  ServiceAccounts and the control-plane list;
+- Request (with the request body) for those writes by everyone else (people);
 - Metadata for everything else.
 
 It is on for the cluster: `k3s_audit_log_enabled: true` in the `compute_hub` and

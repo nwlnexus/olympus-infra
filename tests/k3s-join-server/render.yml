@@ -346,25 +346,59 @@
         _p: "{{ item.content | b64decode | from_yaml }}"
         _r: "{{ _p.rules }}"
         _agents: "{{ item.item == 'default' }}"
-        # Index of rule c (first noise rule) moves up by two when the agent rules are omitted.
+        # Rule c starts two later when the always-logged users/groups rules are present.
         _o: "{{ 2 if _agents else 0 }}"
         _rule_keys: [level, users, userGroups, verbs, resources, namespaces, nonResourceURLs, omitStages]
         _res_keys: [group, resources, resourceNames]
         _levels: [None, Metadata, Request, RequestResponse]
-        _leases:
-          level: None
-          resources: [{group: coordination.k8s.io, resources: [leases]}]
-          verbs: [get, list, watch, update, patch]
-        _events:
-          level: None
-          resources: [{group: "", resources: [events]}, {group: events.k8s.io, resources: [events]}]
+        _cp:
+          - "system:kube-proxy"
+          - "system:kube-controller-manager"
+          - "system:kube-scheduler"
+          - "system:apiserver"
+          - "system:k3s-supervisor"
+          - "system:k3s-controller"
+          - "k3s-cloud-controller-manager"
+        _machine: ["system:nodes", "system:serviceaccounts"]
+        _reads: [get, list, watch]
+        _writes: [create, update, patch, delete, deletecollection]
+        _leases: [{group: coordination.k8s.io, resources: [leases]}]
+        _events: [{group: "", resources: [events]}, {group: events.k8s.io, resources: [events]}]
+        _lease_verbs: [get, list, watch, update, patch]
+        _heartbeat: [{group: "", resources: [nodes/status, pods/status]}]
+        _sensitive:
+          - {group: "", resources: [secrets, configmaps, serviceaccounts/token]}
+          - {group: authentication.k8s.io, resources: [tokenreviews]}
+        # Expected rules from c on, in order (the agent rules b come before them).
+        _tail:
+          - {level: None, userGroups: [system:nodes], verbs: "{{ _reads }}"}
+          - {level: None, users: "{{ _cp }}", verbs: "{{ _reads }}"}
+          - {level: None, userGroups: [system:nodes], verbs: [update, patch], resources: "{{ _heartbeat }}"}
+          - {level: None, userGroups: "{{ _machine }}", verbs: "{{ _lease_verbs }}", resources: "{{ _leases }}"}
+          - {level: None, users: "{{ _cp }}", verbs: "{{ _lease_verbs }}", resources: "{{ _leases }}"}
+          - {level: None, userGroups: "{{ _machine }}", resources: "{{ _events }}"}
+          - {level: None, users: "{{ _cp }}", resources: "{{ _events }}"}
+          - {level: Metadata, resources: "{{ _sensitive }}"}
+          - {level: None, userGroups: [system:serviceaccounts], verbs: "{{ _reads }}"}
+          - {level: Metadata, userGroups: "{{ _machine }}", verbs: "{{ _writes }}"}
+          - {level: Metadata, users: "{{ _cp }}", verbs: "{{ _writes }}"}
+          - {level: Request, verbs: "{{ _writes }}"}
+          - {level: Metadata}
+        # Per rule: the resource names it lists (empty = no resources key).
+        _names: "{{ _r | map(attribute='resources', default=[]) | map('map', attribute='resources') | map('flatten') | list }}"
+        # Index of the first rule that names secrets (rule d).
+        _d: "{{ _names | map('intersect', ['secrets']) | map('length') | list | ansible.builtin.flatten }}"
+        _scoped: "{{ (_r | selectattr('users', 'defined') | list) + (_r | rejectattr('users', 'defined') | selectattr('userGroups', 'defined') | list) }}"
+        _le_all: "{{ _names | map('intersect', ['leases', 'events']) | select | list | length }}"
+        _le_scoped: >-
+          {{ _scoped | map(attribute='resources', default=[]) | map('map', attribute='resources') | map('flatten')
+             | map('intersect', ['leases', 'events']) | select | list | length }}
       ansible.builtin.assert:
         that:
           - _p.apiVersion == 'audit.k8s.io/v1'
           - _p.kind == 'Policy'
           - _p.omitStages == ['RequestReceived']
           - _p.keys() | list | sort == ['apiVersion', 'kind', 'omitStages', 'rules']
-          - _r | length == 9 + (_o | int)
           - _r | map(attribute='level') | reject('in', _levels) | list | length == 0
           - _r | map('dict2items') | flatten | map(attribute='key') | reject('in', _rule_keys) | list | length == 0
           - _r | selectattr('resources', 'defined') | map(attribute='resources') | flatten
@@ -372,29 +406,20 @@
           # a. probes dropped first
           - _r[0].level == 'None'
           - _r[0].nonResourceURLs == ['/healthz*', '/readyz*', '/livez*', '/metrics', '/version', '/openapi*']
-          # b. always-recorded identities (only when configured)
+          # b. always-recorded identities (only when configured), before c
           - "(not _agents) or (_r[1] == {'level': 'Metadata', 'users': k3s_def.k3s_audit_always_log_users})"
           - "(not _agents) or (_r[2] == {'level': 'Metadata', 'userGroups': k3s_def.k3s_audit_always_log_groups})"
           - "_agents or (_r | selectattr('users', 'defined') | map(attribute='users') | flatten
                | select('equalto', 'system:serviceaccount:atlas-system:k8s-mcp') | list | length == 0)"
-          # c. noise
-          - "_r[1 + _o | int] == {'level': 'None', 'userGroups': ['system:nodes'], 'verbs': ['get', 'list', 'watch']}"
-          - _r[2 + _o | int].level == 'None'
-          - _r[2 + _o | int].verbs == ['get', 'list', 'watch']
-          - "'system:kube-proxy' in _r[2 + _o | int].users"
-          - "'system:k3s-supervisor' in _r[2 + _o | int].users"
-          - _r[3 + _o | int] == _leases
-          - _r[4 + _o | int] == _events
-          # d. sensitive objects at Metadata (never bodies)
-          - _r[5 + _o | int].level == 'Metadata'
-          - "_r[5 + _o | int].resources[0] == {'group': '', 'resources': ['secrets', 'configmaps', 'serviceaccounts/token']}"
-          - "_r[5 + _o | int].resources[1] == {'group': 'authentication.k8s.io', 'resources': ['tokenreviews']}"
-          # e. other ServiceAccount reads dropped
-          - "_r[6 + _o | int] == {'level': 'None', 'userGroups': ['system:serviceaccounts'], 'verbs': ['get', 'list', 'watch']}"
-          # f. other writes with the request body
-          - "_r[7 + _o | int] == {'level': 'Request', 'verbs': ['create', 'update', 'patch', 'delete', 'deletecollection']}"
-          # g. catch-all
-          - "_r[8 + _o | int] == {'level': 'Metadata'}"
+          # c to g, exactly and in order
+          - _r[1 + (_o | int):] == _tail
+          # Rule d is the first rule that names secrets, is unconditional Metadata, and no rule
+          # above Metadata comes before it (first match wins, so none can reach a secret).
+          - "_r[_d.index(1)] == {'level': 'Metadata', 'resources': _sensitive}"
+          - _r[:_d.index(1)] | selectattr('level', 'in', ['Request', 'RequestResponse']) | list | length == 0
+          # the lease and event drops are scoped (each has users or userGroups)
+          - _le_all | int == 4
+          - _le_scoped | int == _le_all | int
           # never RequestResponse
           - _r | selectattr('level', 'equalto', 'RequestResponse') | list | length == 0
         fail_msg: "{{ item.item }} policy: {{ _r | default('unparsed') }}"

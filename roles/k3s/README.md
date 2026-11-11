@@ -61,6 +61,10 @@ arguments to this block instead. `tests/k3s-join-server` fails if the key appear
 | `k3s_audit_always_log_users` | `[system:serviceaccount:atlas-system:k8s-mcp]` | Users whose every request is recorded |
 | `k3s_audit_always_log_groups` | `[olympus:agents-view]` | Groups whose every request is recorded |
 | `k3s_audit_drop_lease_names` | `[plndr-cp-lock, plndr-svcs-lock]` | kube-system Leases whose get/update is never recorded, for any user (empty omits the rule) |
+| `k3s_audit_discovery_drop_users` | `[system:serviceaccount:atlas-system:k8s-mcp]` | Always-logged users whose API discovery reads (`GET /api`, `/apis` and below) are not recorded (empty omits the rule) |
+| `k3s_audit_drop_election_endpoints` | the NFS provisioner's lock | `{namespace, name}` Endpoints used as an election lock: get/update/patch by that namespace's ServiceAccounts not recorded |
+| `k3s_audit_drop_sa_writes` | ARC runner-set listeners | `{namespace, group, resources}`: update/patch by that namespace's ServiceAccounts not recorded |
+| `k3s_audit_machine_status_groups` | core, apps, batch, policy, autoscaling, networking, storage, Flux, ARC, ESO, cert-manager | API groups whose `*/status` update/patch by nodes, ServiceAccounts and the control plane is not recorded (empty omits the rules) |
 
 Disk use per server is bounded by maxsize x (maxbackup + 1): 600 MB with the defaults.
 
@@ -68,6 +72,9 @@ What the policy records (first matching rule wins; Metadata = who, what, when, v
 response code, never a body; Request adds the request body, never the response):
 
 - dropped: `/healthz*`, `/readyz*`, `/livez*`, `/metrics`, `/version`, `/openapi*`;
+- dropped: API discovery reads (`GET /api`, `/api/*`, `/apis`, `/apis/*`) by the users in
+  `k3s_audit_discovery_drop_users` (the Kubernetes MCP server's background discovery polling).
+  Non-resource URLs never match a resource request, so every object they read is still recorded;
 - Metadata for every request (reads included) by the always-logged users and groups,
   ahead of all noise rules (an empty list omits its rule);
 - dropped: get/update/patch of the kube-system Leases in `k3s_audit_drop_lease_names`
@@ -76,11 +83,20 @@ response code, never a body; Request adds the request body, never the response):
   not by user. Create and delete of those Leases are still recorded, and so are list and
   watch of Leases without a name (a `resourceNames` rule never matches a request without a
   name; they are recorded at Metadata);
+- dropped: get/update/patch of each Endpoints election lock in
+  `k3s_audit_drop_election_endpoints`, by the ServiceAccounts of its namespace only (create,
+  delete and every other user are recorded); update/patch by the ServiceAccounts of a namespace
+  to the resources in `k3s_audit_drop_sa_writes` (the runner-set listeners scaling their
+  EphemeralRunnerSet);
 - dropped: reads by `system:nodes`, and by the control plane and k3s itself
   (`system:kube-proxy`, `system:kube-controller-manager`, `system:kube-scheduler`,
   `system:apiserver`, `system:k3s-supervisor`, `system:k3s-controller`,
   `k3s-cloud-controller-manager`; one list in the template, used by every machine rule);
-  kubelet `nodes/status` and `pods/status` update/patch heartbeats by `system:nodes`;
+  `*/status` update/patch (kubelet heartbeats, controllers reporting their own status) by
+  nodes, ServiceAccounts and that control-plane list, in the API groups of
+  `k3s_audit_machine_status_groups` (a policy rule matches groups exactly; a status write in
+  another group is recorded at Metadata); access reviews (`authorization.k8s.io`, webhook
+  authorization by kubelets and aggregated APIs) asked by the same identities;
   lease get/list/watch/update/patch and all event requests, but only by nodes,
   ServiceAccounts and that control-plane list (a person touching a lease or deleting
   events falls through and is recorded);

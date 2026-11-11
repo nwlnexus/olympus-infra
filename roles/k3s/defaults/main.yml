@@ -133,3 +133,40 @@ k3s_audit_always_log_groups:
 k3s_audit_drop_lease_names:
   - "plndr-cp-lock"
   - "plndr-svcs-lock"
+# Always-recorded users whose API discovery reads (GET /api, /apis and below) are
+# not recorded: the Kubernetes MCP server polls discovery about eight times a
+# minute. Its resource requests stay recorded (rule b). An empty list omits the rule.
+k3s_audit_discovery_drop_users:
+  - "system:serviceaccount:atlas-system:k8s-mcp"
+# Endpoints objects used as a leader-election lock: get/update/patch of that named
+# object by the ServiceAccounts of its namespace is not recorded (the NFS
+# provisioner renews its lock about 30 times a minute). One rule per entry.
+k3s_audit_drop_election_endpoints:
+  - namespace: "nfs-provisioner"
+    name: "cluster.local-nfs-provisioner-nfs-subdir-external-provisioner"
+# Routine update/patch by the ServiceAccounts of a namespace to the listed resources
+# of one API group (create and delete stay recorded). The runner-scale-set
+# listeners patch their EphemeralRunnerSet whenever the job count changes.
+k3s_audit_drop_sa_writes:
+  - namespace: "arc-system"
+    group: "actions.github.com"
+    resources: ["ephemeralrunnersets"]
+# API groups whose status subresource writes (*/status, update/patch) by nodes,
+# ServiceAccounts and the control plane are not recorded ("" is the core group). A
+# policy rule matches API groups exactly, so each group is listed. An empty list
+# omits the two rules (kubelet heartbeats would then be recorded).
+k3s_audit_machine_status_groups:
+  - ""
+  - "apps"
+  - "batch"
+  - "policy"
+  - "autoscaling"
+  - "networking.k8s.io"
+  - "storage.k8s.io"
+  - "kustomize.toolkit.fluxcd.io"
+  - "helm.toolkit.fluxcd.io"
+  - "source.toolkit.fluxcd.io"
+  - "notification.toolkit.fluxcd.io"
+  - "actions.github.com"
+  - "external-secrets.io"
+  - "cert-manager.io"

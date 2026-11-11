@@ -78,14 +78,36 @@ response code, never a body; Request adds the request body, never the response):
 - Request for every other create/update/patch/delete/deletecollection;
 - Metadata for everything else.
 
-Enable it by setting `k3s_audit_log_enabled: true` in the servers' group vars
-(`compute_hub` and `agent_services` together, so every server agrees; then add
-`k3s_audit_log_enabled` to the cluster-wide list in `tests/k3s-join-server/render.yml` and
-drop its "inventory leaves it off" assert), then stage it with `playbooks/push/k3s-audit-log.yml`
+It is on for the cluster: `k3s_audit_log_enabled: true` in the `compute_hub` and
+`agent_services` group vars (every server must agree; `tests/k3s-join-server` checks it), so
+a server joined later gets the same config. Stage it with `playbooks/push/k3s-audit-log.yml`
 (`--limit <server>`, `--check --diff` first). The play never restarts k3s; the flags take
 effect at the next restart. Restart one server at a time, the canary first, with
-`scripts/k3s-health-gate.sh` before and after each, and on each check `journalctl -u k3s`
-for audit or policy errors, that `/readyz` answers ok and that `audit.log` grows.
+`scripts/k3s-health-gate.sh` before and after each.
+
+The flags come from config.yaml, so they do not appear on the `k3s server` command line
+(`pgrep -af 'k3s server'` shows no audit flag). Audit logging is active on a server when
+its log exists, is non-empty and keeps growing; run this twice a minute apart and compare
+the timestamps:
+
+```sh
+sudo test -s /var/lib/rancher/k3s/server/logs/audit.log && sudo stat -c '%s %Y' /var/lib/rancher/k3s/server/logs/audit.log
+```
+
+### What to check on the first server
+
+- `sudo journalctl -u k3s --since -10min | grep -iE 'audit|policy'` shows no error;
+- `sudo k3s kubectl get --raw /readyz` prints `ok`, and the node is Ready;
+- the audit log exists, is non-empty and grows (command above);
+- `scripts/k3s-health-gate.sh` passes. Only then restart the next server.
+
+### Rollback on a server
+
+If kube-apiserver does not come up after a restart with the flags: remove the marked
+`k3s_audit_log` block (`# BEGIN/END ANSIBLE MANAGED - k3s_audit_log`) from
+`/etc/rancher/k3s/config.yaml` on that server, or run the play with
+`-e k3s_audit_log_enabled=false --limit <host>`; restart k3s on it and run
+`scripts/k3s-health-gate.sh`. Do not restart the next server until the first is healthy.
 
 To disable, set the flag to false and run the play: it removes the block and keeps the
 policy file and the logs. A server keeps logging until its next restart (the running

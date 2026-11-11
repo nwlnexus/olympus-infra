@@ -32,7 +32,7 @@
         that: gv_agent_services[item] == gv_compute_hub[item]
         fail_msg: "{{ item }} differs: agent_services={{ gv_agent_services[item] }} compute_hub={{ gv_compute_hub[item] }}"
         quiet: true
-      loop: [k3s_ha, k3s_vip, k3s_token_op_ref, k3s_disable, k3s_tls_san, k3s_kubelet_args, k3s_etcd_expose_metrics,
+      loop: [k3s_ha, k3s_vip, k3s_token_op_ref, k3s_disable, k3s_tls_san, k3s_kubelet_args, k3s_etcd_expose_metrics, k3s_audit_log_enabled,
              k3s_external_server, k3s_kubeconfig_path, tailscale_tags, tailscale_accept_dns,
              tailscale_accept_routes, tailscale_services, ansible_pull_skip_tags,
              baseline_unattended_auto_reboot, baseline_k8s_node_network, iscsi_mode, atlas_state]
@@ -155,12 +155,12 @@
         file: "{{ repo }}/roles/k3s/defaults/main.yml"
         name: k3s_def
 
-    - name: The audit log is opt-in and the shipped inventory leaves it off
+    - name: The audit log is opt-in in the role and on for the cluster's servers
       ansible.builtin.assert:
         that:
           - not k3s_def.k3s_audit_log_enabled
-          - "'k3s_audit_log_enabled' not in gv_compute_hub"
-          - "'k3s_audit_log_enabled' not in gv_agent_services"
+          - gv_compute_hub.k3s_audit_log_enabled is sameas true
+          - gv_agent_services.k3s_audit_log_enabled is sameas true
 
     - name: Render the joining-server config with the audit log on
       ansible.builtin.template:

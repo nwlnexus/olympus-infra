@@ -18,6 +18,13 @@
 #   4. `journalctl -u k3s` shows no audit or policy error, /readyz answers ok, and
 #      <k3s_audit_log_dir>/audit.log grows; scripts/k3s-health-gate.sh passes again
 #      before the next server.
+# The flags come from config.yaml, so they do not appear on the `k3s server` command
+# line. Audit logging is active when the log exists, is non-empty and grows:
+#   sudo test -s /var/lib/rancher/k3s/server/logs/audit.log && sudo stat -c '%s %Y' /var/lib/rancher/k3s/server/logs/audit.log
+# Rollback on a server whose kube-apiserver does not come up: rerun with
+# -e k3s_audit_log_enabled=false --limit <host> (or remove the marked k3s_audit_log
+# block by hand), restart k3s there, run the health gate; never restart the next
+# server until that one is healthy (roles/k3s/README.md).
 # Needs no secrets. Run from olympus-infra with inventory/olympus.yml:
 #   ansible-playbook -i inventory/olympus.yml playbooks/push/k3s-audit-log.yml \
 #     --limit <server> --check --diff

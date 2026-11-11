@@ -330,17 +330,19 @@
       loop:
         - name: default
           users: "{{ k3s_def.k3s_audit_always_log_users }}"
+          request_writers: "{{ k3s_def.k3s_audit_request_write_users }}"
           groups: "{{ k3s_def.k3s_audit_always_log_groups }}"
           leases: "{{ k3s_def.k3s_audit_drop_lease_names }}"
           discovery: "{{ k3s_def.k3s_audit_discovery_drop_users }}"
           endpoints: "{{ k3s_def.k3s_audit_drop_election_endpoints }}"
           sa_writes: "{{ k3s_def.k3s_audit_drop_sa_writes }}"
           status: "{{ k3s_def.k3s_audit_machine_status_groups }}"
-        - {name: empty, users: [], groups: [], leases: [], discovery: [], endpoints: [], sa_writes: [], status: []}
+        - {name: empty, users: [], request_writers: [], groups: [], leases: [], discovery: [], endpoints: [], sa_writes: [], status: []}
       loop_control:
         label: "{{ item.name }}"
       vars:
         k3s_audit_always_log_users: "{{ item.users }}"
+        k3s_audit_request_write_users: "{{ item.request_writers }}"
         k3s_audit_always_log_groups: "{{ item.groups }}"
         k3s_audit_drop_lease_names: "{{ item.leases }}"
         k3s_audit_discovery_drop_users: "{{ item.discovery }}"
@@ -359,9 +361,9 @@
         _p: "{{ item.content | b64decode | from_yaml }}"
         _r: "{{ _p.rules }}"
         _agents: "{{ item.item == 'default' }}"
-        # Rule c starts three later with the defaults: the discovery drop (a2) and the
-        # always-logged users/groups rules (b).
-        _o: "{{ 3 if _agents else 0 }}"
+        # Rule c starts four later with the defaults: the discovery drop (a2), the
+        # Request-level machine writers and the always-logged users/groups rules (b).
+        _o: "{{ 4 if _agents else 0 }}"
         _rule_keys: [level, users, userGroups, verbs, resources, namespaces, nonResourceURLs, omitStages]
         _res_keys: [group, resources, resourceNames]
         _levels: [None, Metadata, Request, RequestResponse]
@@ -381,6 +383,11 @@
         _lease_verbs: [get, list, watch, update, patch]
         _status_res: "{{ k3s_def.k3s_audit_machine_status_groups | map('community.general.dict_kv', 'group') | map('combine', {'resources': ['*/status']}) | list }}"
         _authz: [{group: authorization.k8s.io}]
+        # The kinds the cluster actuator patches (olympus-sdk#922), recorded at Request level.
+        _actuated:
+          - {group: apps, resources: [deployments, statefulsets, daemonsets]}
+          - {group: kustomize.toolkit.fluxcd.io, resources: [kustomizations]}
+          - {group: helm.toolkit.fluxcd.io, resources: [helmreleases]}
         # a2. Discovery reads of the always-logged users (defaults only).
         _discovery:
           level: None
@@ -460,8 +467,12 @@
           - (_r | select('equalto', _discovery) | list | length) == (1 if _agents else 0)
           - _r | selectattr('nonResourceURLs', 'defined') | selectattr('resources', 'defined') | list | length == 0
           # b. always-recorded identities (only when configured), before c
-          - "(not _agents) or (_r[2] == {'level': 'Metadata', 'users': k3s_def.k3s_audit_always_log_users})"
-          - "(not _agents) or (_r[3] == {'level': 'Metadata', 'userGroups': k3s_def.k3s_audit_always_log_groups})"
+          - "(not _agents) or (_r[2] == {'level': 'Request', 'users': k3s_def.k3s_audit_request_write_users,
+               'verbs': ['create', 'update', 'patch', 'delete', 'deletecollection'], 'resources': _actuated})"
+          - "(not _agents) or ('system:serviceaccount:atlas-system:atlas-cluster-actuator' in _r[2].users)"
+          - "(not _agents) or (_r[3] == {'level': 'Metadata', 'users': k3s_def.k3s_audit_always_log_users})"
+          - "(not _agents) or (_r[4] == {'level': 'Metadata', 'userGroups': k3s_def.k3s_audit_always_log_groups})"
+          - "_agents or (_r | selectattr('level', 'equalto', 'Request') | selectattr('users', 'defined') | list | length == 0)"
           - "_agents or (_r | selectattr('users', 'defined') | map(attribute='users') | flatten
                | select('equalto', 'system:serviceaccount:atlas-system:k8s-mcp') | list | length == 0)"
           # c to g, exactly and in order
@@ -484,7 +495,10 @@
           # Rule d is the first rule that names secrets, is unconditional Metadata, and no rule
           # above Metadata comes before it (first match wins, so none can reach a secret).
           - "_r[_d.index(1)] == {'level': 'Metadata', 'resources': _sensitive}"
-          - _r[:_d.index(1)] | selectattr('level', 'in', ['Request', 'RequestResponse']) | list | length == 0
+          # Nothing before d records a body, except the actuator's write rule, which names only
+          # the five actuated kinds (never secrets, configmaps or token requests).
+          - _r[:_d.index(1)] | selectattr('level', 'in', ['Request', 'RequestResponse']) | reject('equalto', _r[2]) | list | length == 0
+          - _r[2].level != 'Request' or (_r[2].resources | map(attribute='resources') | flatten | intersect(['secrets', 'configmaps', 'serviceaccounts/token', 'tokenreviews', '*']) | length == 0)
           # the lease and event drops are scoped (each has users or userGroups)
           - _le_all | int == 4
           - _le_scoped | int == _le_all | int

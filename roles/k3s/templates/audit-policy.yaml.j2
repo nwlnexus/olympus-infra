@@ -64,6 +64,24 @@ rules:
       - "/apis"
       - "/apis/*"
 {% endif %}
+{% if k3s_audit_request_write_users | default([]) | length > 0 %}
+  # b. Writes by these machine identities to the workload and Flux kinds only, with the
+  #    request body (the cluster actuator's signed patches, olympus-sdk#922): which fields
+  #    a command changed is on record. Never Secrets or ConfigMaps (those stay Metadata, d).
+  - level: Request
+    users:
+{% for u in k3s_audit_request_write_users %}
+      - "{{ u }}"
+{% endfor %}
+    verbs: ["create", "update", "patch", "delete", "deletecollection"]
+    resources:
+      - group: "apps"
+        resources: ["deployments", "statefulsets", "daemonsets"]
+      - group: "kustomize.toolkit.fluxcd.io"
+        resources: ["kustomizations"]
+      - group: "helm.toolkit.fluxcd.io"
+        resources: ["helmreleases"]
+{% endif %}
 {% if k3s_audit_always_log_users | default([]) | length > 0 %}
   # b. Always-recorded users (agent identities): every request, reads included.
   - level: Metadata

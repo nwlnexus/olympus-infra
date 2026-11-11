@@ -13,7 +13,8 @@
 #    the marked block once in both the join template and the primary's inline config
 #    (same marker and text as tasks/audit-log.yml, blockinfile a no-op); no top-level key
 #    is ever duplicated; templates/audit-policy.yaml.j2 is a valid audit Policy with the
-#    rules in the required order, with and without the always-logged users/groups.
+#    rules in the required order, with and without the always-logged users/groups and
+#    the named noise drops (olympus-sdk#932).
 - name: k3s join-server render checks
   hosts: localhost
   gather_facts: false
@@ -331,13 +332,21 @@
           users: "{{ k3s_def.k3s_audit_always_log_users }}"
           groups: "{{ k3s_def.k3s_audit_always_log_groups }}"
           leases: "{{ k3s_def.k3s_audit_drop_lease_names }}"
-        - {name: empty, users: [], groups: [], leases: []}
+          discovery: "{{ k3s_def.k3s_audit_discovery_drop_users }}"
+          endpoints: "{{ k3s_def.k3s_audit_drop_election_endpoints }}"
+          sa_writes: "{{ k3s_def.k3s_audit_drop_sa_writes }}"
+          status: "{{ k3s_def.k3s_audit_machine_status_groups }}"
+        - {name: empty, users: [], groups: [], leases: [], discovery: [], endpoints: [], sa_writes: [], status: []}
       loop_control:
         label: "{{ item.name }}"
       vars:
         k3s_audit_always_log_users: "{{ item.users }}"
         k3s_audit_always_log_groups: "{{ item.groups }}"
         k3s_audit_drop_lease_names: "{{ item.leases }}"
+        k3s_audit_discovery_drop_users: "{{ item.discovery }}"
+        k3s_audit_drop_election_endpoints: "{{ item.endpoints }}"
+        k3s_audit_drop_sa_writes: "{{ item.sa_writes }}"
+        k3s_audit_machine_status_groups: "{{ item.status }}"
 
     - name: Read the audit policy renders
       ansible.builtin.slurp:
@@ -350,8 +359,9 @@
         _p: "{{ item.content | b64decode | from_yaml }}"
         _r: "{{ _p.rules }}"
         _agents: "{{ item.item == 'default' }}"
-        # Rule c starts two later when the always-logged users/groups rules are present.
-        _o: "{{ 2 if _agents else 0 }}"
+        # Rule c starts three later with the defaults: the discovery drop (a2) and the
+        # always-logged users/groups rules (b).
+        _o: "{{ 3 if _agents else 0 }}"
         _rule_keys: [level, users, userGroups, verbs, resources, namespaces, nonResourceURLs, omitStages]
         _res_keys: [group, resources, resourceNames]
         _levels: [None, Metadata, Request, RequestResponse]
@@ -369,7 +379,14 @@
         _leases: [{group: coordination.k8s.io, resources: [leases]}]
         _events: [{group: "", resources: [events]}, {group: events.k8s.io, resources: [events]}]
         _lease_verbs: [get, list, watch, update, patch]
-        _heartbeat: [{group: "", resources: [nodes/status, pods/status]}]
+        _status_res: "{{ k3s_def.k3s_audit_machine_status_groups | map('community.general.dict_kv', 'group') | map('combine', {'resources': ['*/status']}) | list }}"
+        _authz: [{group: authorization.k8s.io}]
+        # a2. Discovery reads of the always-logged users (defaults only).
+        _discovery:
+          level: None
+          users: "{{ k3s_def.k3s_audit_discovery_drop_users }}"
+          verbs: [get]
+          nonResourceURLs: [/api, /api/*, /apis, /apis/*]
         _sensitive:
           - {group: "", resources: [secrets, configmaps, serviceaccounts/token]}
           - {group: authentication.k8s.io, resources: [tokenreviews]}
@@ -380,11 +397,29 @@
           namespaces: [kube-system]
           resources: [{group: coordination.k8s.io, resources: [leases], resourceNames: "{{ k3s_def.k3s_audit_drop_lease_names }}"}]
         _vip_rules: "{{ [_vip] if _agents else [] }}"
+        # Named election Endpoints and routine ServiceAccount writes, scoped to the namespace's
+        # ServiceAccounts (defaults only; one rule per entry).
+        _ep: "{{ k3s_def.k3s_audit_drop_election_endpoints[0] }}"
+        _sw: "{{ k3s_def.k3s_audit_drop_sa_writes[0] }}"
+        _named_rules: >-
+          {{ [
+               {'level': 'None', 'userGroups': ['system:serviceaccounts:' ~ _ep.namespace], 'verbs': ['get', 'update', 'patch'],
+                'namespaces': [_ep.namespace], 'resources': [{'group': '', 'resources': ['endpoints'], 'resourceNames': [_ep.name]}]},
+               {'level': 'None', 'userGroups': ['system:serviceaccounts:' ~ _sw.namespace], 'verbs': ['update', 'patch'],
+                'resources': [{'group': _sw.group, 'resources': _sw.resources}]}
+             ] if _agents else [] }}
+        _status_rules: >-
+          {{ [
+               {'level': 'None', 'userGroups': _machine, 'verbs': ['update', 'patch'], 'resources': _status_res},
+               {'level': 'None', 'users': _cp, 'verbs': ['update', 'patch'], 'resources': _status_res}
+             ] if _agents else [] }}
         # Expected rules from c on, in order (the agent rules b come before them).
-        _tail:
+        _reads_rules:
           - {level: None, userGroups: [system:nodes], verbs: "{{ _reads }}"}
           - {level: None, users: "{{ _cp }}", verbs: "{{ _reads }}"}
-          - {level: None, userGroups: [system:nodes], verbs: [update, patch], resources: "{{ _heartbeat }}"}
+        _tail:
+          - {level: None, userGroups: "{{ _machine }}", verbs: [create], resources: "{{ _authz }}"}
+          - {level: None, users: "{{ _cp }}", verbs: [create], resources: "{{ _authz }}"}
           - {level: None, userGroups: "{{ _machine }}", verbs: "{{ _lease_verbs }}", resources: "{{ _leases }}"}
           - {level: None, users: "{{ _cp }}", verbs: "{{ _lease_verbs }}", resources: "{{ _leases }}"}
           - {level: None, userGroups: "{{ _machine }}", resources: "{{ _events }}"}
@@ -396,16 +431,16 @@
           - {level: Request, verbs: "{{ _writes }}"}
           - {level: Metadata}
         # Per rule: the resource names it lists (empty = no resources key).
-        _names: "{{ _r | map(attribute='resources', default=[]) | map('map', attribute='resources') | map('flatten') | list }}"
+        _names: "{{ _r | map(attribute='resources', default=[]) | map('map', attribute='resources', default=[]) | map('flatten') | list }}"
         # Index of the first rule that names secrets (rule d).
         _d: "{{ _names | map('intersect', ['secrets']) | map('length') | list | ansible.builtin.flatten }}"
         _r_unnamed: "{{ _r | reject('equalto', _vip) | list }}"
         _scoped: "{{ (_r | selectattr('users', 'defined') | list) + (_r | rejectattr('users', 'defined') | selectattr('userGroups', 'defined') | list) }}"
         _le_all: >-
-          {{ _r_unnamed | map(attribute='resources', default=[]) | map('map', attribute='resources') | map('flatten')
+          {{ _r_unnamed | map(attribute='resources', default=[]) | map('map', attribute='resources', default=[]) | map('flatten')
              | map('intersect', ['leases', 'events']) | select | list | length }}
         _le_scoped: >-
-          {{ _scoped | map(attribute='resources', default=[]) | map('map', attribute='resources') | map('flatten')
+          {{ _scoped | map(attribute='resources', default=[]) | map('map', attribute='resources', default=[]) | map('flatten')
              | map('intersect', ['leases', 'events']) | select | list | length }}
       ansible.builtin.assert:
         that:
@@ -420,18 +455,28 @@
           # a. probes dropped first
           - _r[0].level == 'None'
           - _r[0].nonResourceURLs == ['/healthz*', '/readyz*', '/livez*', '/metrics', '/version', '/openapi*']
+          # a2. discovery reads of the always-logged users, before b (only when configured)
+          - "(not _agents) or (_r[1] == _discovery)"
+          - (_r | select('equalto', _discovery) | list | length) == (1 if _agents else 0)
+          - _r | selectattr('nonResourceURLs', 'defined') | selectattr('resources', 'defined') | list | length == 0
           # b. always-recorded identities (only when configured), before c
-          - "(not _agents) or (_r[1] == {'level': 'Metadata', 'users': k3s_def.k3s_audit_always_log_users})"
-          - "(not _agents) or (_r[2] == {'level': 'Metadata', 'userGroups': k3s_def.k3s_audit_always_log_groups})"
+          - "(not _agents) or (_r[2] == {'level': 'Metadata', 'users': k3s_def.k3s_audit_always_log_users})"
+          - "(not _agents) or (_r[3] == {'level': 'Metadata', 'userGroups': k3s_def.k3s_audit_always_log_groups})"
           - "_agents or (_r | selectattr('users', 'defined') | map(attribute='users') | flatten
                | select('equalto', 'system:serviceaccount:atlas-system:k8s-mcp') | list | length == 0)"
           # c to g, exactly and in order
-          - _r[1 + (_o | int):] == _vip_rules + _tail
+          - _r[1 + (_o | int):] == _vip_rules + _named_rules + _reads_rules + _status_rules + _tail
           # the named-Lease drop: once with the defaults, after b and before d; absent when empty
           - (_r | select('equalto', _vip) | list | length) == (1 if _agents else 0)
-          - (not _agents) or (2 < _r.index(_vip) < _d.index(1))
+          - (not _agents) or (3 < _r.index(_vip) < _d.index(1))
           - _r | selectattr('resources', 'defined') | map(attribute='resources') | flatten
-            | selectattr('resourceNames', 'defined') | list | length == (1 if _agents else 0)
+            | selectattr('resourceNames', 'defined') | list | length == (2 if _agents else 0)
+          # every None rule that names resources is scoped to users or groups, except the named VIP Leases
+          - _r_unnamed | selectattr('level', 'equalto', 'None') | selectattr('resources', 'defined')
+            | rejectattr('users', 'defined') | rejectattr('userGroups', 'defined') | list | length == 0
+          # no None rule matches people: the scoped drops name machine identities only
+          - _r | selectattr('level', 'equalto', 'None') | selectattr('userGroups', 'defined') | map(attribute='userGroups') | flatten
+            | reject('match', '^system:(nodes|serviceaccounts)(:[a-z0-9-]+)?$') | list | length == 0
           # no rule drops leases for every user without naming them
           - _r | selectattr('level', 'equalto', 'None') | rejectattr('users', 'defined') | rejectattr('userGroups', 'defined')
             | selectattr('resources', 'defined') | map(attribute='resources') | flatten

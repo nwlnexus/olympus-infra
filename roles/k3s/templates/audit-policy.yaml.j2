@@ -21,6 +21,13 @@
     users:
       - "{{ _cp_users | join('"\n      - "') }}"
 {%- endmacro %}
+{% macro status_resources() %}
+    resources:
+{% for g in k3s_audit_machine_status_groups %}
+      - group: "{{ g }}"
+        resources: ["*/status"]
+{% endfor %}
+{%- endmacro %}
 {% macro machine_groups() %}
     userGroups:
       - "{{ _machine_groups | join('"\n      - "') }}"
@@ -40,6 +47,23 @@ rules:
       - "/metrics"
       - "/version"
       - "/openapi*"
+{% if k3s_audit_discovery_drop_users | default([]) | length > 0 %}
+  # a2. API discovery (GET /api, /apis and the group-version documents under them) by
+  #     these always-recorded users: a client's background discovery polling, which
+  #     names no object. Before rule b; every resource request they make is still
+  #     recorded. nonResourceURLs never match a resource request.
+  - level: None
+    users:
+{% for u in k3s_audit_discovery_drop_users %}
+      - "{{ u }}"
+{% endfor %}
+    verbs: ["get"]
+    nonResourceURLs:
+      - "/api"
+      - "/api/*"
+      - "/apis"
+      - "/apis/*"
+{% endif %}
 {% if k3s_audit_always_log_users | default([]) | length > 0 %}
   # b. Always-recorded users (agent identities): every request, reads included.
   - level: Metadata
@@ -72,6 +96,31 @@ rules:
           - "{{ n }}"
 {% endfor %}
 {% endif %}
+{% for e in k3s_audit_drop_election_endpoints | default([]) %}
+  # c. Leader election on a named Endpoints object ({{ e.namespace }}/{{ e.name }}):
+  #    get/update every few seconds by a ServiceAccount of that namespace. Create and
+  #    delete, and any other user, are still recorded.
+  - level: None
+    userGroups:
+      - "system:serviceaccounts:{{ e.namespace }}"
+    verbs: ["get", "update", "patch"]
+    namespaces: ["{{ e.namespace }}"]
+    resources:
+      - group: ""
+        resources: ["endpoints"]
+        resourceNames: ["{{ e.name }}"]
+{% endfor %}
+{% for w in k3s_audit_drop_sa_writes | default([]) %}
+  # c. Routine writes by the ServiceAccounts of {{ w.namespace }} to {{ w.group }}
+  #    {{ w.resources | join(', ') }} (update/patch only; create and delete are recorded).
+  - level: None
+    userGroups:
+      - "system:serviceaccounts:{{ w.namespace }}"
+    verbs: ["update", "patch"]
+    resources:
+      - group: "{{ w.group }}"
+        resources: ["{{ w.resources | join('", "') }}"]
+{% endfor %}
   # c. Node reads (kubelets): constant watch traffic.
   - level: None
     userGroups:
@@ -81,14 +130,34 @@ rules:
   - level: None
 {{ cp_users() }}
     verbs: ["get", "list", "watch"]
-  # c. Kubelet status heartbeats.
+{% if k3s_audit_machine_status_groups | default([]) | length > 0 %}
+  # c. Status subresource writes by nodes and ServiceAccounts (kubelet heartbeats,
+  #    controllers reporting their own status): a status write cannot change a spec.
+  #    People fall through.
   - level: None
-    userGroups:
-      - "system:nodes"
+{{ machine_groups() }}
     verbs: ["update", "patch"]
+{{ status_resources().rstrip() }}
+  # c. Status subresource writes by the control plane.
+  - level: None
+{{ cp_users() }}
+    verbs: ["update", "patch"]
+{{ status_resources().rstrip() }}
+{% endif %}
+  # c. Access reviews (authorization.k8s.io) asked by nodes and ServiceAccounts:
+  #    webhook authorization of kubelets and aggregated APIs, a question, never a
+  #    change. Token reviews stay recorded (rule d). People fall through.
+  - level: None
+{{ machine_groups() }}
+    verbs: ["create"]
     resources:
-      - group: ""
-        resources: ["nodes/status", "pods/status"]
+      - group: "authorization.k8s.io"
+  # c. Access reviews asked by the control plane.
+  - level: None
+{{ cp_users() }}
+    verbs: ["create"]
+    resources:
+      - group: "authorization.k8s.io"
   # c. Leader-election leases renewed by nodes and ServiceAccounts (people fall through).
   - level: None
 {{ machine_groups() }}

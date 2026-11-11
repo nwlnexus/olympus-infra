@@ -299,9 +299,10 @@ def test_two_applications(roles_path):
               and a["destinations"] == [{"type": "public", "uri": "k8s-mcp.nwlnexus.io"}]
               and a["policies"] == [{"id": "pol-k8s-mcp-allow-owner", "precedence": 1}]
               and a["oauth_configuration"]["enabled"] and dcr["enabled"]
-              and dcr["allowed_uris"] == ["https://claude.ai/*"]
+              and dcr["allowed_uris"] == []
               and dcr["allow_any_on_localhost"] is False and dcr["allow_any_on_loopback"] is False,
-              "k8s_mcp_app_body: self-hosted, bare host, allow-owner only, Managed OAuth + DCR for claude.ai", a)
+              "k8s_mcp_app_body: self-hosted, bare host, allow-owner only, Managed OAuth, no direct claude.ai "
+              "(no redirect URIs without the portal callbacks)", a)
     dns = [d for d in bodies(fresh, "POST", "/dns_records") if d["name"] == "k8s-mcp.nwlnexus.io"]
     check(len(dns) == 1 and dns[0]["type"] == "CNAME" and dns[0]["content"] == "tun-1.cfargotunnel.com"
           and dns[0]["proxied"] is True, "k8s_mcp_dns: one proxied CNAME to the tunnel", dns)
@@ -439,8 +440,11 @@ def test_mcp_lists(roles_path):
         write_paths(new))
     k8s_app = bodies(new, "PUT", "/access/apps/app-k8s-mcp")
     check(k8s_app and k8s_app[0]["oauth_configuration"]["dynamic_client_registration"]["allowed_uris"]
-          == ["https://claude.ai/*"] + K8S_CALLBACKS["cloudflare_access_k8s_mcp_portal_callback_uris"],
-          "mcp_k8s_backend_dcr: the k8s-mcp application allows claude.ai and the three portal callbacks", k8s_app)
+          == K8S_CALLBACKS["cloudflare_access_k8s_mcp_portal_callback_uris"]
+          and k8s_app[0]["oauth_configuration"]["dynamic_client_registration"]["allow_any_on_localhost"] is False
+          and k8s_app[0]["oauth_configuration"]["dynamic_client_registration"]["allow_any_on_loopback"] is False,
+          "mcp_k8s_backend_dcr: the k8s-mcp application allows exactly the three portal callbacks "
+          "(no claude.ai, no localhost or loopback)", k8s_app)
     check(bodies(new, "POST", "/mcp/servers") == [
         {"id": "k8s", "name": "k8s", "hostname": "https://k8s-mcp.nwlnexus.io/mcp", "auth_type": "oauth"}],
         "mcp_k8s_server: server k8s, OAuth, the backend's /mcp")

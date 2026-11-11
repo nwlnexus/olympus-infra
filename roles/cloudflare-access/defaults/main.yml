@@ -182,7 +182,11 @@ cloudflare_access_memory_app:
 # Decision: k8s-mcp uses the same session and grant lifetimes as memory (owner-only, read-only backend); set
 # the per-application keys (session_duration, oauth_access_token_lifetime, oauth_grant_session_duration) to
 # tighten them.
-cloudflare_access_k8s_mcp_oauth_allowed_redirect_uris: "{{ cloudflare_access_oauth_allowed_redirect_uris }}"
+# No base redirect URIs (olympus-sdk#929 security review): the k8s-mcp backend is reachable through the MCP
+# portals only, never as a direct claude.ai connector (the personal/work guard cannot judge a direct
+# connector's arbitrary display name; claude.ai uses the owner portal). Its DCR allows only the portal
+# callbacks below (no claude.ai, no localhost or loopback). Memory keeps https://claude.ai/* for its connector.
+cloudflare_access_k8s_mcp_oauth_allowed_redirect_uris: []
 # Empty in the role: the playbook sets the dashboard callback for server id k8s and the callbacks of the
 # portals that hold it (olympus-sdk#929), as cloudflare_access_mcp_memory_callback_uris has them for memory.
 cloudflare_access_k8s_mcp_portal_callback_uris: []
@@ -223,8 +227,9 @@ cloudflare_access_k8s_mcp_app:
 # Removing a server or portal from the lists deletes nothing either.
 cloudflare_access_mcp_portal_enabled: false
 
-# Server ids the personal/work guard (olympus-sdk#929) judges; the role refuses any other id, which the guard
-# would never see. Change it only together with the guard.
+# Allowed portal server ids (olympus-sdk#929); the role refuses any other id. memory, k8s and cluster are
+# personal-only (the guard judges them); toolbox is allowed but not yet guarded. Change it only together with
+# the guard.
 cloudflare_access_mcp_allowed_server_ids: [memory, k8s, cluster, toolbox]
 
 # MCP servers. Keys: id (required, 1-32 [a-z0-9_-], also the tool prefix in a portal), url (required, https),

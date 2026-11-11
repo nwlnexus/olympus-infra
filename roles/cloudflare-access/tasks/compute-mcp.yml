@@ -49,7 +49,7 @@
       - _server_ids | unique | length == _server_ids | length
       - _portal_ids | unique | length == _portal_ids | length
       - _hostnames | unique | length == _hostnames | length
-      # The personal/work guard only judges these server ids (olympus-sdk#929): any other id would be unguarded.
+      # Only the allowed server ids (olympus-sdk#929): any other id would be unguarded.
       - _server_ids | difference(cloudflare_access_mcp_allowed_server_ids) | length == 0
       - _cfa_mcp_server_list | map(attribute='url', default='') | select('match', '^https://') | list | length
         == _server_ids | length
@@ -66,8 +66,40 @@
     fail_msg: >-
       cloudflare-access MCP portals: server and portal ids must be 1-32 characters [a-z0-9_-] and unique, server
       ids within cloudflare_access_mcp_allowed_server_ids ({{ cloudflare_access_mcp_allowed_server_ids }}: the
-      only ids the personal/work guard judges), server URLs https, code_mode one of off/opt_in/default_on/enforced,
+      only ids allowed; the personal/work guard judges memory, k8s and cluster),, server URLs https, code_mode one of off/opt_in/default_on/enforced,
       portal hostnames unique and inside {{ cloudflare_access_dns_zone }}, every portal with at least one server,
       each declared once, in cloudflare_access_mcp_servers, and the memory application must keep
       https://claude.ai/* in its redirect URIs.
+    quiet: true
+
+- name: Check the guarded servers and the hosts portal (olympus-sdk#929 security review)
+  vars:
+    # The ids the personal/work guard judges by their tool prefix (<id>_*): personal-only.
+    _guarded: [memory, k8s, cluster]
+    _guarded_servers: "{{ _cfa_mcp_server_list | selectattr('id', 'in', _guarded) | list }}"
+    _guarded_entries: "{{ _cfa_mcp_portal_list | map(attribute='servers') | flatten | selectattr('server_id', 'in', _guarded) | list }}"
+    _alias_keys: >-
+      {{ (_guarded_servers + _guarded_entries) | map('dict2items') | flatten | map(attribute='key')
+         | select('search', 'alias') | list }}
+    _hosts_portal: >-
+      {{ _cfa_mcp_portal_list | selectattr('id', 'equalto', cloudflare_access_mcp_hosts_portal.id) | list }}
+    _k8s_app: "{{ cloudflare_access_k8s_mcp_app }}"
+  ansible.builtin.assert:
+    that:
+      # The display name must not stand in for the id, so the tools keep the <id>_ prefix the guard matches.
+      - _guarded_servers | map(attribute='name') | list
+        == _guarded_servers | map(attribute='id') | list
+      # No server or portal alias for a guarded server: the role never sends portal_alias/server_alias.
+      - _alias_keys | length == 0
+      # The hosts portal never holds memory.
+      - _hosts_portal | map(attribute='servers') | flatten | selectattr('server_id', 'equalto', 'memory') | list
+        | length == 0
+      # The k8s-mcp backend is reached through the portals only: no direct claude.ai connector, no localhost.
+      - _k8s_app.oauth_allowed_redirect_uris | select('search', 'claude\\.ai') | list | length == 0
+      - not (_k8s_app.oauth_allow_localhost | default(false) | bool)
+      - not (_k8s_app.oauth_allow_loopback | default(false) | bool)
+    fail_msg: >-
+      cloudflare-access MCP portals: servers {{ _guarded }} must keep name equal to id and carry no alias
+      ({{ _alias_keys }}), the {{ cloudflare_access_mcp_hosts_portal.id }} portal must not hold memory, and the
+      k8s-mcp application must not allow claude.ai, localhost or loopback redirects (portal callbacks only).
     quiet: true

@@ -134,6 +134,16 @@
       etcd-expose-metrics: true
       # END ANSIBLE MANAGED - k3s_etcd_expose_metrics
       {% endif %}
+      {% if k3s_audit_log_enabled | default(false) | bool %}
+      # BEGIN ANSIBLE MANAGED - k3s_audit_log
+      kube-apiserver-arg:
+        - "audit-policy-file={{ k3s_audit_policy_path }}"
+        - "audit-log-path={{ k3s_audit_log_dir }}/audit.log"
+        - "audit-log-maxage={{ k3s_audit_log_maxage }}"
+        - "audit-log-maxbackup={{ k3s_audit_log_maxbackup }}"
+        - "audit-log-maxsize={{ k3s_audit_log_maxsize }}"
+      # END ANSIBLE MANAGED - k3s_audit_log
+      {% endif %}
     owner: root
     group: root
     mode: "0600"
@@ -218,6 +228,19 @@
   when:
     - _k3s_state == 'present'
     - k3s_agent | default(false)
+
+# ── Kubernetes API audit log (HA servers) ───────────────────────────────────
+# Before the install: the configs above already carry the kube-apiserver-arg
+# block when k3s_audit_log_enabled is true, and kube-apiserver does not start
+# without the policy file. Writes the policy and log directory first, then the
+# (no-op) marked block; false removes the block. Never restarts k3s (see
+# tasks/audit-log.yml).
+- name: Kubernetes API audit log
+  ansible.builtin.include_tasks: audit-log.yml
+  when:
+    - _k3s_state == 'present'
+    - k3s_ha | default(false)
+    - not (k3s_agent | default(false))
 
 # Every install must pin an exact version. An unpinned install takes `latest`,
 # which is how naraka-01 ended up three minors ahead of the control plane.

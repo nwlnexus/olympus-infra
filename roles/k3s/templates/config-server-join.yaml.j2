@@ -6,8 +6,9 @@
    Traefik next to the Flux-managed one) and `tls-san` (kube-vip can move the VIP
    to this server, so its serving cert needs the VIP and the FQDN).
 
-   The node-ip, etcd-expose-metrics and kubelet-arg blocks carry the same markers and content that
-   tasks/node-ip.yml, tasks/etcd-metrics.yml and tasks/kubelet-args.yml (blockinfile) write, so those tasks
+   The node-ip, etcd-expose-metrics, kube-apiserver-arg (audit) and kubelet-arg blocks carry the same
+   markers and content that tasks/node-ip.yml, tasks/etcd-metrics.yml, tasks/audit-log.yml and
+   tasks/kubelet-args.yml (blockinfile) write, so those tasks
    are no-ops afterwards and k3s starts with the kubelet arguments the first time
    (no restart after the join). tests/k3s-join-server checks that. Do not also run
    playbooks/k3s-disable-traefik.yml on a node written by this template: it would
@@ -54,6 +55,16 @@ etcd-snapshot-retention: {{ k3s_etcd_snapshot_retention }}
 # BEGIN ANSIBLE MANAGED - k3s_etcd_expose_metrics
 etcd-expose-metrics: true
 # END ANSIBLE MANAGED - k3s_etcd_expose_metrics
+{% endif %}
+{% if k3s_audit_log_enabled | default(false) | bool %}
+# BEGIN ANSIBLE MANAGED - k3s_audit_log
+kube-apiserver-arg:
+  - "audit-policy-file={{ k3s_audit_policy_path }}"
+  - "audit-log-path={{ k3s_audit_log_dir }}/audit.log"
+  - "audit-log-maxage={{ k3s_audit_log_maxage }}"
+  - "audit-log-maxbackup={{ k3s_audit_log_maxbackup }}"
+  - "audit-log-maxsize={{ k3s_audit_log_maxsize }}"
+# END ANSIBLE MANAGED - k3s_audit_log
 {% endif %}
 {% if k3s_kubelet_args | default([]) | length > 0 %}
 # BEGIN ANSIBLE MANAGED - k3s_kubelet_args

@@ -103,3 +103,26 @@ k3s_etcd_metrics_node_groups:
   - k3s_agents
   - k3s_mac_agents
 k3s_etcd_metrics_nft_file: /etc/olympus/etcd-metrics.nft
+
+# --- Kubernetes API audit log (HA servers; tasks/audit-log.yml) ---
+# true writes the audit policy (templates/audit-policy.yaml.j2) and the log
+# directory, then a marked `kube-apiserver-arg:` block in config.yaml that points
+# kube-apiserver at them. Off by default; false removes the block and keeps the
+# policy file and the logs. Never restarts k3s: k3s reads the file at start, so
+# restart one server at a time with scripts/k3s-health-gate.sh between servers.
+# The block is the only `kube-apiserver-arg` key the role writes (a second
+# top-level key would silently replace the first list).
+k3s_audit_log_enabled: false
+k3s_audit_policy_path: /var/lib/rancher/k3s/server/audit.yaml
+k3s_audit_log_dir: /var/lib/rancher/k3s/server/logs
+# kube-apiserver rotation: days to keep, rotated files to keep, MB per file.
+# Disk bound per server: maxsize x (maxbackup + 1) = 600 MB with these values.
+k3s_audit_log_maxage: 7
+k3s_audit_log_maxbackup: 5
+k3s_audit_log_maxsize: 100
+# Identities whose every request (reads included) is recorded at Metadata level,
+# ahead of the noise rules. An empty list omits the rule.
+k3s_audit_always_log_users:
+  - "system:serviceaccount:atlas-system:k8s-mcp"
+k3s_audit_always_log_groups:
+  - "olympus:agents-view"

@@ -1,0 +1,84 @@
+{# Kubernetes API audit policy for the k3s servers (tasks/audit-log.yml).
+   kube-apiserver applies the FIRST rule that matches a request, so the order is
+   the policy. Metadata never records request or response bodies; Request records
+   the request body only (never the response). tests/k3s-join-server checks the
+   order and the keys. #}
+# Managed by Ansible (roles/k3s, tasks/audit-log.yml); local edits are overwritten.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  - RequestReceived
+rules:
+  # a. Health, metrics, version and OpenAPI probes: never logged.
+  - level: None
+    nonResourceURLs:
+      - "/healthz*"
+      - "/readyz*"
+      - "/livez*"
+      - "/metrics"
+      - "/version"
+      - "/openapi*"
+{% if k3s_audit_always_log_users | default([]) | length > 0 %}
+  # b. Always-recorded users (agent identities): every request, reads included.
+  - level: Metadata
+    users:
+{% for u in k3s_audit_always_log_users %}
+      - "{{ u }}"
+{% endfor %}
+{% endif %}
+{% if k3s_audit_always_log_groups | default([]) | length > 0 %}
+  # b. Always-recorded groups (agent identities): every request, reads included.
+  - level: Metadata
+    userGroups:
+{% for g in k3s_audit_always_log_groups %}
+      - "{{ g }}"
+{% endfor %}
+{% endif %}
+  # c. Node reads (kubelets): constant watch traffic.
+  - level: None
+    userGroups:
+      - "system:nodes"
+    verbs: ["get", "list", "watch"]
+  # c. Control-plane and k3s supervisor reads: constant watch traffic.
+  - level: None
+    users:
+      - "system:kube-proxy"
+      - "system:kube-controller-manager"
+      - "system:kube-scheduler"
+      - "system:apiserver"
+      - "system:k3s-supervisor"
+      - "system:k3s-controller"
+      - "k3s-cloud-controller-manager"
+    verbs: ["get", "list", "watch"]
+  # c. Leader-election leases: renewed every few seconds by many components.
+  - level: None
+    resources:
+      - group: "coordination.k8s.io"
+        resources: ["leases"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # c. Events: high volume, and they are already a record of their own.
+  - level: None
+    resources:
+      - group: ""
+        resources: ["events"]
+      - group: "events.k8s.io"
+        resources: ["events"]
+  # d. Secrets, ConfigMaps, token requests and token reviews: who touched what,
+  #    never the content (Metadata records no bodies).
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["secrets", "configmaps", "serviceaccounts/token"]
+      - group: "authentication.k8s.io"
+        resources: ["tokenreviews"]
+  # e. Other ServiceAccount reads (controllers and operators): noise. The agent
+  #    identities matched rule b, and Secrets/ConfigMaps matched rule d.
+  - level: None
+    userGroups:
+      - "system:serviceaccounts"
+    verbs: ["get", "list", "watch"]
+  # f. Every other write: with its request body.
+  - level: Request
+    verbs: ["create", "update", "patch", "delete", "deletecollection"]
+  # g. Everything else (remaining reads by people and other clients).
+  - level: Metadata

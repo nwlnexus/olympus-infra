@@ -30,3 +30,64 @@ address (port 2381), and first installs an nftables table that admits only
 loopback, the pod network and the cluster nodes to that port.
 `playbooks/push/k3s-etcd-metrics.yml` applies it without restarting k3s; restart
 one server at a time with `scripts/k3s-health-gate.sh` between servers.
+
+## Kubernetes API audit log
+
+`k3s_audit_log_enabled` (HA servers, default false) turns on kube-apiserver audit
+logging (`tasks/audit-log.yml`). It writes, in this order:
+
+1. the log directory `k3s_audit_log_dir` (default `/var/lib/rancher/k3s/server/logs`, root 0700);
+2. the policy `k3s_audit_policy_path` (default `/var/lib/rancher/k3s/server/audit.yaml`,
+   root 0600, from `templates/audit-policy.yaml.j2`);
+3. an assert that both exist (kube-apiserver does not start without the policy file);
+4. a marked `kube-apiserver-arg:` block in `/etc/rancher/k3s/config.yaml`
+   (`audit-policy-file`, `audit-log-path=<dir>/audit.log`, `audit-log-maxage`,
+   `audit-log-maxbackup`, `audit-log-maxsize`). The join template and the primary's
+   inline config render the same block, so a new server starts with it.
+
+This block is the only `kube-apiserver-arg` key the role writes. Do not add a second
+one anywhere (another block, a hand edit or a `config.yaml.d` drop-in): a duplicated
+top-level key in config.yaml silently replaces the first list. Add further API server
+arguments to this block instead. `tests/k3s-join-server` fails if the key appears twice.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `k3s_audit_log_enabled` | `false` | Write the policy and the flags (false removes the flags) |
+| `k3s_audit_policy_path` | `/var/lib/rancher/k3s/server/audit.yaml` | Policy file |
+| `k3s_audit_log_dir` | `/var/lib/rancher/k3s/server/logs` | Log directory; the log is `audit.log` there |
+| `k3s_audit_log_maxage` | `7` | Days to keep rotated files |
+| `k3s_audit_log_maxbackup` | `5` | Rotated files to keep |
+| `k3s_audit_log_maxsize` | `100` | MB per file before rotation |
+| `k3s_audit_always_log_users` | `[system:serviceaccount:atlas-system:k8s-mcp]` | Users whose every request is recorded |
+| `k3s_audit_always_log_groups` | `[olympus:agents-view]` | Groups whose every request is recorded |
+
+Disk use per server is bounded by maxsize x (maxbackup + 1): 600 MB with the defaults.
+
+What the policy records (first matching rule wins; Metadata = who, what, when, verb and
+response code, never a body; Request adds the request body, never the response):
+
+- dropped: `/healthz*`, `/readyz*`, `/livez*`, `/metrics`, `/version`, `/openapi*`;
+- Metadata for every request (reads included) by the always-logged users and groups,
+  ahead of all noise rules (an empty list omits its rule);
+- dropped: reads by `system:nodes`, and by the control plane and k3s itself
+  (`system:kube-proxy`, `system:kube-controller-manager`, `system:kube-scheduler`,
+  `system:apiserver`, `system:k3s-supervisor`, `system:k3s-controller`,
+  `k3s-cloud-controller-manager`); lease get/list/watch/update/patch; all events;
+- Metadata for Secrets, ConfigMaps, `serviceaccounts/token` and token reviews;
+- dropped: other ServiceAccount reads (controller watch traffic);
+- Request for every other create/update/patch/delete/deletecollection;
+- Metadata for everything else.
+
+Enable it by setting `k3s_audit_log_enabled: true` in the servers' group vars
+(`compute_hub` and `agent_services` together, so every server agrees; then add
+`k3s_audit_log_enabled` to the cluster-wide list in `tests/k3s-join-server/render.yml` and
+drop its "inventory leaves it off" assert), then stage it with `playbooks/push/k3s-audit-log.yml`
+(`--limit <server>`, `--check --diff` first). The play never restarts k3s; the flags take
+effect at the next restart. Restart one server at a time, the canary first, with
+`scripts/k3s-health-gate.sh` before and after each, and on each check `journalctl -u k3s`
+for audit or policy errors, that `/readyz` answers ok and that `audit.log` grows.
+
+To disable, set the flag to false and run the play: it removes the block and keeps the
+policy file and the logs. A server keeps logging until its next restart (the running
+kube-apiserver still has the flags), and the policy file must stay until then; delete the
+file and the logs by hand after every server has been restarted, if ever needed.

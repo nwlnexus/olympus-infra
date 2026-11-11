@@ -1,0 +1,66 @@
+---
+# Kubernetes API audit logging on each k3s server (kube-apiserver --audit-*).
+# One server at a time (serial: 1), --limit to one server per run during a rollout.
+#
+#   roles/k3s/tasks/audit-log.yml:
+#     - the log directory (k3s_audit_log_dir, root 0700) and the audit policy
+#       (k3s_audit_policy_path, root 0600), written and asserted FIRST;
+#     - then the `kube-apiserver-arg:` audit flags, a marked block in
+#       /etc/rancher/k3s/config.yaml (k3s_audit_log_enabled: false removes the
+#       block and keeps the policy and the logs).
+#
+# This play NEVER restarts k3s. The setting takes effect when k3s restarts on that
+# server. Per server, the canary first, one at a time:
+#   1. scripts/k3s-health-gate.sh passes;
+#   2. this play with --limit <server>, --check --diff first (the config diff is hidden
+#      because it would print the cluster token), then for real;
+#   3. `sudo systemctl restart k3s` on that server, wait for the node to be Ready;
+#   4. `journalctl -u k3s` shows no audit or policy error, /readyz answers ok, and
+#      <k3s_audit_log_dir>/audit.log grows; scripts/k3s-health-gate.sh passes again
+#      before the next server.
+# Needs no secrets. Run from olympus-infra with inventory/olympus.yml:
+#   ansible-playbook -i inventory/olympus.yml playbooks/push/k3s-audit-log.yml \
+#     --limit <server> --check --diff
+
+- name: Kubernetes API audit log on the k3s servers
+  hosts: k3s_servers
+  gather_facts: true
+  serial: 1
+  max_fail_percentage: 0
+
+  pre_tasks:
+    - name: Only HA k3s servers
+      ansible.builtin.assert:
+        that:
+          - k3s_ha | default(false) | bool
+          - not (k3s_agent | default(false) | bool)
+        fail_msg: "{{ inventory_hostname }} is not an HA k3s server."
+        quiet: true
+
+    - name: Check for the k3s config file
+      ansible.builtin.stat:
+        path: /etc/rancher/k3s/config.yaml
+      register: _cfg
+      become: true
+
+    - name: The k3s config exists (this play never creates it)
+      ansible.builtin.assert:
+        that: _cfg.stat.exists
+        fail_msg: "/etc/rancher/k3s/config.yaml is missing on {{ inventory_hostname }}."
+        quiet: true
+
+  tasks:
+    - name: Stage the audit policy and the kube-apiserver audit flags
+      ansible.builtin.import_role:
+        name: k3s
+        tasks_from: audit-log.yml
+      tags: [audit-log]
+
+  post_tasks:
+    - name: The change takes effect at the next k3s restart
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: audit logging
+          {{ 'staged' if (k3s_audit_log_enabled | default(false) | bool) else 'removed from config.yaml' }}.
+          k3s was NOT restarted; the change takes effect at its next restart. Restart the
+          servers one at a time, the canary first, with scripts/k3s-health-gate.sh before and after each.

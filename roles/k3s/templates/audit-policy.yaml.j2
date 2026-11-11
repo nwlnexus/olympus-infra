@@ -56,6 +56,22 @@ rules:
       - "{{ g }}"
 {% endfor %}
 {% endif %}
+{% if k3s_audit_drop_lease_names | default([]) | length > 0 %}
+  # c. Control-plane VIP election (kube-vip): get/update of these named Leases every
+  #    few seconds. The client uses the admin identity, so it is matched by Lease name,
+  #    not by user. Create and delete of those Leases are still recorded, and so are
+  #    list/watch (resourceNames never matches a request without a name).
+  - level: None
+    verbs: ["get", "list", "watch", "update", "patch"]
+    namespaces: ["kube-system"]
+    resources:
+      - group: "coordination.k8s.io"
+        resources: ["leases"]
+        resourceNames:
+{% for n in k3s_audit_drop_lease_names %}
+          - "{{ n }}"
+{% endfor %}
+{% endif %}
   # c. Node reads (kubelets): constant watch traffic.
   - level: None
     userGroups:

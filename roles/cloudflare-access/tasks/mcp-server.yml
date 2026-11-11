@@ -1,0 +1,57 @@
+---
+# Writes for one planned MCP server (`_p`, an entry of _cfa_mcp_server_plans): the server, then its `mcp`
+# Access application. Included from mcp.yml per server. Skipped in --check (uri writes).
+- name: "Create the MCP server {{ _p.server.id }}"
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/ai-controls/mcp/servers"
+    method: POST
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body: "{{ _p.desired }}"
+    status_code: [200, 201]
+  register: _cfa_mcp_server_created
+  changed_when: true
+  no_log: true
+  when: _p.action == 'create'
+
+- name: "Update the MCP server {{ _p.server.id }} (auth configuration kept)"
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/ai-controls/mcp/servers/{{ _p.server.id }}"
+    method: PUT
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body: "{{ _p.desired | dict2items | rejectattr('key', 'equalto', 'id') | items2dict }}"
+    status_code: 200
+  changed_when: true
+  no_log: true
+  when: _p.action == 'update'
+
+- name: "Record the server {{ _p.server.id }} for the summary"
+  ansible.builtin.set_fact:
+    _cfa_mcp_server_results: >-
+      {{ _cfa_mcp_server_results | default({}) | combine({_p.server.id:
+           _cfa_mcp_server_created.json.result if _cfa_mcp_server_created.json is defined else _p.current}) }}
+
+- name: "Create the mcp application of {{ _p.server.id }}"
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/apps"
+    method: POST
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body: "{{ _p.app_desired }}"
+    status_code: [200, 201]
+  changed_when: true
+  no_log: true
+  when: _p.app_action == 'create'
+
+- name: "Update the mcp application of {{ _p.server.id }} (full object from GET, desired fields on top)"
+  ansible.builtin.uri:
+    url: "{{ _cfa_acct }}/access/apps/{{ _p.app_current.id }}"
+    method: PUT
+    headers: "{{ _cfa_headers }}"
+    body_format: json
+    body: "{{ _p.app_current | combine(_p.app_desired) }}"
+    status_code: 200
+  changed_when: true
+  no_log: true
+  when: _p.app_action == 'update'

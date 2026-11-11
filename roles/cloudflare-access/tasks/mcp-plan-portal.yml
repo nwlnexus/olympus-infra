@@ -1,0 +1,8 @@
+---
+# Plan one MCP portal (`_cfa_mp`) and add it to _cfa_mcp_portal_plans. Included from mcp.yml per portal.
+- name: "Plan the MCP portal {{ _cfa_mp.id }}"
+  ansible.builtin.include_tasks: compute-mcp-portal.yml
+
+- name: "Add the plan of portal {{ _cfa_mp.id }}"
+  ansible.builtin.set_fact:
+    _cfa_mcp_portal_plans: "{{ _cfa_mcp_portal_plans + [_cfa_mcp_portal_plan] }}"

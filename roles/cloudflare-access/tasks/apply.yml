@@ -47,6 +47,10 @@
     quiet: true
   when: cloudflare_access_mcp_portal_enabled | bool
 
+- name: Fill in and check the MCP server and portal lists (before any request)
+  ansible.builtin.include_tasks: compute-mcp.yml
+  when: cloudflare_access_mcp_portal_enabled | bool
+
 - name: Check the service-token inputs of every application
   vars:
     _all_hosts: "{{ _cfa_applications | map(attribute='service_token_hosts') | flatten | unique }}"
@@ -98,9 +102,9 @@
   when: _cfa_tunnel_apps | length > 0
 
 # ------------------------------------------------------------------------------------------------
-# 5. Opt-in: the owner MCP server portal in front of the gateway (olympus-sdk#923).
+# 5. Opt-in: MCP servers and server portals (olympus-sdk#923, #929).
 # ------------------------------------------------------------------------------------------------
-- name: MCP server, portal, their Access applications and DNS
+- name: MCP servers, portals, their Access applications and DNS
   ansible.builtin.include_tasks: mcp.yml
   when: cloudflare_access_mcp_portal_enabled | bool
 

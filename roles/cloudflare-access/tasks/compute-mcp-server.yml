@@ -1,0 +1,83 @@
+---
+# One MCP server (`_cfa_ms`, an entry of _cfa_mcp_server_list) and its `mcp` Access application: desired
+# state and diff against the API (pure: tests/cloudflare-access runs it offline with fake responses).
+# Inputs: _cfa_ms, _cfa_mcp_servers (GET .../ai-controls/mcp/servers result), _cfa_all_apps (GET /access/apps
+# result), _cfa_policy_ids.
+# Outputs: _cfa_mcp_server_{desired,current,action}, _cfa_mcp_tools, _cfa_mcp_server_app_{desired,current,
+# matches,diff_keys,action}, and _cfa_mcp_server_plan (all of them in one dict, for the write loop).
+
+- name: "Build the desired MCP server {{ _cfa_ms.id }} and find the existing one"
+  ansible.builtin.set_fact:
+    _cfa_mcp_server_desired:
+      id: "{{ _cfa_ms.id }}"
+      name: "{{ _cfa_ms.name }}"
+      hostname: "{{ _cfa_ms.url }}"
+      auth_type: oauth
+    _cfa_mcp_server_current: >-
+      {{ _cfa_mcp_servers | selectattr('id', 'defined') | selectattr('id', 'equalto', _cfa_ms.id) | first | default({}) }}
+
+- name: "Decide what to do with the MCP server {{ _cfa_ms.id }}"
+  vars:
+    _keys: [name, hostname, auth_type]
+  ansible.builtin.set_fact:
+    _cfa_mcp_server_action: >-
+      {{ 'create' if _cfa_mcp_server_current | length == 0
+         else ('unchanged'
+               if _keys | map('extract', _cfa_mcp_server_current) | list
+                  == _keys | map('extract', _cfa_mcp_server_desired) | list
+               else 'update') }}
+    # The tools a portal can see. Empty until the owner authenticates the server and it syncs.
+    _cfa_mcp_tools: >-
+      {{ _cfa_mcp_server_current.tools | default([], true) | selectattr('name', 'defined')
+         | map(attribute='name') | unique | sort }}
+
+- name: "Build the desired mcp application of {{ _cfa_ms.id }} and find the existing one"
+  vars:
+    _apps: >-
+      [{% for a in _cfa_all_apps if a.get('type') == 'mcp'
+          and (a.get('destinations') or []) | selectattr('mcp_server_id', 'defined')
+              | selectattr('mcp_server_id', 'equalto', _cfa_ms.id) | list | length > 0
+      %}{{ a | to_json }},{% endfor %}null]
+  ansible.builtin.set_fact:
+    _cfa_mcp_server_app_desired:
+      name: "{{ _cfa_ms.app_name }}"
+      type: mcp
+      destinations:
+        - type: via_mcp_server_portal
+          mcp_server_id: "{{ _cfa_ms.id }}"
+      policies: "{{ [{'id': _cfa_policy_ids[cloudflare_access_policy_prefix ~ 'allow-owner'], 'precedence': 1}] }}"
+    _cfa_mcp_server_app_matches: "{{ (_apps | from_json)[:-1] }}"
+
+- name: "Compare the mcp application of {{ _cfa_ms.id }} field by field"
+  vars:
+    _cur: "{{ _cfa_mcp_server_app_matches | first | default({}) }}"
+    _cur_norm: >-
+      {{ _cur | combine({
+           'policies': _cur.policies | default([], true) | community.general.keep_keys(target=['id', 'precedence']),
+           'destinations': _cur.destinations | default([], true)
+                           | community.general.keep_keys(target=['type', 'uri', 'mcp_server_id'])}) }}
+  ansible.builtin.set_fact:
+    _cfa_mcp_server_app_current: "{{ _cur }}"
+    _cfa_mcp_server_app_diff_keys: >-
+      {{ lookup('ansible.builtin.template', _cfa_templates ~ '/app-diff.j2',
+                template_vars={'cur': _cur_norm, 'want': _cfa_mcp_server_app_desired}) | from_json }}
+
+- name: "Decide what to do with the mcp application of {{ _cfa_ms.id }}"
+  ansible.builtin.set_fact:
+    _cfa_mcp_server_app_action: >-
+      {{ 'create' if _cfa_mcp_server_app_matches | length == 0
+         else ('update' if _cfa_mcp_server_app_diff_keys | length > 0 else 'unchanged') }}
+
+- name: "Record the plan of {{ _cfa_ms.id }}"
+  ansible.builtin.set_fact:
+    _cfa_mcp_server_plan:
+      server: "{{ _cfa_ms }}"
+      desired: "{{ _cfa_mcp_server_desired }}"
+      current: "{{ _cfa_mcp_server_current }}"
+      action: "{{ _cfa_mcp_server_action }}"
+      tools: "{{ _cfa_mcp_tools }}"
+      app_desired: "{{ _cfa_mcp_server_app_desired }}"
+      app_current: "{{ _cfa_mcp_server_app_current }}"
+      app_matches: "{{ _cfa_mcp_server_app_matches }}"
+      app_diff_keys: "{{ _cfa_mcp_server_app_diff_keys }}"
+      app_action: "{{ _cfa_mcp_server_app_action }}"

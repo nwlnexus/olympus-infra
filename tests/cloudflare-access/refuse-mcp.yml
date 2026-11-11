@@ -1,0 +1,23 @@
+---
+# Helper for render.yml: compute-mcp.yml must refuse the MCP lists in `_case` (servers, portals).
+- name: Fill in and check a bad MCP configuration
+  block:
+    - name: Run the checks
+      ansible.builtin.include_tasks: ../../roles/cloudflare-access/tasks/compute-mcp.yml
+      vars:
+        cloudflare_access_mcp_servers: "{{ _case.servers }}"
+        cloudflare_access_mcp_portals: "{{ _case.portals }}"
+
+    - name: Not reached when the checks refuse it
+      ansible.builtin.set_fact:
+        _cfa_refuse_failed_to_refuse: true
+  rescue:
+    - name: Refused, as it should be
+      ansible.builtin.set_fact:
+        _cfa_refuse_failed_to_refuse: false
+
+- name: The configuration was refused
+  ansible.builtin.assert:
+    that: not _cfa_refuse_failed_to_refuse
+    fail_msg: "compute-mcp.yml accepted {{ _case | to_json }}"
+    quiet: true

@@ -13,7 +13,8 @@ op command is replaced by a shell that only appends its arguments to a file). No
 The fixture fixtures/memory-origin-main.json holds the requests the role made for the memory application
 before it managed several applications (recorded from that version of the role). The check runs the same
 scenarios with only the memory entry in cloudflare_access_applications and requires the very same requests,
-byte for byte, then plans the default list (memory + k8s-mcp) and checks the second application.
+byte for byte, then plans the default list (memory + k8s-mcp) and checks the second application, and the MCP
+server and portal lists (olympus-sdk#929) from the state the single-portal configuration left.
 """
 
 import argparse
@@ -198,7 +199,14 @@ SCENARIOS = {
         {"name": "tunnel-off", "extra": {"cloudflare_access_tunnel_enabled": False}},
     ],
 }
-MEMORY_ONLY = {"cloudflare_access_applications": "{{ [cloudflare_access_memory_app] }}"}
+# The configuration before several applications and portals: the memory application, the memory MCP server and
+# the owner portal holding only memory (olympus-sdk#923).
+MEMORY_ONLY_MCP = {
+    "cloudflare_access_mcp_servers": "{{ [cloudflare_access_mcp_memory_server] }}",
+    "cloudflare_access_mcp_portals":
+        "{{ [cloudflare_access_mcp_owner_portal | combine({'servers': [{'server_id': 'memory'}]})] }}",
+}
+MEMORY_ONLY = dict({"cloudflare_access_applications": "{{ [cloudflare_access_memory_app] }}"}, **MEMORY_ONLY_MCP)
 
 
 def run_scenario(name, roles_path, base_extra, runs=None):
@@ -256,7 +264,8 @@ def test_memory_unchanged(roles_path):
 def test_two_applications(roles_path):
     with open(FIXTURE) as f:
         fixture = json.load(f)
-    got, state = run_scenario("portal-on", roles_path, {})
+    # The application list as before #929 (one MCP server and portal); the MCP lists are test_mcp_lists'.
+    got, state = run_scenario("portal-on", roles_path, MEMORY_ONLY_MCP)
     fresh, again = got["apply-fresh"]["requests"], got["apply-again"]["requests"]
     mem = fixture["portal-on"]["apply-fresh"]["requests"]
     k8s_rule = {"hostname": "k8s-mcp.nwlnexus.io", "service": "http://k8s-mcp.atlas-system.svc.cluster.local:80"}
@@ -326,6 +335,181 @@ def test_two_applications(roles_path):
           "backend_values: team domain and AUD printed per application", out[-3000:])
 
 
+K8S_TOOLS = ["events_list", "namespaces_list", "nodes_top", "pods_get", "pods_list", "pods_list_in_namespace",
+             "pods_log", "pods_top", "resources_get", "resources_list"]
+MEMORY_TOOLS = ["append", "digest", "forget", "recall", "status"]
+K8S_CALLBACKS = {"cloudflare_access_k8s_mcp_portal_callback_uris": [
+    "https://dash.cloudflare.com/%s/one/access-controls/ai-controls/mcp-server/oauth-callback/k8s" % ACCT,
+    "https://mcp-hosts.nwlnexus.io/servers-callback",
+    "https://mcp.nwlnexus.io/servers-callback"]}
+
+
+def sync_tools(server_id, names):
+    """What authenticating a server in the dashboard does: its tools appear on the server object."""
+    def hook(state):
+        for srv in state["mcp_servers"]:
+            if srv["id"] == server_id:
+                srv["tools"] = [{"name": n} for n in names]
+    return hook
+
+
+def write_paths(reqs):
+    return [(r["method"], r["path"].split("?")[0].replace("/accounts/" + ACCT, "")) for r in writes(reqs)]
+
+
+def test_mcp_lists(roles_path):
+    """olympus-sdk#929: servers [memory, k8s], portals [owner: memory + k8s, hosts: k8s], from the live state."""
+    runs = [
+        # The state as it is live: built by the configuration before #929, memory authenticated and curated.
+        {"name": "old-apply", "extra": MEMORY_ONLY_MCP},
+        {"name": "old-curate", "extra": MEMORY_ONLY_MCP, "before": sync_tools("memory", MEMORY_TOOLS)},
+        {"name": "old-again", "extra": MEMORY_ONLY_MCP},
+        # Without the playbook's k8s callbacks the plan warns that k8s could not authenticate.
+        {"name": "hint-check", "extra": {}, "check": True},
+        # The first runs with the lists (and the playbook's k8s callbacks).
+        {"name": "new-check", "extra": K8S_CALLBACKS, "check": True},
+        {"name": "new-apply", "extra": K8S_CALLBACKS},
+        {"name": "new-again", "extra": K8S_CALLBACKS},
+        # The owner authenticates k8s; nothing of it is turned off, so the re-run writes nothing.
+        {"name": "k8s-synced", "extra": K8S_CALLBACKS, "before": sync_tools("k8s", K8S_TOOLS)},
+        # Per-server curation in one portal only: pods_log off in hosts, still on in owner.
+        {"name": "hosts-curated", "extra": dict(K8S_CALLBACKS, cloudflare_access_mcp_portals=(
+            "{{ [cloudflare_access_mcp_owner_portal, cloudflare_access_mcp_hosts_portal | combine("
+            "{'servers': [{'server_id': 'k8s', 'disabled_tools': ['pods_log']}]})] }}"))},
+    ]
+    fake = FakeCloudflare()
+    httpd = serve(fake)
+    got = {}
+    try:
+        for run in runs:
+            if run.get("before"):
+                run["before"](fake.state)
+            start = len(fake.log)
+            extra = dict(run["extra"], cloudflare_access_mcp_portal_enabled=True)
+            stdout, ops = run_play(httpd.server_address[1], extra, roles_path, run.get("check", False))
+            got[run["name"]] = {"requests": fake.log[start:], "stdout": stdout, "state": copy.deepcopy(fake.state)}
+    finally:
+        httpd.shutdown()
+
+    check(writes(got["old-again"]["requests"]) == [], "mcp_old_state_settled: the old configuration is idempotent",
+          write_paths(got["old-again"]["requests"]))
+    old_portal = next(p for p in got["old-again"]["state"]["mcp_portals"] if p["id"] == "owner")
+
+    hint = got["hint-check"]["stdout"]
+    check("WARNING: " in hint and "oauth-callback/k8s" in hint and "mcp-hosts.nwlnexus.io/servers-callback" in hint
+          and "WARNING: " not in got["new-check"]["stdout"],
+          "mcp_callback_hint: missing k8s-mcp portal callbacks are reported; none once the playbook's are set",
+          hint[-2000:])
+
+    # The --check plan of the first run with the lists.
+    out = got["new-check"]["stdout"]
+    want_lines = [
+        "memory-allow-owner (allow, 1 include rule(s)): unchanged",
+        "MCP server memory -> https://memory.nwlnexus.io/mcp: unchanged",
+        "Access app mcp-server-memory (mcp): unchanged",
+        "MCP server k8s -> https://k8s-mcp.nwlnexus.io/mcp: create",
+        "Access app mcp-server-k8s (mcp): create",
+        "MCP portal owner on mcp.nwlnexus.io (servers: memory, k8s): update (servers)",
+        "Tool curation owner/memory (off: forget): applied, 5 synced tool(s)",
+        "Tool curation owner/k8s (off: nothing): pending, 0 synced tool(s)",
+        "Access app mcp-portal-owner (mcp_portal): unchanged",
+        "MCP portal hosts on mcp-hosts.nwlnexus.io (servers: k8s): create",
+        "Tool curation hosts/k8s (off: nothing): pending, 0 synced tool(s)",
+        "Access app mcp-portal-hosts (mcp_portal): create",
+        "DNS mcp.nwlnexus.io CNAME gateway.agents.cloudflare.com (proxied): unchanged",
+        "DNS mcp-hosts.nwlnexus.io CNAME gateway.agents.cloudflare.com (proxied): create",
+        "memory: unchanged",
+        "k8s-mcp: update (oauth_configuration)",
+    ]
+    missing = [l for l in want_lines if l not in out]
+    check(missing == [] and writes(got["new-check"]["requests"]) == [],
+          "mcp_check_plan: --check writes nothing and plans exactly the expected changes", missing or out[-3000:])
+
+    # The first apply: only the k8s and hosts objects, k8s added to owner, the k8s-mcp DCR URIs.
+    new = got["new-apply"]["requests"]
+    check(write_paths(new) == [
+        ("PUT", "/access/apps/app-k8s-mcp"),
+        ("POST", "/access/ai-controls/mcp/servers"),
+        ("POST", "/access/apps"),
+        ("PUT", "/access/ai-controls/mcp/portals/owner"),
+        ("POST", "/access/ai-controls/mcp/portals"),
+        ("POST", "/access/apps"),
+        ("POST", "/zones/zone-1/dns_records")],
+        "mcp_existing_state_unchanged: memory server, its app, owner app, policies and owner DNS get no write",
+        write_paths(new))
+    k8s_app = bodies(new, "PUT", "/access/apps/app-k8s-mcp")
+    check(k8s_app and k8s_app[0]["oauth_configuration"]["dynamic_client_registration"]["allowed_uris"]
+          == ["https://claude.ai/*"] + K8S_CALLBACKS["cloudflare_access_k8s_mcp_portal_callback_uris"],
+          "mcp_k8s_backend_dcr: the k8s-mcp application allows claude.ai and the three portal callbacks", k8s_app)
+    check(bodies(new, "POST", "/mcp/servers") == [
+        {"id": "k8s", "name": "k8s", "hostname": "https://k8s-mcp.nwlnexus.io/mcp", "auth_type": "oauth"}],
+        "mcp_k8s_server: server k8s, OAuth, the backend's /mcp")
+    apps = bodies(new, "POST", "/access/apps")
+    check([a["name"] for a in apps] == ["mcp-server-k8s", "mcp-portal-hosts"]
+          and apps[0]["destinations"] == [{"type": "via_mcp_server_portal", "mcp_server_id": "k8s"}]
+          and apps[0]["policies"] == [{"id": "pol-memory-allow-owner", "precedence": 1}]
+          and apps[1]["type"] == "mcp_portal" and apps[1]["domain"] == "mcp-hosts.nwlnexus.io"
+          and apps[1]["policies"] == [{"id": "pol-memory-allow-owner", "precedence": 1}]
+          and apps[1]["oauth_configuration"]["dynamic_client_registration"] == {
+              "enabled": True, "allowed_uris": [], "allow_any_on_localhost": True, "allow_any_on_loopback": True},
+          "mcp_new_apps: mcp app for k8s and mcp_portal app for hosts, owner policy, Claude Code DCR only", apps)
+    owner = bodies(new, "PUT", "/mcp/portals/owner")
+    check(owner == [dict({k: v for k, v in old_portal.items() if k != "id"},
+                         servers=old_portal["servers"] + [
+                             {"server_id": "k8s", "on_behalf": True, "default_disabled": False}])],
+          "mcp_owner_full_body: the owner PUT is the old body with k8s appended (memory curation as it was)",
+          {"old": old_portal, "put": owner})
+    check(old_portal["servers"][0].get("updated_tools") == [
+        {"name": n, "enabled": n != "forget"} for n in MEMORY_TOOLS],
+        "mcp_owner_memory_curation: memory keeps every tool on except forget", old_portal)
+    hosts = bodies(new, "POST", "/mcp/portals")
+    check(hosts == [{"id": "hosts", "name": "hosts", "hostname": "mcp-hosts.nwlnexus.io", "code_mode": "off",
+                     "servers": [{"server_id": "k8s", "on_behalf": True, "default_disabled": False}]}],
+          "mcp_hosts_portal: hosts portal, Code Mode off, k8s only (no memory)", hosts)
+    dns = bodies(new, "POST", "/dns_records")
+    check(dns and dns[0]["name"] == "mcp-hosts.nwlnexus.io" and dns[0]["content"] == "gateway.agents.cloudflare.com"
+          and dns[0]["proxied"] is True, "mcp_hosts_dns: proxied CNAME to the portal gateway", dns)
+
+    check(writes(got["new-again"]["requests"]) == [], "mcp_idempotent: the second run with the lists writes nothing",
+          write_paths(got["new-again"]["requests"]))
+    check(writes(got["k8s-synced"]["requests"]) == []
+          and "Tool curation owner/k8s (off: nothing): applied" in got["k8s-synced"]["stdout"]
+          and "Tool curation hosts/k8s (off: nothing): applied" in got["k8s-synced"]["stdout"],
+          "mcp_shared_server_synced: k8s with nothing turned off needs no curation write in either portal",
+          write_paths(got["k8s-synced"]["requests"]))
+    cur = got["hosts-curated"]["requests"]
+    hosts_put = bodies(cur, "PUT", "/mcp/portals/hosts")
+    check(write_paths(cur) == [("PUT", "/access/ai-controls/mcp/portals/hosts")] and hosts_put
+          and hosts_put[0]["servers"][0]["updated_tools"] == [{"name": n, "enabled": n != "pods_log"} for n in K8S_TOOLS],
+          "mcp_per_server_curation: pods_log off in hosts only; owner (k8s all on, memory forget off) untouched",
+          {"writes": write_paths(cur), "put": hosts_put})
+
+
+def test_mcp_refusals(roles_path):
+    """The role refuses an unguarded server id and a foreign DNS record on a portal host, before any write."""
+    bad_id = {"cloudflare_access_mcp_servers": "{{ [cloudflare_access_mcp_memory_server, "
+                                               "cloudflare_access_mcp_k8s_server | combine({'id': 'kube'})] }}",
+              "cloudflare_access_mcp_portals": "{{ [cloudflare_access_mcp_owner_portal | combine("
+                                               "{'servers': [{'server_id': 'memory'}, {'server_id': 'kube'}]})] }}"}
+    got, _ = run_scenario("portal-on", roles_path, bad_id, [{"name": "fail", "extra": {}, "expect_fail": True}])
+    check(writes(got["fail"]["requests"]) == [] and "the personal/work guard judges" in got["fail"]["stdout"],
+          "mcp_unguarded_id_refused: a server id outside the guard's ids fails before any write")
+
+    fake = FakeCloudflare()
+    fake.state["dns"].append({"id": "dns-x", "name": "mcp-hosts.nwlnexus.io", "type": "A", "content": "192.0.2.1",
+                              "proxied": False})
+    httpd = serve(fake)
+    try:
+        stdout, _ = run_play(httpd.server_address[1], {"cloudflare_access_mcp_portal_enabled": True}, roles_path,
+                             expect_fail=True)
+    finally:
+        httpd.shutdown()
+    dns_writes = [r for r in writes(fake.log) if "/dns_records" in r["path"]
+                  and "mcp-hosts" in (r["body"] or "") or r["path"].endswith("dns-x")]
+    check(dns_writes == [] and "mcp-hosts.nwlnexus.io already has" in stdout,
+          "mcp_foreign_dns_refused: an existing A record on the hosts portal host is never overwritten", dns_writes)
+
+
 def test_per_app_session(roles_path):
     own = {"session_duration": "1h", "oauth_access_token_lifetime": "5m", "oauth_grant_session_duration": "24h"}
     apps = {"cloudflare_access_applications":
@@ -375,6 +559,8 @@ def main():
     test_two_applications(args.roles_path)
     test_per_app_session(args.roles_path)
     test_portal_needs_memory(args.roles_path)
+    test_mcp_lists(args.roles_path)
+    test_mcp_refusals(args.roles_path)
     if FAILURES:
         raise SystemExit("%d check(s) failed" % len(FAILURES))
     print("all checks passed")

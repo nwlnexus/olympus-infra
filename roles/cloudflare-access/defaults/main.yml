@@ -14,9 +14,9 @@
 #     with Managed OAuth + dynamic client registration for the claude.ai connector;
 #   - the tunnel public hostname (one ingress rule, inserted before the catch-all) and its proxied CNAME;
 #   - a printed summary per application with its team domain and AUD for the backend's manifest;
-#   - opt-in (cloudflare_access_mcp_portal_enabled, olympus-sdk#923): the owner MCP server portal in front
-#     of the memory gateway (MCP server, portal, its two Access applications, proxied CNAME, tool curation)
-#     and the portal callbacks in the memory application's DCR redirect URIs.
+#   - opt-in (cloudflare_access_mcp_portal_enabled, olympus-sdk#923, #929): MCP servers (memory, k8s) and
+#     server portals (owner: memory + k8s; hosts: k8s), their Access applications, proxied CNAMEs, per-server
+#     tool curation, and the portal callbacks in the backends' DCR redirect URIs.
 #
 # Look-up-before-create everywhere; a second run changes nothing. Reads run in --check, writes do not.
 # Run with playbooks/push/cloudflare-access.yml (the header there has the commands).
@@ -178,13 +178,13 @@ cloudflare_access_memory_app:
   backend_config: "olympus-gitops clusters/olympus/memory/gateway/gateway.yaml (memory-gateway-config)"
 
 # The read-only Kubernetes MCP backend (olympus-sdk#916): owner only, no service tokens yet (a later issue
-# adds host tokens: list the hosts in service_token_hosts then), not in any MCP portal yet.
+# adds host tokens: list the hosts in service_token_hosts then), in the owner and hosts MCP portals as server `k8s` (#929).
 # Decision: k8s-mcp uses the same session and grant lifetimes as memory (owner-only, read-only backend); set
 # the per-application keys (session_duration, oauth_access_token_lifetime, oauth_grant_session_duration) to
 # tighten them.
 cloudflare_access_k8s_mcp_oauth_allowed_redirect_uris: "{{ cloudflare_access_oauth_allowed_redirect_uris }}"
-# Intentionally empty until the server is added to a portal; then the dashboard and portal callbacks, as
-# cloudflare_access_mcp_memory_callback_uris has them for memory.
+# Empty in the role: the playbook sets the dashboard callback for server id k8s and the callbacks of the
+# portals that hold it (olympus-sdk#929), as cloudflare_access_mcp_memory_callback_uris has them for memory.
 cloudflare_access_k8s_mcp_portal_callback_uris: []
 cloudflare_access_k8s_mcp_app:
   name: "k8s-mcp"
@@ -198,42 +198,115 @@ cloudflare_access_k8s_mcp_app:
   backend_env: {team_domain: ACCESS_TEAM_DOMAIN, aud: ACCESS_AUD}
   backend_config: "the k8s-mcp-proxy container env in the olympus-gitops atlas-system manifests"
 
-# --- MCP server portal (olympus-sdk#923, follow-up to spike #909) --------------------------------------
-# Off by default, so a run without it is unchanged. With it on, the role also manages (look-up-before-
-# create, after the memory application and tunnel):
-#   - the MCP server `memory` (auth_type oauth) pointing at the gateway's /mcp;
-#   - the portal `owner` on cloudflare_access_mcp_portal_hostname, Code Mode off (the personal/work guard
-#     must see tool names), the server attached with per-user auth (on_behalf);
-#   - tool curation: every synced tool enabled except cloudflare_access_mcp_disabled_tools. The API refuses
-#     `updated_tools` until the server's tools have synced (after the owner authenticates the server in the
-#     dashboard), so before that the role skips curation and says to re-run;
-#   - an `mcp_portal` Access application (a portal created through the API gets none) with Managed OAuth,
-#     DCR for claude.ai and localhost/loopback (Claude Code), and an `mcp` application for the server, both
-#     with the reusable <prefix>allow-owner policy only (no service tokens: bots stay on direct paths);
-#   - the proxied CNAME <portal hostname> -> gateway.agents.cloudflare.com;
-#   - the dashboard and portal OAuth callbacks added to the memory application's DCR allowed_uris
-#     (cloudflare_access_mcp_memory_callback_uris), after cloudflare_access_oauth_allowed_redirect_uris.
-# Once the portal is applied, keep this on for every later run: a run with it off resets the memory
-# application's redirect URIs to cloudflare_access_oauth_allowed_redirect_uris and the server can no
-# longer re-authenticate (the portal objects themselves are left alone, never deleted).
+# --- MCP servers and server portals (olympus-sdk#923, follow-up to spike #909; lists: #929) -------------
+# Off by default, so a run without it is unchanged. With it on, the role also manages (look-up-before-create,
+# after the applications and tunnel), for every entry of cloudflare_access_mcp_servers:
+#   - the MCP server (auth_type oauth) and an `mcp` Access application for it;
+# and for every entry of cloudflare_access_mcp_portals:
+#   - the portal on its hostname, its servers attached (per-user auth: on_behalf), Code Mode off by default
+#     (the personal/work guard must see tool names);
+#   - tool curation per server in the portal: every synced tool enabled except the entry's disabled_tools.
+#     The API refuses `updated_tools` until that server's tools have synced (after the owner authenticates
+#     the server in the dashboard), so before that the role skips that server's curation and says to re-run;
+#   - an `mcp_portal` Access application (a portal created through the API gets none) with Managed OAuth and
+#     DCR;
+#   - the proxied CNAME <portal hostname> -> gateway.agents.cloudflare.com (an existing record that is
+#     anything else is refused, never overwritten).
+# Every `mcp` and `mcp_portal` application uses the reusable <cloudflare_access_policy_prefix>allow-owner
+# policy only (no service tokens: bots stay on direct paths).
+# A server's own Access application (one of cloudflare_access_applications) must allow the dashboard callback
+# for the server id and the /servers-callback of every portal that holds it, in its portal_callback_uris
+# (memory: cloudflare_access_mcp_memory_callback_uris; k8s: cloudflare_access_k8s_mcp_portal_callback_uris);
+# the run warns when one is missing. They are added to its DCR allowed_uris while this is on.
+# Once applied, keep this on for every later run: a run with it off resets the backends' redirect URIs and
+# the servers can no longer re-authenticate (the portal objects themselves are left alone, never deleted).
+# Removing a server or portal from the lists deletes nothing either.
 cloudflare_access_mcp_portal_enabled: false
+
+# Server ids the personal/work guard (olympus-sdk#929) judges; the role refuses any other id, which the guard
+# would never see. Change it only together with the guard.
+cloudflare_access_mcp_allowed_server_ids: [memory, k8s, cluster, toolbox]
+
+# MCP servers. Keys: id (required, 1-32 [a-z0-9_-], also the tool prefix in a portal), url (required, https),
+# name (default: id), app_name (its `mcp` Access application, default: mcp-server-<id>), disabled_tools (default
+# [], the curation every portal applies unless its entry sets its own).
+cloudflare_access_mcp_servers:
+  - "{{ cloudflare_access_mcp_memory_server }}"
+  - "{{ cloudflare_access_mcp_k8s_server }}"
+
+# MCP portals. Keys: id (required), hostname (required, inside cloudflare_access_dns_zone), servers (required:
+# entries {server_id, on_behalf (default cloudflare_access_mcp_on_behalf), default_disabled (default false),
+# disabled_tools (default: the server's)}), name (default: id), code_mode (default off), app_name (default
+# mcp-portal-<id>), oauth_allowed_redirect_uris / oauth_allow_localhost / oauth_allow_loopback (default the
+# cloudflare_access_mcp_portal_oauth_* below), dns_comment.
+cloudflare_access_mcp_portals:
+  - "{{ cloudflare_access_mcp_owner_portal }}"
+  - "{{ cloudflare_access_mcp_hosts_portal }}"
+
+# The memory server and the owner portal read the single-portal variables below (#923), so existing
+# invocations and their -e overrides keep working unchanged.
 cloudflare_access_mcp_server_id: "memory"
 cloudflare_access_mcp_server_name: "memory"
 cloudflare_access_mcp_server_url: "https://{{ cloudflare_access_app_domain }}/mcp"
+cloudflare_access_mcp_server_app_name: "mcp-server-memory"
+# Tools turned off for memory. The gateway also refuses `forget` without the forget scope; this keeps it out
+# of the portals' tool lists as well. The memory gateway has no admin tools on /mcp today; add any that appear.
+cloudflare_access_mcp_disabled_tools:
+  - forget
+cloudflare_access_mcp_memory_server:
+  id: "{{ cloudflare_access_mcp_server_id }}"
+  name: "{{ cloudflare_access_mcp_server_name }}"
+  url: "{{ cloudflare_access_mcp_server_url }}"
+  app_name: "{{ cloudflare_access_mcp_server_app_name }}"
+  disabled_tools: "{{ cloudflare_access_mcp_disabled_tools }}"
+
+# The read-only Kubernetes MCP backend (olympus-sdk#916, #929). Its tools are all read-only: none turned off.
+# The id `k8s` is reserved: the guard blocks k8s_* portal tools from work directories.
+cloudflare_access_mcp_k8s_server:
+  id: "k8s"
+  url: "https://{{ cloudflare_access_k8s_mcp_app.domain }}/mcp"
+  app_name: "mcp-server-k8s"
+  disabled_tools: []
+
 cloudflare_access_mcp_portal_id: "owner"
 cloudflare_access_mcp_portal_name: "owner"
 cloudflare_access_mcp_portal_hostname: "mcp.nwlnexus.io"
 # off | opt_in | default_on | enforced. Off: Code Mode would hide the tool names the guard matches.
 cloudflare_access_mcp_portal_code_mode: "off"
-# Per-user auth through the portal (each person's own OAuth grant to the server).
-cloudflare_access_mcp_on_behalf: true
-# Tools turned off in the portal. The gateway also refuses `forget` without the forget scope; this keeps
-# it out of the portal's tool list as well. The memory gateway has no admin tools on /mcp today; add any
-# that appear here.
-cloudflare_access_mcp_disabled_tools:
-  - forget
 cloudflare_access_mcp_portal_app_name: "mcp-portal-owner"
-cloudflare_access_mcp_server_app_name: "mcp-server-memory"
+# The owner portal: memory and k8s, for claude.ai and Claude Code.
+cloudflare_access_mcp_owner_portal:
+  id: "{{ cloudflare_access_mcp_portal_id }}"
+  name: "{{ cloudflare_access_mcp_portal_name }}"
+  hostname: "{{ cloudflare_access_mcp_portal_hostname }}"
+  code_mode: "{{ cloudflare_access_mcp_portal_code_mode }}"
+  app_name: "{{ cloudflare_access_mcp_portal_app_name }}"
+  dns_comment: "MCP server portal (olympus-infra roles/cloudflare-access, olympus-sdk#923)"
+  servers:
+    - server_id: "{{ cloudflare_access_mcp_server_id }}"
+    - server_id: "k8s"
+
+# The hosts portal (olympus-sdk#929): host tools only (k8s now), never memory; Claude Code only (no claude.ai
+# redirect), Code Mode off. Hostname: hosts.mcp.nwlnexus.io was the first choice, but no certificate on the
+# zone covers a second-level name there (Universal SSL is *.nwlnexus.io only; on 2026-11-11 the edge refused
+# the TLS handshake for it), so it is the first-level mcp-hosts.nwlnexus.io.
+cloudflare_access_mcp_hosts_portal_hostname: "mcp-hosts.nwlnexus.io"
+cloudflare_access_mcp_hosts_portal:
+  id: "hosts"
+  hostname: "{{ cloudflare_access_mcp_hosts_portal_hostname }}"
+  code_mode: "off"
+  app_name: "mcp-portal-hosts"
+  oauth_allowed_redirect_uris: []
+  oauth_allow_localhost: true
+  oauth_allow_loopback: true
+  dns_comment: "MCP server portal hosts (olympus-infra roles/cloudflare-access, olympus-sdk#929)"
+  servers:
+    - server_id: "k8s"
+
+# Per-user auth through the portals (each person's own OAuth grant to the server); the default of every
+# portal server entry.
+cloudflare_access_mcp_on_behalf: true
+# Defaults of every portal's mcp_portal application.
 cloudflare_access_mcp_portal_oauth_allowed_redirect_uris:
   - "https://claude.ai/*"
 # Claude Code registers a localhost/loopback redirect.
@@ -242,7 +315,7 @@ cloudflare_access_mcp_portal_oauth_allow_loopback: true
 cloudflare_access_mcp_dns_target: "gateway.agents.cloudflare.com"
 # Callbacks the memory application's OAuth (DCR) must allow, or registering the server fails with
 # "An error occurred while registering the MCP server" (spike #909): the dashboard's admin callback for
-# this server id and the portal's per-user callback.
+# this server id and the per-user callback of the portal that holds it.
 cloudflare_access_mcp_memory_callback_uris:
   - "https://dash.cloudflare.com/{{ cloudflare_access_account_id }}/one/access-controls/ai-controls/mcp-server/oauth-callback/{{ cloudflare_access_mcp_server_id }}"
   - "https://{{ cloudflare_access_mcp_portal_hostname }}/servers-callback"

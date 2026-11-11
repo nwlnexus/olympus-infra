@@ -84,6 +84,7 @@
     _hosts_portal: >-
       {{ _cfa_mcp_portal_list | selectattr('id', 'equalto', cloudflare_access_mcp_hosts_portal.id) | list }}
     _k8s_app: "{{ cloudflare_access_k8s_mcp_app }}"
+    _cluster_app: "{{ cloudflare_access_cluster_mcp_app }}"
   ansible.builtin.assert:
     that:
       # The display name must not stand in for the id, so the tools keep the <id>_ prefix the guard matches.
@@ -98,8 +99,13 @@
       - _k8s_app.oauth_allowed_redirect_uris | select('search', 'claude\\.ai') | list | length == 0
       - not (_k8s_app.oauth_allow_localhost | default(false) | bool)
       - not (_k8s_app.oauth_allow_loopback | default(false) | bool)
+      # The same for the cluster-mcp backend (olympus-sdk#921).
+      - _cluster_app.oauth_allowed_redirect_uris | select('search', 'claude\\.ai') | list | length == 0
+      - not (_cluster_app.oauth_allow_localhost | default(false) | bool)
+      - not (_cluster_app.oauth_allow_loopback | default(false) | bool)
     fail_msg: >-
       cloudflare-access MCP portals: servers {{ _guarded }} must keep name equal to id and carry no alias
       ({{ _alias_keys }}), the {{ cloudflare_access_mcp_hosts_portal.id }} portal must not hold memory, and the
-      k8s-mcp application must not allow claude.ai, localhost or loopback redirects (portal callbacks only).
+      k8s-mcp and cluster-mcp applications must not allow claude.ai, localhost or loopback redirects (portal
+      callbacks only).
     quiet: true

@@ -1,7 +1,8 @@
 ---
 # Pure: the tunnel ingress list with the applications' rules first, in list order (or removed). Inputs:
 # _cfa_tunnel_config (the `config` object of GET .../configurations), _cfa_tunnel_apps (the applications
-# whose rule this run manages: each with domain, tunnel_service, tunnel_origin_request, tunnel_enabled).
+# whose rule this run manages: each with domain, tunnel_service, tunnel_origin_request, tunnel_enabled; a
+# Worker-origin application never gets a rule, even if one is passed in).
 # Outputs: _cfa_ingress_rules, _cfa_ingress_new, _cfa_ingress_changed. tests/cloudflare-access exercises it.
 # A hostname that is not in _cfa_tunnel_apps (another rule, an application removed from the list, or one
 # whose Access application does not exist yet) is kept where it is.
@@ -14,7 +15,7 @@
     _others: >-
       [{% for r in _old if r.get('hostname') not in _managed %}{{ r | to_json }},{% endfor %}null]
     _rules: >-
-      [{% for a in _cfa_tunnel_apps if a.tunnel_enabled | bool %}{{ {'hostname': a.domain, 'service': a.tunnel_service}
+      [{% for a in _cfa_tunnel_apps if a.get('origin', 'tunnel') == 'tunnel' and a.tunnel_enabled | bool %}{{ {'hostname': a.domain, 'service': a.tunnel_service}
          | combine({'originRequest': a.tunnel_origin_request} if a.tunnel_origin_request | length > 0 else {})
          | to_json }},{% endfor %}null]
   ansible.builtin.set_fact:

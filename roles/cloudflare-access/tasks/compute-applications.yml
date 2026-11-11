@@ -5,6 +5,7 @@
 - name: Fill in the per-application defaults
   vars:
     _defaults:
+      origin: tunnel
       tunnel_origin_request: {}
       tunnel_enabled: "{{ cloudflare_access_tunnel_enabled | bool }}"
       dns_zone: "{{ cloudflare_access_dns_zone }}"
@@ -32,12 +33,14 @@
     that:
       - _cfa_applications | length > 0
       - _cfa_applications | selectattr('name', 'defined') | selectattr('domain', 'defined')
-        | selectattr('tunnel_service', 'defined') | selectattr('policy_prefix', 'defined') | list | length
-        == _cfa_applications | length
+        | selectattr('policy_prefix', 'defined') | list | length == _cfa_applications | length
+      - _cfa_applications | map(attribute='origin') | reject('in', ['tunnel', 'worker']) | list | length == 0
+      - _cfa_applications | selectattr('origin', 'equalto', 'tunnel') | selectattr('tunnel_service', 'defined')
+        | list | length == _cfa_applications | selectattr('origin', 'equalto', 'tunnel') | list | length
       - _cfa_applications | map(attribute='name') | unique | length == _cfa_applications | length
       - _cfa_applications | map(attribute='domain') | unique | length == _cfa_applications | length
       - _cfa_applications | map(attribute='policy_prefix') | unique | length == _cfa_applications | length
     fail_msg: >-
-      cloudflare_access_applications: every entry needs name, domain, tunnel_service and policy_prefix,
-      and names, domains and policy prefixes must be unique.
+      cloudflare_access_applications: every entry needs name, domain and policy_prefix, origin is tunnel
+      (the default, needs tunnel_service) or worker, and names, domains and policy prefixes must be unique.
     quiet: true

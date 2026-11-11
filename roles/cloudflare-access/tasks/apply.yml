@@ -91,9 +91,10 @@
 - name: Pick the applications whose tunnel rule this run manages
   vars:
     # Applications whose Access application exists (or whose rule is being removed); the rule of any
-    # other application is left as it is.
+    # other application is left as it is. A Worker-origin application (origin: worker) has no tunnel rule
+    # and no CNAME: the Worker's custom domain owns its DNS record.
     _l: >-
-      [{% for a in _cfa_applications if _cfa_ready[a.name] or not a.tunnel_enabled | bool %}{{ a | to_json }},{% endfor %}null]
+      [{% for a in _cfa_applications if a.origin == 'tunnel' and (_cfa_ready[a.name] or not a.tunnel_enabled | bool) %}{{ a | to_json }},{% endfor %}null]
   ansible.builtin.set_fact:
     _cfa_tunnel_apps: "{{ (_l | from_json)[:-1] }}"
 

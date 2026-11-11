@@ -1,0 +1,22 @@
+---
+# Helper for render.yml: compute-applications.yml must refuse the application list in `_bad`.
+- name: Fill in and check a bad application list
+  block:
+    - name: Run the checks
+      ansible.builtin.include_tasks: ../../roles/cloudflare-access/tasks/compute-applications.yml
+      vars:
+        cloudflare_access_applications: "{{ _bad }}"
+
+    - name: Not reached when the checks refuse it
+      ansible.builtin.set_fact:
+        _cfa_refuse_failed_to_refuse: true
+  rescue:
+    - name: Refused, as it should be
+      ansible.builtin.set_fact:
+        _cfa_refuse_failed_to_refuse: false
+
+- name: The application list was refused
+  ansible.builtin.assert:
+    that: not _cfa_refuse_failed_to_refuse
+    fail_msg: "compute-applications.yml accepted {{ _bad | to_json }}"
+    quiet: true

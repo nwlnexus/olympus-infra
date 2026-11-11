@@ -118,10 +118,10 @@
     - name: Fill in the default application list
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-applications.yml"
 
-    - name: memory comes first from the single-application variables; k8s-mcp is owner-only, no tokens
+    - name: memory comes first from the single-application variables; k8s-mcp and cluster-mcp are owner-only, no tokens
       ansible.builtin.assert:
         that:
-          - _cfa_applications | map(attribute='name') | list == ['memory', 'k8s-mcp']
+          - _cfa_applications | map(attribute='name') | list == ['memory', 'k8s-mcp', 'cluster-mcp']
           - _cfa_applications[0].domain == cloudflare_access_app_domain
           - _cfa_applications[0].policy_prefix == cloudflare_access_policy_prefix
           - _cfa_applications[0].tunnel_service == cloudflare_access_tunnel_service
@@ -141,6 +141,20 @@
           - not _cfa_applications[1].oauth_allow_loopback
           - _cfa_applications[1].dns_zone == 'nwlnexus.io'
           - "_cfa_applications[1].backend_env == {'team_domain': 'ACCESS_TEAM_DOMAIN', 'aud': 'ACCESS_AUD'}"
+          - _cfa_applications[0].origin == 'tunnel'
+          - _cfa_applications[1].origin == 'tunnel'
+          # cluster-mcp (olympus-sdk#921): an edge Worker host, no tunnel service, no tokens, portal callbacks only.
+          - _cfa_applications[2].domain == 'cluster-mcp.nwlnexus.io'
+          - _cfa_applications[2].policy_prefix == 'cluster-mcp-'
+          - _cfa_applications[2].origin == 'worker'
+          - _cfa_applications[2].tunnel_service is not defined
+          - _cfa_applications[2].service_token_hosts == []
+          - _cfa_applications[2].oauth_allowed_redirect_uris == []
+          - _cfa_applications[2].portal_callback_uris == []
+          - not _cfa_applications[2].oauth_allow_localhost
+          - not _cfa_applications[2].oauth_allow_loopback
+          - _cfa_applications[2].dns_zone == 'nwlnexus.io'
+          - "_cfa_applications[2].backend_env == {'team_domain': 'CF_ACCESS_TEAM_DOMAIN', 'aud': 'CLUSTER_MCP_ACCESS_AUD'}"
         fail_msg: "{{ _cfa_applications | to_json }}"
         quiet: true
 
@@ -334,6 +348,84 @@
         fail_msg: "{{ _cfa_app_diff_keys | to_json }}"
         quiet: true
 
+    - name: Plan the cluster-mcp policies (no service tokens)
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-policies.yml"
+      vars:
+        cloudflare_access_owner_emails: [Owner@Example.invalid]
+        _cfa_a: "{{ _cfa_applications[2] }}"
+        _cfa_tokens: {memory-ai-agent-host: tok-1}
+
+    - name: Only cluster-mcp-allow-owner, no service-auth
+      ansible.builtin.assert:
+        that:
+          - "_cfa_policies_desired == [{'name': 'cluster-mcp-allow-owner', 'decision': 'allow',
+             'include': [{'email': {'email': 'owner@example.invalid'}}], 'exclude': [], 'require': []}]"
+        fail_msg: "{{ _cfa_policies_desired | to_json }}"
+        quiet: true
+
+    - name: Plan the cluster-mcp application with the portal on and the playbook's callbacks
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-app.yml"
+      vars:
+        cloudflare_access_mcp_portal_enabled: true
+        _cfa_a: "{{ _cfa_applications[2] | combine({'portal_callback_uris': _cluster_callbacks}) }}"
+        _cfa_apps: []
+        _cfa_policy_ids: {cluster-mcp-allow-owner: pol-c}
+        _cluster_callbacks:
+          - "https://dash.cloudflare.com/{{ _acct_placeholder }}/one/access-controls/ai-controls/mcp-server/oauth-callback/cluster"
+          - "https://mcp-hosts.nwlnexus.io/servers-callback"
+          - "https://mcp.nwlnexus.io/servers-callback"
+
+    - name: The cluster-mcp DCR allows exactly the three portal callbacks (no claude.ai, no localhost or loopback)
+      ansible.builtin.assert:
+        that:
+          - _cfa_app_action == 'create'
+          - "_cfa_app_desired.policies == [{'id': 'pol-c', 'precedence': 1}]"
+          - "_cfa_app_desired.oauth_configuration.dynamic_client_registration == {'enabled': true, 'allowed_uris': [
+             'https://dash.cloudflare.com/' ~ _acct_placeholder ~ '/one/access-controls/ai-controls/mcp-server/oauth-callback/cluster',
+             'https://mcp-hosts.nwlnexus.io/servers-callback', 'https://mcp.nwlnexus.io/servers-callback'],
+             'allow_any_on_localhost': false, 'allow_any_on_loopback': false}"
+        fail_msg: "{{ _cfa_app_desired | to_json }}"
+        quiet: true
+
+    - name: An application with an unknown origin, or a tunnel application without tunnel_service, is refused
+      vars:
+        _bad_apps:
+          - [{name: x, domain: x.nwlnexus.io, policy_prefix: x-, origin: nowhere}]
+          - [{name: x, domain: x.nwlnexus.io, policy_prefix: x-}]
+          - [{name: x, domain: x.nwlnexus.io, policy_prefix: x-, origin: tunnel}]
+      ansible.builtin.include_tasks: refuse-applications.yml
+      loop: "{{ _bad_apps }}"
+      loop_control:
+        loop_var: _bad
+
+    - name: A worker application needs no tunnel_service and is accepted
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-applications.yml"
+      vars:
+        cloudflare_access_applications:
+          - {name: w, domain: w.nwlnexus.io, policy_prefix: w-, origin: worker}
+
+    - name: It gets the defaults and no tunnel service
+      ansible.builtin.assert:
+        that:
+          - _cfa_applications | length == 1
+          - _cfa_applications[0].origin == 'worker'
+          - _cfa_applications[0].tunnel_service is not defined
+        fail_msg: "{{ _cfa_applications | to_json }}"
+        quiet: true
+
+    - name: Fill in the default application list again (the refusal cases overwrote it)
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-applications.yml"
+
+    - name: apply.yml leaves a worker-origin application out of the tunnel applications
+      vars:
+        _sel: "{{ _apply | selectattr('name', 'equalto', 'Pick the applications whose tunnel rule this run manages') | list }}"
+      ansible.builtin.assert:
+        that:
+          - _sel | length == 1
+          - _sel[0].vars._l is search("a.origin == 'tunnel'")
+        fail_msg: "{{ _sel | to_json }}"
+        quiet: true
+
     # --- tunnel ------------------------------------------------------------------------------------
     - name: Plan the tunnel rule on a config with another hostname and the catch-all
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-tunnel.yml"
@@ -376,7 +468,7 @@
     - name: Plan both applications' rules on a config that has memory's rule after another one
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-tunnel.yml"
       vars:
-        _cfa_tunnel_apps: "{{ _cfa_applications }}"
+        _cfa_tunnel_apps: "{{ _cfa_applications | selectattr('origin', 'equalto', 'tunnel') | list }}"
         _cfa_tunnel_config: {ingress: ["{{ _other_rule }}", "{{ _mem_rule }}", "{{ _catch_all }}"]}
 
     - name: Both rules first, in list order, every other rule kept, catch-all last
@@ -390,12 +482,27 @@
     - name: Plan both again on the written config
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-tunnel.yml"
       vars:
-        _cfa_tunnel_apps: "{{ _cfa_applications }}"
+        _cfa_tunnel_apps: "{{ _cfa_applications | selectattr('origin', 'equalto', 'tunnel') | list }}"
         _cfa_tunnel_config: {ingress: "{{ _cfa_ingress_new }}"}
 
     - name: Second run with both changes nothing
       ansible.builtin.assert:
         that: not _cfa_ingress_changed
+        quiet: true
+
+    - name: Plan the rules of the tunnel applications only (cluster-mcp, origin worker, has no rule)
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-tunnel.yml"
+      vars:
+        _cfa_tunnel_apps: "{{ _cfa_applications | selectattr('origin', 'equalto', 'tunnel') | list }}"
+        _cfa_tunnel_config: {ingress: ["{{ _other_rule }}", "{{ _catch_all }}"]}
+
+    - name: No rule for cluster-mcp
+      ansible.builtin.assert:
+        that:
+          - _cfa_applications | selectattr('origin', 'equalto', 'tunnel') | map(attribute='name') | list == ['memory', 'k8s-mcp']
+          - _cfa_ingress_new | selectattr('hostname', 'defined') | map(attribute='hostname') | select('search', 'cluster') | list | length == 0
+          - _cfa_ingress_new | length == 4
+        fail_msg: "{{ _cfa_ingress_new | to_json }}"
         quiet: true
 
     - name: Plan with k8s-mcp left out of the run (removed from the list, or its application not created yet)
@@ -465,18 +572,21 @@
     - name: Fill in the default MCP lists
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-mcp.yml"
 
-    - name: Servers memory and k8s; portals owner (memory + k8s) and hosts (k8s only, no memory)
+    - name: Servers memory, k8s and cluster; portals owner (all three) and hosts (k8s, cluster; no memory)
       vars:
         _owner: "{{ _cfa_mcp_portal_list[0] }}"
         _hosts: "{{ _cfa_mcp_portal_list[1] }}"
         _k8s_cb: "{{ _playbook[0].vars.cloudflare_access_k8s_mcp_portal_callback_uris }}"
+        _cluster_cb: "{{ _playbook[0].vars.cloudflare_access_cluster_mcp_portal_callback_uris }}"
       ansible.builtin.assert:
         that:
-          - _cfa_mcp_server_list | map(attribute='id') | list == ['memory', 'k8s']
+          - _cfa_mcp_server_list | map(attribute='id') | list == ['memory', 'k8s', 'cluster']
           - "_cfa_mcp_server_list[0] == {'id': 'memory', 'name': 'memory', 'url': 'https://memory.nwlnexus.io/mcp',
              'app_name': 'mcp-server-memory', 'disabled_tools': ['forget']}"
           - "_cfa_mcp_server_list[1] == {'id': 'k8s', 'name': 'k8s', 'url': 'https://k8s-mcp.nwlnexus.io/mcp',
              'app_name': 'mcp-server-k8s', 'disabled_tools': []}"
+          - "_cfa_mcp_server_list[2] == {'id': 'cluster', 'name': 'cluster', 'url': 'https://cluster-mcp.nwlnexus.io/mcp',
+             'app_name': 'mcp-server-cluster', 'disabled_tools': []}"
           - _cfa_mcp_portal_list | map(attribute='id') | list == ['owner', 'hosts']
           - _owner.hostname == 'mcp.nwlnexus.io'
           - _owner.app_name == 'mcp-portal-owner'
@@ -484,13 +594,15 @@
           - _owner.oauth_allowed_redirect_uris == ['https://claude.ai/*']
           - _owner.dns_comment == 'MCP server portal (olympus-infra roles/cloudflare-access, olympus-sdk#923)'
           - "_owner.servers == [{'server_id': 'memory', 'on_behalf': true, 'default_disabled': false, 'disabled_tools': ['forget']},
-                                {'server_id': 'k8s', 'on_behalf': true, 'default_disabled': false, 'disabled_tools': []}]"
+                                {'server_id': 'k8s', 'on_behalf': true, 'default_disabled': false, 'disabled_tools': []},
+                                {'server_id': 'cluster', 'on_behalf': true, 'default_disabled': false, 'disabled_tools': []}]"
           - _hosts.hostname == cloudflare_access_mcp_hosts_portal_hostname
           - _hosts.app_name == 'mcp-portal-hosts'
           - _hosts.code_mode == 'off'
           - _hosts.oauth_allowed_redirect_uris == []
           - _hosts.oauth_allow_localhost and _hosts.oauth_allow_loopback
-          - "_hosts.servers == [{'server_id': 'k8s', 'on_behalf': true, 'default_disabled': false, 'disabled_tools': []}]"
+          - "_hosts.servers == [{'server_id': 'k8s', 'on_behalf': true, 'default_disabled': false, 'disabled_tools': []},
+                                {'server_id': 'cluster', 'on_behalf': true, 'default_disabled': false, 'disabled_tools': []}]"
           - "'memory' not in _hosts.servers | map(attribute='server_id')"
           # The playbook gives the k8s-mcp backend the dashboard callback and both portals' callbacks.
           - _k8s_cb | length == 3
@@ -498,6 +610,11 @@
           # Read as raw text: the callbacks follow the portals' hostname variables.
           - _k8s_cb | select('search', '^https://\\{\\{ cloudflare_access_mcp_hosts_portal_hostname \\}\\}/servers-callback$') | list | length == 1
           - _k8s_cb | select('search', '^https://\\{\\{ cloudflare_access_mcp_portal_hostname \\}\\}/servers-callback$') | list | length == 1
+          # The same for the cluster-mcp backend (olympus-sdk#921).
+          - _cluster_cb | length == 3
+          - _cluster_cb[0] is search('/mcp-server/oauth-callback/cluster$')
+          - _cluster_cb | select('search', '^https://\\{\\{ cloudflare_access_mcp_hosts_portal_hostname \\}\\}/servers-callback$') | list | length == 1
+          - _cluster_cb | select('search', '^https://\\{\\{ cloudflare_access_mcp_portal_hostname \\}\\}/servers-callback$') | list | length == 1
         fail_msg: "{{ {'servers': _cfa_mcp_server_list, 'portals': _cfa_mcp_portal_list} | to_json }}"
         quiet: true
 
@@ -530,6 +647,20 @@
       loop_control:
         loop_var: _case
 
+    - name: A cluster-mcp application that allows claude.ai, localhost or loopback is refused
+      ansible.builtin.include_tasks: refuse-mcp.yml
+      vars:
+        _case:
+          servers: [{id: memory, url: "https://memory.nwlnexus.io/mcp"}, {id: cluster, url: "https://cluster-mcp.nwlnexus.io/mcp"}]
+          portals: [{id: owner, hostname: mcp.nwlnexus.io, servers: [{server_id: memory}, {server_id: cluster}]}]
+          cluster_app: "{{ _cluster_bad }}"
+      loop:
+        - {oauth_allowed_redirect_uris: ["https://claude.ai/*"]}
+        - {oauth_allow_localhost: true}
+        - {oauth_allow_loopback: true}
+      loop_control:
+        loop_var: _cluster_bad
+
     - name: A k8s-mcp application that allows claude.ai, localhost or loopback is refused
       ansible.builtin.include_tasks: refuse-mcp.yml
       vars:
@@ -547,7 +678,28 @@
     - name: Fill in the default MCP lists again (the refused cases overwrote them)
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-mcp.yml"
 
-    - name: Plan the MCP servers when nothing exists yet
+    - name: Plan the cluster MCP server when nothing exists yet
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-mcp-server.yml"
+      vars:
+        _cfa_ms: "{{ _cfa_mcp_server_list[2] }}"
+        _cfa_mcp_servers: []
+        _cfa_all_apps: [{id: app-1, name: memory, type: self_hosted, domain: memory.nwlnexus.io}]
+        _cfa_policy_ids: "{{ _owner_ids }}"
+
+    - name: cluster and its mcp application are created, with memory's allow-owner policy
+      ansible.builtin.assert:
+        that:
+          - _cfa_mcp_server_action == 'create'
+          - "_cfa_mcp_server_desired == {'id': 'cluster', 'name': 'cluster', 'hostname': 'https://cluster-mcp.nwlnexus.io/mcp', 'auth_type': 'oauth'}"
+          - _cfa_mcp_tools == []
+          - _cfa_mcp_server_app_action == 'create'
+          - _cfa_mcp_server_app_desired.name == 'mcp-server-cluster'
+          - "_cfa_mcp_server_app_desired.destinations == [{'type': 'via_mcp_server_portal', 'mcp_server_id': 'cluster'}]"
+          - "_cfa_mcp_server_app_desired.policies == [{'id': 'pol-1', 'precedence': 1}]"
+        fail_msg: "{{ _cfa_mcp_server_plan | to_json }}"
+        quiet: true
+
+    - name: Plan the k8s MCP server when nothing exists yet
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-mcp-server.yml"
       vars:
         _cfa_ms: "{{ _cfa_mcp_server_list[1] }}"
@@ -596,14 +748,15 @@
         _cfa_all_apps: []
         _cfa_policy_ids: "{{ _owner_ids }}"
 
-    - name: Owner is created with both servers, curation pending for both, and its app allows claude.ai and Claude Code
+    - name: Owner is created with all three servers, curation pending for all, and its app allows claude.ai and Claude Code
       ansible.builtin.assert:
         that:
           - _cfa_mcp_portal_action == 'create'
-          - _cfa_mcp_curation | map(attribute='state') | list == ['pending', 'pending']
+          - _cfa_mcp_curation | map(attribute='state') | list == ['pending', 'pending', 'pending']
           - "_cfa_mcp_portal_desired == {'name': 'owner', 'hostname': 'mcp.nwlnexus.io', 'code_mode': 'off',
              'servers': [{'server_id': 'memory', 'on_behalf': true, 'default_disabled': false},
-                         {'server_id': 'k8s', 'on_behalf': true, 'default_disabled': false}]}"
+                         {'server_id': 'k8s', 'on_behalf': true, 'default_disabled': false},
+                         {'server_id': 'cluster', 'on_behalf': true, 'default_disabled': false}]}"
           - _cfa_mcp_portal_app_action == 'create'
           - _cfa_mcp_portal_app_desired.type == 'mcp_portal'
           - "_cfa_mcp_portal_app_desired.destinations == [{'type': 'public', 'uri': 'mcp.nwlnexus.io'}]"
@@ -623,12 +776,13 @@
         _cfa_all_apps: []
         _cfa_policy_ids: "{{ _owner_ids }}"
 
-    - name: Hosts is created with k8s only; its app allows Claude Code (localhost/loopback) and not claude.ai
+    - name: Hosts is created with k8s and cluster; its app allows Claude Code (localhost/loopback) and not claude.ai
       ansible.builtin.assert:
         that:
           - _cfa_mcp_portal_action == 'create'
           - "_cfa_mcp_portal_desired == {'name': 'hosts', 'hostname': cloudflare_access_mcp_hosts_portal_hostname,
-             'code_mode': 'off', 'servers': [{'server_id': 'k8s', 'on_behalf': true, 'default_disabled': false}]}"
+             'code_mode': 'off', 'servers': [{'server_id': 'k8s', 'on_behalf': true, 'default_disabled': false},
+                                                  {'server_id': 'cluster', 'on_behalf': true, 'default_disabled': false}]}"
           - _cfa_mcp_portal_app_desired.name == 'mcp-portal-hosts'
           - _cfa_mcp_portal_app_desired.domain == cloudflare_access_mcp_hosts_portal_hostname
           - "_cfa_mcp_portal_app_desired.policies == [{'id': 'pol-1', 'precedence': 1}]"
@@ -638,21 +792,22 @@
         fail_msg: "{{ _cfa_mcp_portal_plan | to_json }}"
         quiet: true
 
-    - name: Plan the owner portal against the live-like state (memory curated, k8s not in it, k8s not synced)
+    - name: Plan the owner portal against the live-like state (memory curated, k8s and cluster not in it, not synced)
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-mcp-portal.yml"
       vars:
         _cfa_mp: "{{ _cfa_mcp_portal_list[0] }}"
-        _cfa_mcp_servers: "{{ _live_servers + [{'id': 'k8s', 'name': 'k8s', 'hostname': 'https://k8s-mcp.nwlnexus.io/mcp', 'auth_type': 'oauth'}] }}"
+        _cfa_mcp_servers: "{{ _live_servers + [{'id': 'k8s', 'name': 'k8s', 'hostname': 'https://k8s-mcp.nwlnexus.io/mcp', 'auth_type': 'oauth'},
+                                                {'id': 'cluster', 'name': 'cluster', 'hostname': 'https://cluster-mcp.nwlnexus.io/mcp', 'auth_type': 'oauth'}] }}"
         _cfa_mcp_portals: "{{ _live_portals }}"
         _cfa_all_apps: "{{ _live_apps }}"
         _cfa_policy_ids: "{{ _owner_ids }}"
 
-    - name: Existing state unchanged; k8s is added, memory's curation is sent exactly as it is
+    - name: Existing state unchanged; k8s and cluster are added, memory's curation is sent exactly as it is
       ansible.builtin.assert:
         that:
           - _cfa_mcp_portal_action == 'update'
           - _cfa_mcp_portal_diff_keys == ['servers']
-          - _cfa_mcp_curation | map(attribute='state') | list == ['applied', 'pending']
+          - _cfa_mcp_curation | map(attribute='state') | list == ['applied', 'pending', 'pending']
           - _cfa_mcp_portal_app_action == 'unchanged'
           - >-
             _cfa_mcp_portal_desired.servers ==
@@ -660,7 +815,8 @@
               'updated_tools': [{'name': 'append', 'enabled': true}, {'name': 'digest', 'enabled': true},
                                 {'name': 'forget', 'enabled': false}, {'name': 'recall', 'enabled': true},
                                 {'name': 'status', 'enabled': true}]},
-             {'server_id': 'k8s', 'on_behalf': true, 'default_disabled': false}]
+             {'server_id': 'k8s', 'on_behalf': true, 'default_disabled': false},
+             {'server_id': 'cluster', 'on_behalf': true, 'default_disabled': false}]
         fail_msg: "{{ _cfa_mcp_portal_plan | to_json }}"
         quiet: true
 
@@ -682,10 +838,10 @@
         fail_msg: "{{ _cfa_mcp_portal_plan | to_json }}"
         quiet: true
 
-    - name: Plan both portals once k8s has synced (shared server) and owner holds both servers
+    - name: Plan both portals once k8s has synced (shared server) and owner holds memory and k8s
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-mcp-portal.yml"
       vars:
-        _cfa_mp: "{{ _cfa_mcp_portal_list[0] }}"
+        _cfa_mp: "{{ _cfa_mcp_portal_list[0] | combine({'servers': _cfa_mcp_portal_list[0].servers[:2]}) }}"
         _cfa_mcp_servers: "{{ _live_servers + [_k8s_synced] }}"
         _cfa_mcp_portals: >-
           {{ [_live_portals[0] | combine({'servers': _live_portals[0].servers

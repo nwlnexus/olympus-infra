@@ -63,8 +63,16 @@
 # to the owner portal (memory and its curation unchanged) and the portal callbacks to the k8s-mcp
 # application's redirect URIs. Then authenticate the server in Zero Trust > Access controls > AI controls >
 # MCP servers > k8s, and re-run (nothing of k8s is turned off, so the re-run normally writes nothing).
+#
+# MCP server `cluster` (https://cluster-mcp.nwlnexus.io/mcp, read-only Hermes cluster state), olympus-sdk#921:
+# an edge Worker host (origin worker), so the first apply after #921 creates its Access application and
+# allow-owner policy but no tunnel rule and no CNAME (the Worker's custom domain owns DNS), then the server
+# and its `mcp` application, and adds it to the owner and hosts portals. Paste the printed AUD into
+# CLUSTER_MCP_ACCESS_AUD in olympus-sdk packages/iris/wrangler.jsonc (vars) and deploy; until then the host
+# answers 503. Then authenticate the server in Zero Trust > Access controls > AI controls > MCP servers >
+# cluster, and re-run.
 
-- name: Cloudflare Access applications (memory gateway, Kubernetes MCP backend)
+- name: Cloudflare Access applications (memory gateway, Kubernetes MCP backend, cluster MCP backend)
   hosts: localhost
   connection: local
   gather_facts: false
@@ -77,6 +85,11 @@
     # of both portals that hold it (olympus-sdk#929); without them authenticating the server fails.
     cloudflare_access_k8s_mcp_portal_callback_uris:
       - "https://dash.cloudflare.com/{{ cloudflare_access_account_id }}/one/access-controls/ai-controls/mcp-server/oauth-callback/k8s"
+      - "https://{{ cloudflare_access_mcp_hosts_portal_hostname }}/servers-callback"
+      - "https://{{ cloudflare_access_mcp_portal_hostname }}/servers-callback"
+    # The same for the cluster-mcp backend, server id cluster (olympus-sdk#921).
+    cloudflare_access_cluster_mcp_portal_callback_uris:
+      - "https://dash.cloudflare.com/{{ cloudflare_access_account_id }}/one/access-controls/ai-controls/mcp-server/oauth-callback/cluster"
       - "https://{{ cloudflare_access_mcp_hosts_portal_hostname }}/servers-callback"
       - "https://{{ cloudflare_access_mcp_portal_hostname }}/servers-callback"
   roles:

@@ -13,7 +13,7 @@ op command is replaced by a shell that only appends its arguments to a file). No
 The fixture fixtures/memory-origin-main.json holds the requests the role made for the memory application
 before it managed several applications (recorded from that version of the role). The check runs the same
 scenarios with only the memory entry in cloudflare_access_applications and requires the very same requests,
-byte for byte, then plans the default list (memory + k8s-mcp) and checks the second application, and the MCP
+byte for byte, then plans the default list (memory + k8s-mcp + cluster-mcp) and checks the second and third applications, and the MCP
 server and portal lists (olympus-sdk#929) from the state the single-portal configuration left.
 """
 
@@ -307,6 +307,33 @@ def test_two_applications(roles_path):
     check(len(dns) == 1 and dns[0]["type"] == "CNAME" and dns[0]["content"] == "tun-1.cfargotunnel.com"
           and dns[0]["proxied"] is True, "k8s_mcp_dns: one proxied CNAME to the tunnel", dns)
 
+    # (b2) the cluster-mcp application (olympus-sdk#921): origin worker, so an Access application and its
+    # allow-owner policy, but neither a tunnel rule nor a DNS record (the Worker's custom domain owns it).
+    cpols = [p for p in pols if p["name"].startswith("cluster-mcp-")]
+    check(cpols == [{"name": "cluster-mcp-allow-owner", "decision": "allow",
+                     "include": [{"email": {"email": "owner@example.invalid"}}], "exclude": [], "require": []}],
+          "cluster_mcp_policies: exactly one reusable policy, cluster-mcp-allow-owner (Allow, owner)", cpols)
+    capps = [a for a in bodies(fresh, "POST", "/access/apps") if a.get("domain") == "cluster-mcp.nwlnexus.io"]
+    check(len(capps) == 1, "cluster_mcp_app: one Access application created for cluster-mcp.nwlnexus.io", capps)
+    if capps:
+        a = capps[0]
+        dcr = a["oauth_configuration"]["dynamic_client_registration"]
+        check(a["name"] == "cluster-mcp" and a["type"] == "self_hosted"
+              and a["destinations"] == [{"type": "public", "uri": "cluster-mcp.nwlnexus.io"}]
+              and a["policies"] == [{"id": "pol-cluster-mcp-allow-owner", "precedence": 1}]
+              and a["oauth_configuration"]["enabled"] and dcr["enabled"]
+              and dcr["allowed_uris"] == []
+              and dcr["allow_any_on_localhost"] is False and dcr["allow_any_on_loopback"] is False,
+              "cluster_mcp_app_body: self-hosted, bare host, allow-owner only, Managed OAuth, no direct claude.ai "
+              "(no redirect URIs without the portal callbacks)", a)
+    check(not any("cluster-mcp" in (r["body"] or "") for r in fresh if "/dns_records" in r["path"]),
+          "cluster_mcp_no_dns: no DNS request for cluster-mcp.nwlnexus.io (origin worker)")
+    check(not any("cluster-mcp" in json.dumps(r) for r in new_put),
+          "cluster_mcp_no_tunnel_rule: no tunnel rule for cluster-mcp.nwlnexus.io (origin worker)", new_put)
+    check(not any(r.get("hostname") == "cluster-mcp.nwlnexus.io" for r in state["tunnel_config"]["ingress"]),
+          "cluster_mcp_tunnel_state: the tunnel configuration holds no cluster-mcp rule",
+          state["tunnel_config"]["ingress"])
+
     # (e) an application with an empty service-token list gets no token objects at all.
     toks = [r for r in fresh if "/service_tokens" in r["path"] and "k8s-mcp" in (r["body"] or "")]
     check(toks == [] and not any("k8s-mcp" in o for o in got["apply-fresh"]["op"])
@@ -332,17 +359,25 @@ def test_two_applications(roles_path):
     out = got["apply-again"]["stdout"]
     check('k8s-mcp: ACCESS_TEAM_DOMAIN: \\"https://example-team.cloudflareaccess.com\\"' in out
           and 'k8s-mcp: ACCESS_AUD: \\"aud-k8s-mcp\\"' in out
+          and 'cluster-mcp: CF_ACCESS_TEAM_DOMAIN: \\"https://example-team.cloudflareaccess.com\\"' in out
+          and 'cluster-mcp: CLUSTER_MCP_ACCESS_AUD: \\"aud-cluster-mcp\\"' in out
           and 'memory: MEMORY_ACCESS_AUD: \\"aud-memory\\"' in out,
           "backend_values: team domain and AUD printed per application", out[-3000:])
 
 
 K8S_TOOLS = ["events_list", "namespaces_list", "nodes_top", "pods_get", "pods_list", "pods_list_in_namespace",
              "pods_log", "pods_top", "resources_get", "resources_list"]
+CLUSTER_TOOLS = ["flux_status", "list", "status"]
 MEMORY_TOOLS = ["append", "digest", "forget", "recall", "status"]
 K8S_CALLBACKS = {"cloudflare_access_k8s_mcp_portal_callback_uris": [
     "https://dash.cloudflare.com/%s/one/access-controls/ai-controls/mcp-server/oauth-callback/k8s" % ACCT,
     "https://mcp-hosts.nwlnexus.io/servers-callback",
     "https://mcp.nwlnexus.io/servers-callback"]}
+CLUSTER_CALLBACKS = {"cloudflare_access_cluster_mcp_portal_callback_uris": [
+    "https://dash.cloudflare.com/%s/one/access-controls/ai-controls/mcp-server/oauth-callback/cluster" % ACCT,
+    "https://mcp-hosts.nwlnexus.io/servers-callback",
+    "https://mcp.nwlnexus.io/servers-callback"]}
+CALLBACKS = dict(K8S_CALLBACKS, **CLUSTER_CALLBACKS)
 
 
 def sync_tools(server_id, names):
@@ -359,7 +394,7 @@ def write_paths(reqs):
 
 
 def test_mcp_lists(roles_path):
-    """olympus-sdk#929: servers [memory, k8s], portals [owner: memory + k8s, hosts: k8s], from the live state."""
+    """olympus-sdk#929, #921: servers [memory, k8s, cluster], portals [owner: all three, hosts: k8s + cluster]."""
     runs = [
         # The state as it is live: built by the configuration before #929, memory authenticated and curated.
         {"name": "old-apply", "extra": MEMORY_ONLY_MCP},
@@ -368,13 +403,15 @@ def test_mcp_lists(roles_path):
         # Without the playbook's k8s callbacks the plan warns that k8s could not authenticate.
         {"name": "hint-check", "extra": {}, "check": True},
         # The first runs with the lists (and the playbook's k8s callbacks).
-        {"name": "new-check", "extra": K8S_CALLBACKS, "check": True},
-        {"name": "new-apply", "extra": K8S_CALLBACKS},
-        {"name": "new-again", "extra": K8S_CALLBACKS},
+        {"name": "new-check", "extra": CALLBACKS, "check": True},
+        {"name": "new-apply", "extra": CALLBACKS},
+        {"name": "new-again", "extra": CALLBACKS},
         # The owner authenticates k8s; nothing of it is turned off, so the re-run writes nothing.
-        {"name": "k8s-synced", "extra": K8S_CALLBACKS, "before": sync_tools("k8s", K8S_TOOLS)},
+        {"name": "k8s-synced", "extra": CALLBACKS, "before": sync_tools("k8s", K8S_TOOLS)},
+        # The same for cluster (olympus-sdk#921): its tools are all on, so the re-run writes nothing either.
+        {"name": "cluster-synced", "extra": CALLBACKS, "before": sync_tools("cluster", CLUSTER_TOOLS)},
         # Per-server curation in one portal only: pods_log off in hosts, still on in owner.
-        {"name": "hosts-curated", "extra": dict(K8S_CALLBACKS, cloudflare_access_mcp_portals=(
+        {"name": "hosts-curated", "extra": dict(CALLBACKS, cloudflare_access_mcp_portals=(
             "{{ [cloudflare_access_mcp_owner_portal, cloudflare_access_mcp_hosts_portal | combine("
             "{'servers': [{'server_id': 'k8s', 'disabled_tools': ['pods_log']}]})] }}"))},
     ]
@@ -410,26 +447,35 @@ def test_mcp_lists(roles_path):
         "Access app mcp-server-memory (mcp): unchanged",
         "MCP server k8s -> https://k8s-mcp.nwlnexus.io/mcp: create",
         "Access app mcp-server-k8s (mcp): create",
-        "MCP portal owner on mcp.nwlnexus.io (servers: memory, k8s): update (servers)",
+        "MCP server cluster -> https://cluster-mcp.nwlnexus.io/mcp: create",
+        "Access app mcp-server-cluster (mcp): create",
+        "MCP portal owner on mcp.nwlnexus.io (servers: memory, k8s, cluster): update (servers)",
         "Tool curation owner/memory (off: forget): applied, 5 synced tool(s)",
         "Tool curation owner/k8s (off: nothing): pending, 0 synced tool(s)",
+        "Tool curation owner/cluster (off: nothing): pending, 0 synced tool(s)",
         "Access app mcp-portal-owner (mcp_portal): unchanged",
-        "MCP portal hosts on mcp-hosts.nwlnexus.io (servers: k8s): create",
+        "MCP portal hosts on mcp-hosts.nwlnexus.io (servers: k8s, cluster): create",
         "Tool curation hosts/k8s (off: nothing): pending, 0 synced tool(s)",
+        "Tool curation hosts/cluster (off: nothing): pending, 0 synced tool(s)",
         "Access app mcp-portal-hosts (mcp_portal): create",
         "DNS mcp.nwlnexus.io CNAME gateway.agents.cloudflare.com (proxied): unchanged",
         "DNS mcp-hosts.nwlnexus.io CNAME gateway.agents.cloudflare.com (proxied): create",
         "memory: unchanged",
         "k8s-mcp: update (oauth_configuration)",
+        "cluster-mcp: update (oauth_configuration)",
     ]
     missing = [l for l in want_lines if l not in out]
     check(missing == [] and writes(got["new-check"]["requests"]) == [],
           "mcp_check_plan: --check writes nothing and plans exactly the expected changes", missing or out[-3000:])
 
-    # The first apply: only the k8s and hosts objects, k8s added to owner, the k8s-mcp DCR URIs.
+    # The first apply: only the k8s, cluster and hosts objects, both added to owner, the k8s-mcp and cluster-mcp
+    # DCR URIs (the cluster-mcp application itself exists from the old run: origin worker, no tunnel, no DNS).
     new = got["new-apply"]["requests"]
     check(write_paths(new) == [
         ("PUT", "/access/apps/app-k8s-mcp"),
+        ("PUT", "/access/apps/app-cluster-mcp"),
+        ("POST", "/access/ai-controls/mcp/servers"),
+        ("POST", "/access/apps"),
         ("POST", "/access/ai-controls/mcp/servers"),
         ("POST", "/access/apps"),
         ("PUT", "/access/ai-controls/mcp/portals/owner"),
@@ -445,31 +491,45 @@ def test_mcp_lists(roles_path):
           and k8s_app[0]["oauth_configuration"]["dynamic_client_registration"]["allow_any_on_loopback"] is False,
           "mcp_k8s_backend_dcr: the k8s-mcp application allows exactly the three portal callbacks "
           "(no claude.ai, no localhost or loopback)", k8s_app)
+    cluster_app = bodies(new, "PUT", "/access/apps/app-cluster-mcp")
+    check(cluster_app and cluster_app[0]["oauth_configuration"]["dynamic_client_registration"]["allowed_uris"]
+          == CLUSTER_CALLBACKS["cloudflare_access_cluster_mcp_portal_callback_uris"]
+          and cluster_app[0]["oauth_configuration"]["dynamic_client_registration"]["allow_any_on_localhost"] is False
+          and cluster_app[0]["oauth_configuration"]["dynamic_client_registration"]["allow_any_on_loopback"] is False,
+          "mcp_cluster_backend_dcr: the cluster-mcp application allows exactly the three portal callbacks "
+          "(no claude.ai, no localhost or loopback)", cluster_app)
     check(bodies(new, "POST", "/mcp/servers") == [
-        {"id": "k8s", "name": "k8s", "hostname": "https://k8s-mcp.nwlnexus.io/mcp", "auth_type": "oauth"}],
-        "mcp_k8s_server: server k8s, OAuth, the backend's /mcp")
+        {"id": "k8s", "name": "k8s", "hostname": "https://k8s-mcp.nwlnexus.io/mcp", "auth_type": "oauth"},
+        {"id": "cluster", "name": "cluster", "hostname": "https://cluster-mcp.nwlnexus.io/mcp",
+         "auth_type": "oauth"}],
+        "mcp_k8s_cluster_servers: servers k8s and cluster, OAuth, each backend's /mcp")
     apps = bodies(new, "POST", "/access/apps")
-    check([a["name"] for a in apps] == ["mcp-server-k8s", "mcp-portal-hosts"]
+    check([a["name"] for a in apps] == ["mcp-server-k8s", "mcp-server-cluster", "mcp-portal-hosts"]
           and apps[0]["destinations"] == [{"type": "via_mcp_server_portal", "mcp_server_id": "k8s"}]
           and apps[0]["policies"] == [{"id": "pol-memory-allow-owner", "precedence": 1}]
-          and apps[1]["type"] == "mcp_portal" and apps[1]["domain"] == "mcp-hosts.nwlnexus.io"
+          and apps[1]["destinations"] == [{"type": "via_mcp_server_portal", "mcp_server_id": "cluster"}]
           and apps[1]["policies"] == [{"id": "pol-memory-allow-owner", "precedence": 1}]
-          and apps[1]["oauth_configuration"]["dynamic_client_registration"] == {
+          and apps[2]["type"] == "mcp_portal" and apps[2]["domain"] == "mcp-hosts.nwlnexus.io"
+          and apps[2]["policies"] == [{"id": "pol-memory-allow-owner", "precedence": 1}]
+          and apps[2]["oauth_configuration"]["dynamic_client_registration"] == {
               "enabled": True, "allowed_uris": [], "allow_any_on_localhost": True, "allow_any_on_loopback": True},
-          "mcp_new_apps: mcp app for k8s and mcp_portal app for hosts, owner policy, Claude Code DCR only", apps)
+          "mcp_new_apps: mcp apps for k8s and cluster and mcp_portal app for hosts, owner policy, Claude Code DCR only",
+          apps)
     owner = bodies(new, "PUT", "/mcp/portals/owner")
     check(owner == [dict({k: v for k, v in old_portal.items() if k != "id"},
                          servers=old_portal["servers"] + [
-                             {"server_id": "k8s", "on_behalf": True, "default_disabled": False}])],
-          "mcp_owner_full_body: the owner PUT is the old body with k8s appended (memory curation as it was)",
+                             {"server_id": "k8s", "on_behalf": True, "default_disabled": False},
+                             {"server_id": "cluster", "on_behalf": True, "default_disabled": False}])],
+          "mcp_owner_full_body: the owner PUT is the old body with k8s and cluster appended (memory curation as it was)",
           {"old": old_portal, "put": owner})
     check(old_portal["servers"][0].get("updated_tools") == [
         {"name": n, "enabled": n != "forget"} for n in MEMORY_TOOLS],
         "mcp_owner_memory_curation: memory keeps every tool on except forget", old_portal)
     hosts = bodies(new, "POST", "/mcp/portals")
     check(hosts == [{"id": "hosts", "name": "hosts", "hostname": "mcp-hosts.nwlnexus.io", "code_mode": "off",
-                     "servers": [{"server_id": "k8s", "on_behalf": True, "default_disabled": False}]}],
-          "mcp_hosts_portal: hosts portal, Code Mode off, k8s only (no memory)", hosts)
+                     "servers": [{"server_id": "k8s", "on_behalf": True, "default_disabled": False},
+                                 {"server_id": "cluster", "on_behalf": True, "default_disabled": False}]}],
+          "mcp_hosts_portal: hosts portal, Code Mode off, k8s and cluster (no memory)", hosts)
     dns = bodies(new, "POST", "/dns_records")
     check(dns and dns[0]["name"] == "mcp-hosts.nwlnexus.io" and dns[0]["content"] == "gateway.agents.cloudflare.com"
           and dns[0]["proxied"] is True, "mcp_hosts_dns: proxied CNAME to the portal gateway", dns)
@@ -481,6 +541,11 @@ def test_mcp_lists(roles_path):
           and "Tool curation hosts/k8s (off: nothing): applied" in got["k8s-synced"]["stdout"],
           "mcp_shared_server_synced: k8s with nothing turned off needs no curation write in either portal",
           write_paths(got["k8s-synced"]["requests"]))
+    check(writes(got["cluster-synced"]["requests"]) == []
+          and "Tool curation owner/cluster (off: nothing): applied" in got["cluster-synced"]["stdout"]
+          and "Tool curation hosts/cluster (off: nothing): applied" in got["cluster-synced"]["stdout"],
+          "mcp_cluster_server_synced: cluster with nothing turned off needs no curation write in either portal",
+          write_paths(got["cluster-synced"]["requests"]))
     cur = got["hosts-curated"]["requests"]
     hosts_put = bodies(cur, "PUT", "/mcp/portals/hosts")
     check(write_paths(cur) == [("PUT", "/access/ai-controls/mcp/portals/hosts")] and hosts_put

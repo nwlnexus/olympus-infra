@@ -135,7 +135,12 @@ cloudflare_access_dns_zone: "nwlnexus.io"
 # The memory entry reads the single-application variables above, so existing invocations, the runbooks and
 # their -e overrides keep working unchanged; they are its only source. A new application is a new dict here
 # (copy the k8s-mcp one). Keys and their defaults (applied in tasks/compute-applications.yml):
-#   name, domain, tunnel_service, policy_prefix         required
+#   name, domain, policy_prefix                         required
+#   origin: tunnel                                      tunnel: the role adds a tunnel rule and a proxied CNAME
+#                                                       (tunnel_service required); worker: a Cloudflare Worker
+#                                                       custom domain is the origin and owns the DNS record, so
+#                                                       the role manages only the Access side (no tunnel, no DNS)
+#   tunnel_service                                      required with origin tunnel
 #   tunnel_origin_request: {}                           originRequest for its tunnel rule
 #   tunnel_enabled: cloudflare_access_tunnel_enabled    false = its tunnel rule is removed (Access stays)
 #   dns_zone: cloudflare_access_dns_zone                the API token needs DNS Edit + Zone Read on it
@@ -159,6 +164,7 @@ cloudflare_access_dns_zone: "nwlnexus.io"
 cloudflare_access_applications:
   - "{{ cloudflare_access_memory_app }}"
   - "{{ cloudflare_access_k8s_mcp_app }}"
+  - "{{ cloudflare_access_cluster_mcp_app }}"
 
 cloudflare_access_memory_app:
   name: "{{ cloudflare_access_app_name }}"
@@ -238,6 +244,7 @@ cloudflare_access_mcp_allowed_server_ids: [memory, k8s, cluster, toolbox]
 cloudflare_access_mcp_servers:
   - "{{ cloudflare_access_mcp_memory_server }}"
   - "{{ cloudflare_access_mcp_k8s_server }}"
+  - "{{ cloudflare_access_mcp_cluster_server }}"
 
 # MCP portals. Keys: id (required), hostname (required, inside cloudflare_access_dns_zone), servers (required:
 # entries {server_id, on_behalf (default cloudflare_access_mcp_on_behalf), default_disabled (default false),
@@ -265,6 +272,23 @@ cloudflare_access_mcp_memory_server:
   app_name: "{{ cloudflare_access_mcp_server_app_name }}"
   disabled_tools: "{{ cloudflare_access_mcp_disabled_tools }}"
 
+# The Hermes cluster-state MCP backend (olympus-sdk#921): an edge Worker host (origin worker: no tunnel rule,
+# no CNAME; the Worker's custom domain owns DNS), owner only, no service tokens (bots call the API host
+# directly with their own token). Like k8s-mcp it is reached through the MCP portals only: no base redirect
+# URIs, only the portal and dashboard callbacks the playbook sets.
+cloudflare_access_cluster_mcp_oauth_allowed_redirect_uris: []
+cloudflare_access_cluster_mcp_portal_callback_uris: []
+cloudflare_access_cluster_mcp_app:
+  name: "cluster-mcp"
+  domain: "cluster-mcp.nwlnexus.io"
+  policy_prefix: "cluster-mcp-"
+  origin: worker
+  service_token_hosts: []
+  oauth_allowed_redirect_uris: "{{ cloudflare_access_cluster_mcp_oauth_allowed_redirect_uris }}"
+  portal_callback_uris: "{{ cloudflare_access_cluster_mcp_portal_callback_uris }}"
+  backend_env: {team_domain: CF_ACCESS_TEAM_DOMAIN, aud: CLUSTER_MCP_ACCESS_AUD}
+  backend_config: "the edge Worker's vars in olympus-sdk packages/iris/wrangler.jsonc"
+
 # The read-only Kubernetes MCP backend (olympus-sdk#916, #929). Its tools are all read-only: none turned off.
 # The id `k8s` is reserved: the guard blocks k8s_* portal tools from work directories.
 cloudflare_access_mcp_k8s_server:
@@ -273,13 +297,21 @@ cloudflare_access_mcp_k8s_server:
   app_name: "mcp-server-k8s"
   disabled_tools: []
 
+# The Hermes cluster-state backend (olympus-sdk#921): tools list, status and flux_status, all read-only (none
+# turned off). The id `cluster` is reserved: the guard blocks cluster_* portal tools from work directories.
+cloudflare_access_mcp_cluster_server:
+  id: "cluster"
+  url: "https://{{ cloudflare_access_cluster_mcp_app.domain }}/mcp"
+  app_name: "mcp-server-cluster"
+  disabled_tools: []
+
 cloudflare_access_mcp_portal_id: "owner"
 cloudflare_access_mcp_portal_name: "owner"
 cloudflare_access_mcp_portal_hostname: "mcp.nwlnexus.io"
 # off | opt_in | default_on | enforced. Off: Code Mode would hide the tool names the guard matches.
 cloudflare_access_mcp_portal_code_mode: "off"
 cloudflare_access_mcp_portal_app_name: "mcp-portal-owner"
-# The owner portal: memory and k8s, for claude.ai and Claude Code.
+# The owner portal: memory, k8s and cluster, for claude.ai and Claude Code.
 cloudflare_access_mcp_owner_portal:
   id: "{{ cloudflare_access_mcp_portal_id }}"
   name: "{{ cloudflare_access_mcp_portal_name }}"
@@ -290,8 +322,9 @@ cloudflare_access_mcp_owner_portal:
   servers:
     - server_id: "{{ cloudflare_access_mcp_server_id }}"
     - server_id: "k8s"
+    - server_id: "cluster"
 
-# The hosts portal (olympus-sdk#929): host tools only (k8s now), never memory; Claude Code only (no claude.ai
+# The hosts portal (olympus-sdk#929): host tools only (k8s, and cluster from #921), never memory; Claude Code only (no claude.ai
 # redirect), Code Mode off. Hostname: hosts.mcp.nwlnexus.io was the first choice, but no certificate on the
 # zone covers a second-level name there (Universal SSL is *.nwlnexus.io only; on 2026-11-11 the edge refused
 # the TLS handshake for it), so it is the first-level mcp-hosts.nwlnexus.io.
@@ -307,6 +340,7 @@ cloudflare_access_mcp_hosts_portal:
   dns_comment: "MCP server portal hosts (olympus-infra roles/cloudflare-access, olympus-sdk#929)"
   servers:
     - server_id: "k8s"
+    - server_id: "cluster"
 
 # Per-user auth through the portals (each person's own OAuth grant to the server); the default of every
 # portal server entry.

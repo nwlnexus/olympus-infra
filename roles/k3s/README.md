@@ -58,7 +58,8 @@ arguments to this block instead. `tests/k3s-join-server` fails if the key appear
 | `k3s_audit_log_maxage` | `7` | Days to keep rotated files |
 | `k3s_audit_log_maxbackup` | `5` | Rotated files to keep |
 | `k3s_audit_log_maxsize` | `100` | MB per file before rotation |
-| `k3s_audit_always_log_users` | `[system:serviceaccount:atlas-system:k8s-mcp, system:serviceaccount:tailscale:operator]` | Users whose every request is recorded (the operator: see below) |
+| `k3s_audit_always_log_users` | `[system:serviceaccount:atlas-system:k8s-mcp, system:serviceaccount:tailscale:operator, system:serviceaccount:atlas-system:atlas-cluster-actuator]` | Users whose every request is recorded (the operator: see below) |
+| `k3s_audit_request_write_users` | `[system:serviceaccount:atlas-system:atlas-cluster-actuator]` | Machine identities whose writes to Deployments, StatefulSets, DaemonSets, Flux Kustomizations and HelmReleases are recorded at Request level, with the body; never Secrets or ConfigMaps. Empty omits the rule |
 | `k3s_audit_always_log_groups` | `[olympus:agents-view]` | Groups whose every request is recorded |
 | `k3s_audit_drop_lease_names` | `[plndr-cp-lock, plndr-svcs-lock]` | kube-system Leases whose get/update is never recorded, for any user (empty omits the rule) |
 | `k3s_audit_discovery_drop_users` | `[system:serviceaccount:atlas-system:k8s-mcp]` | Always-logged users whose API discovery reads (`GET /api`, `/apis` and below) are not recorded (empty omits the rule) |

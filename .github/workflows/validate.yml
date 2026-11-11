@@ -100,3 +100,6 @@ jobs:
           # olympus-sdk#736: the Access policies, application and tunnel rule the role would write, planned
           # from fake API responses (no token, no API call); also checks every API/op task is no_log.
           ansible-playbook -i tests/cloudflare-access/inventory.yml tests/cloudflare-access/render.yml
+          # olympus-sdk#916: the whole role against a local fake API (127.0.0.1 only); memory's requests must
+          # equal the fixture recorded before several applications, and k8s-mcp is planned and idempotent.
+          python3 tests/cloudflare-access/plan_test.py

@@ -1,19 +1,20 @@
 ---
 # Desired self-hosted application and its diff against the API (pure: tests/cloudflare-access runs it
-# offline with fake responses). Inputs: _cfa_apps (GET /access/apps result), _cfa_policy_ids.
-# With cloudflare_access_mcp_portal_enabled the DCR redirect URIs also allow the portal callbacks (#923).
+# offline with fake responses). Inputs: _cfa_a (one application), _cfa_apps (GET /access/apps result),
+# _cfa_policy_ids. With cloudflare_access_mcp_portal_enabled the DCR redirect URIs also allow the
+# application's portal_callback_uris (memory: cloudflare_access_mcp_memory_callback_uris, #923).
 # Outputs: _cfa_app_desired, _cfa_app_matches, _cfa_app_current, _cfa_app_action, _cfa_app_diff_keys.
 
 - name: Build the desired application
   ansible.builtin.set_fact:
     _cfa_app_desired:
-      name: "{{ cloudflare_access_app_name }}"
+      name: "{{ _cfa_a.name }}"
       type: self_hosted
-      domain: "{{ cloudflare_access_app_domain }}"
+      domain: "{{ _cfa_a.domain }}"
       # The bare host covers every path (/, /mcp, /healthz, /readyz): Access path "/*".
       destinations:
         - type: public
-          uri: "{{ cloudflare_access_app_domain }}"
+          uri: "{{ _cfa_a.domain }}"
       session_duration: "{{ cloudflare_access_session_duration }}"
       app_launcher_visible: false
       allowed_idps: "{{ cloudflare_access_allowed_idps }}"
@@ -22,21 +23,20 @@
       same_site_cookie_attribute: lax
       # CORS preflights are not let through unauthenticated: the gateway answers no CORS at all.
       options_preflight_bypass: false
-      # Order matters only for the dashboard; both policies are evaluated.
-      policies:
-        - id: "{{ _cfa_policy_ids[cloudflare_access_policy_prefix ~ 'allow-owner'] }}"
-          precedence: 1
-        - id: "{{ _cfa_policy_ids[cloudflare_access_policy_prefix ~ 'service-auth'] }}"
-          precedence: 2
+      # Order matters only for the dashboard; every policy is evaluated. service-auth only with tokens.
+      policies: >-
+        {{ [{'id': _cfa_policy_ids[_cfa_a.policy_prefix ~ 'allow-owner'], 'precedence': 1}]
+           + ([{'id': _cfa_policy_ids[_cfa_a.policy_prefix ~ 'service-auth'], 'precedence': 2}]
+              if _cfa_a.service_token_hosts | length > 0 else []) }}
       oauth_configuration: >-
         {{ {'enabled': true,
             'dynamic_client_registration': {
               'enabled': true,
-              'allowed_uris': (cloudflare_access_oauth_allowed_redirect_uris
-                               + (cloudflare_access_mcp_memory_callback_uris
+              'allowed_uris': (_cfa_a.oauth_allowed_redirect_uris
+                               + (_cfa_a.portal_callback_uris
                                   if cloudflare_access_mcp_portal_enabled | bool else [])) | unique,
-              'allow_any_on_localhost': cloudflare_access_oauth_allow_localhost | bool,
-              'allow_any_on_loopback': cloudflare_access_oauth_allow_loopback | bool},
+              'allow_any_on_localhost': _cfa_a.oauth_allow_localhost | bool,
+              'allow_any_on_loopback': _cfa_a.oauth_allow_loopback | bool},
             'grant': {
               'access_token_lifetime': cloudflare_access_oauth_access_token_lifetime,
               'session_duration': cloudflare_access_oauth_grant_session_duration}}
@@ -46,7 +46,7 @@
   ansible.builtin.set_fact:
     _cfa_app_matches: >-
       {{ _cfa_apps | selectattr('domain', 'defined')
-         | selectattr('domain', 'in', [cloudflare_access_app_domain, cloudflare_access_app_domain ~ '/*', cloudflare_access_app_domain ~ '/'])
+         | selectattr('domain', 'in', [_cfa_a.domain, _cfa_a.domain ~ '/*', _cfa_a.domain ~ '/'])
          | list }}
 
 - name: Compare it field by field (lists of objects reduced to the fields this role sets)

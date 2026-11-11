@@ -1,0 +1,635 @@
+{
+ "portal-off": {
+  "apply-again": {
+   "op": [],
+   "requests": [
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/policies?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps?domain=memory.nwlnexus.io&per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/organizations",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel?name=compute-hub&is_deleted=false",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel/tun-1/configurations",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones?name=nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones/zone-1/dns_records?name=memory.nwlnexus.io",
+     "status": 200
+    }
+   ]
+  },
+  "apply-fresh": {
+   "op": [
+    "item get memory-access-tokens --vault=Dev --format=json",
+    "item edit memory-access-tokens --vault=Dev managed-by[text]=olympus-infra roles/cloudflare-access",
+    "item edit memory-access-tokens --vault=Dev ai-agent-host-id[text]=cid-memory-ai-agent-host.access ai-agent-host-secret[password]=fake-secret-memory-ai-agent-host",
+    "item edit memory-access-tokens --vault=Dev nwl-mstudio-id[text]=cid-memory-nwl-mstudio.access nwl-mstudio-secret[password]=fake-secret-memory-nwl-mstudio",
+    "item edit memory-access-tokens --vault=Dev NWL-MBM2-id[text]=cid-memory-NWL-MBM2.access NWL-MBM2-secret[password]=fake-secret-memory-NWL-MBM2"
+   ],
+   "requests": [
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"memory-ai-agent-host\", \"duration\": \"8760h\"}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"memory-nwl-mstudio\", \"duration\": \"8760h\"}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"memory-NWL-MBM2\", \"duration\": \"8760h\"}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/policies?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"memory-allow-owner\", \"decision\": \"allow\", \"include\": [{\"email\": {\"email\": \"owner@example.invalid\"}}], \"exclude\": [], \"require\": []}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/policies",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"memory-service-auth\", \"decision\": \"non_identity\", \"include\": [{\"service_token\": {\"token_id\": \"tok-memory-ai-agent-host\"}}, {\"service_token\": {\"token_id\": \"tok-memory-nwl-mstudio\"}}, {\"service_token\": {\"token_id\": \"tok-memory-NWL-MBM2\"}}], \"exclude\": [], \"require\": []}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/policies",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps?domain=memory.nwlnexus.io&per_page=1000",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"memory\", \"type\": \"self_hosted\", \"domain\": \"memory.nwlnexus.io\", \"destinations\": [{\"type\": \"public\", \"uri\": \"memory.nwlnexus.io\"}], \"session_duration\": \"24h\", \"app_launcher_visible\": false, \"allowed_idps\": [], \"auto_redirect_to_identity\": false, \"http_only_cookie_attribute\": true, \"same_site_cookie_attribute\": \"lax\", \"options_preflight_bypass\": false, \"policies\": [{\"id\": \"pol-memory-allow-owner\", \"precedence\": 1}, {\"id\": \"pol-memory-service-auth\", \"precedence\": 2}], \"oauth_configuration\": {\"enabled\": true, \"dynamic_client_registration\": {\"enabled\": true, \"allowed_uris\": [\"https://claude.ai/*\"], \"allow_any_on_localhost\": false, \"allow_any_on_loopback\": false}, \"grant\": {\"access_token_lifetime\": \"15m\", \"session_duration\": \"336h\"}}}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/organizations",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel?name=compute-hub&is_deleted=false",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel/tun-1/configurations",
+     "status": 200
+    },
+    {
+     "body": "{\"config\": {\"ingress\": [{\"hostname\": \"memory.nwlnexus.io\", \"service\": \"http://memory-gateway.memory.svc.cluster.local:80\"}, {\"hostname\": \"other.nwlnexus.net\", \"service\": \"http://other.other:80\"}, {\"service\": \"https://traefik.traefik.svc.cluster.local:443\", \"originRequest\": {\"noTLSVerify\": true}}], \"warp-routing\": {\"enabled\": false}}}",
+     "method": "PUT",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel/tun-1/configurations",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones?name=nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones/zone-1/dns_records?name=memory.nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": "{\"type\": \"CNAME\", \"name\": \"memory.nwlnexus.io\", \"content\": \"tun-1.cfargotunnel.com\", \"proxied\": true, \"ttl\": 1, \"comment\": \"memory gateway public host (olympus-infra roles/cloudflare-access, olympus-sdk#736)\"}",
+     "method": "POST",
+     "path": "/zones/zone-1/dns_records",
+     "status": 200
+    }
+   ]
+  },
+  "tunnel-off": {
+   "op": [],
+   "requests": [
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/policies?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps?domain=memory.nwlnexus.io&per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/organizations",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel?name=compute-hub&is_deleted=false",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel/tun-1/configurations",
+     "status": 200
+    },
+    {
+     "body": "{\"config\": {\"ingress\": [{\"hostname\": \"other.nwlnexus.net\", \"service\": \"http://other.other:80\"}, {\"service\": \"https://traefik.traefik.svc.cluster.local:443\", \"originRequest\": {\"noTLSVerify\": true}}], \"warp-routing\": {\"enabled\": false}}}",
+     "method": "PUT",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel/tun-1/configurations",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones?name=nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones/zone-1/dns_records?name=memory.nwlnexus.io",
+     "status": 200
+    }
+   ]
+  }
+ },
+ "portal-on": {
+  "apply-again": {
+   "op": [],
+   "requests": [
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/policies?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps?domain=memory.nwlnexus.io&per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/organizations",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel?name=compute-hub&is_deleted=false",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel/tun-1/configurations",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones?name=nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones/zone-1/dns_records?name=memory.nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/ai-controls/mcp/servers?per_page=100",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/ai-controls/mcp/portals?per_page=100",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones?name=nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones/zone-1/dns_records?name=mcp.nwlnexus.io",
+     "status": 200
+    }
+   ]
+  },
+  "apply-fresh": {
+   "op": [
+    "item get memory-access-tokens --vault=Dev --format=json",
+    "item edit memory-access-tokens --vault=Dev managed-by[text]=olympus-infra roles/cloudflare-access",
+    "item edit memory-access-tokens --vault=Dev ai-agent-host-id[text]=cid-memory-ai-agent-host.access ai-agent-host-secret[password]=fake-secret-memory-ai-agent-host",
+    "item edit memory-access-tokens --vault=Dev nwl-mstudio-id[text]=cid-memory-nwl-mstudio.access nwl-mstudio-secret[password]=fake-secret-memory-nwl-mstudio",
+    "item edit memory-access-tokens --vault=Dev NWL-MBM2-id[text]=cid-memory-NWL-MBM2.access NWL-MBM2-secret[password]=fake-secret-memory-NWL-MBM2"
+   ],
+   "requests": [
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"memory-ai-agent-host\", \"duration\": \"8760h\"}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"memory-nwl-mstudio\", \"duration\": \"8760h\"}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"memory-NWL-MBM2\", \"duration\": \"8760h\"}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/policies?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"memory-allow-owner\", \"decision\": \"allow\", \"include\": [{\"email\": {\"email\": \"owner@example.invalid\"}}], \"exclude\": [], \"require\": []}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/policies",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"memory-service-auth\", \"decision\": \"non_identity\", \"include\": [{\"service_token\": {\"token_id\": \"tok-memory-ai-agent-host\"}}, {\"service_token\": {\"token_id\": \"tok-memory-nwl-mstudio\"}}, {\"service_token\": {\"token_id\": \"tok-memory-NWL-MBM2\"}}], \"exclude\": [], \"require\": []}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/policies",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps?domain=memory.nwlnexus.io&per_page=1000",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"memory\", \"type\": \"self_hosted\", \"domain\": \"memory.nwlnexus.io\", \"destinations\": [{\"type\": \"public\", \"uri\": \"memory.nwlnexus.io\"}], \"session_duration\": \"24h\", \"app_launcher_visible\": false, \"allowed_idps\": [], \"auto_redirect_to_identity\": false, \"http_only_cookie_attribute\": true, \"same_site_cookie_attribute\": \"lax\", \"options_preflight_bypass\": false, \"policies\": [{\"id\": \"pol-memory-allow-owner\", \"precedence\": 1}, {\"id\": \"pol-memory-service-auth\", \"precedence\": 2}], \"oauth_configuration\": {\"enabled\": true, \"dynamic_client_registration\": {\"enabled\": true, \"allowed_uris\": [\"https://claude.ai/*\", \"https://dash.cloudflare.com/0000000000000000000000000000000a/one/access-controls/ai-controls/mcp-server/oauth-callback/memory\", \"https://mcp.nwlnexus.io/servers-callback\"], \"allow_any_on_localhost\": false, \"allow_any_on_loopback\": false}, \"grant\": {\"access_token_lifetime\": \"15m\", \"session_duration\": \"336h\"}}}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/organizations",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel?name=compute-hub&is_deleted=false",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel/tun-1/configurations",
+     "status": 200
+    },
+    {
+     "body": "{\"config\": {\"ingress\": [{\"hostname\": \"memory.nwlnexus.io\", \"service\": \"http://memory-gateway.memory.svc.cluster.local:80\"}, {\"hostname\": \"other.nwlnexus.net\", \"service\": \"http://other.other:80\"}, {\"service\": \"https://traefik.traefik.svc.cluster.local:443\", \"originRequest\": {\"noTLSVerify\": true}}], \"warp-routing\": {\"enabled\": false}}}",
+     "method": "PUT",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel/tun-1/configurations",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones?name=nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones/zone-1/dns_records?name=memory.nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": "{\"type\": \"CNAME\", \"name\": \"memory.nwlnexus.io\", \"content\": \"tun-1.cfargotunnel.com\", \"proxied\": true, \"ttl\": 1, \"comment\": \"memory gateway public host (olympus-infra roles/cloudflare-access, olympus-sdk#736)\"}",
+     "method": "POST",
+     "path": "/zones/zone-1/dns_records",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/ai-controls/mcp/servers?per_page=100",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/ai-controls/mcp/portals?per_page=100",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": "{\"id\": \"memory\", \"name\": \"memory\", \"hostname\": \"https://memory.nwlnexus.io/mcp\", \"auth_type\": \"oauth\"}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/ai-controls/mcp/servers",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"mcp-server-memory\", \"type\": \"mcp\", \"destinations\": [{\"type\": \"via_mcp_server_portal\", \"mcp_server_id\": \"memory\"}], \"policies\": [{\"id\": \"pol-memory-allow-owner\", \"precedence\": 1}]}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps",
+     "status": 200
+    },
+    {
+     "body": "{\"id\": \"owner\", \"name\": \"owner\", \"hostname\": \"mcp.nwlnexus.io\", \"code_mode\": \"off\", \"servers\": [{\"server_id\": \"memory\", \"on_behalf\": true, \"default_disabled\": false}]}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/ai-controls/mcp/portals",
+     "status": 200
+    },
+    {
+     "body": "{\"name\": \"mcp-portal-owner\", \"type\": \"mcp_portal\", \"domain\": \"mcp.nwlnexus.io\", \"destinations\": [{\"type\": \"public\", \"uri\": \"mcp.nwlnexus.io\"}], \"session_duration\": \"24h\", \"app_launcher_visible\": false, \"allowed_idps\": [], \"auto_redirect_to_identity\": false, \"policies\": [{\"id\": \"pol-memory-allow-owner\", \"precedence\": 1}], \"oauth_configuration\": {\"enabled\": true, \"dynamic_client_registration\": {\"enabled\": true, \"allowed_uris\": [\"https://claude.ai/*\"], \"allow_any_on_localhost\": true, \"allow_any_on_loopback\": true}, \"grant\": {\"access_token_lifetime\": \"15m\", \"session_duration\": \"336h\"}}}",
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones?name=nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones/zone-1/dns_records?name=mcp.nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": "{\"type\": \"CNAME\", \"name\": \"mcp.nwlnexus.io\", \"content\": \"gateway.agents.cloudflare.com\", \"proxied\": true, \"ttl\": 1, \"comment\": \"MCP server portal (olympus-infra roles/cloudflare-access, olympus-sdk#923)\"}",
+     "method": "POST",
+     "path": "/zones/zone-1/dns_records",
+     "status": 200
+    }
+   ]
+  },
+  "check-fresh": {
+   "op": [],
+   "requests": [
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/policies?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps?domain=memory.nwlnexus.io&per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/organizations",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/ai-controls/mcp/servers?per_page=100",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/ai-controls/mcp/portals?per_page=100",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones?name=nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones/zone-1/dns_records?name=mcp.nwlnexus.io",
+     "status": 200
+    }
+   ]
+  },
+  "refresh-one-token": {
+   "op": [],
+   "requests": [
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "POST",
+     "path": "/accounts/0000000000000000000000000000000a/access/service_tokens/tok-memory-NWL-MBM2/refresh",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/policies?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps?domain=memory.nwlnexus.io&per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/organizations",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel?name=compute-hub&is_deleted=false",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/cfd_tunnel/tun-1/configurations",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones?name=nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones/zone-1/dns_records?name=memory.nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/ai-controls/mcp/servers?per_page=100",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/ai-controls/mcp/portals?per_page=100",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/accounts/0000000000000000000000000000000a/access/apps?per_page=1000",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones?name=nwlnexus.io",
+     "status": 200
+    },
+    {
+     "body": null,
+     "method": "GET",
+     "path": "/zones/zone-1/dns_records?name=mcp.nwlnexus.io",
+     "status": 200
+    }
+   ]
+  }
+ }
+}

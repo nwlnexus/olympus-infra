@@ -1,5 +1,6 @@
 ---
-# Cloudflare Access for the memory gateway's public host (olympus-sdk#736). See defaults/main.yml.
+# Cloudflare Access for the applications in cloudflare_access_applications (memory gateway: olympus-sdk#736;
+# Kubernetes MCP backend: olympus-sdk#916). See defaults/main.yml.
 # Order matters: service tokens first (the service-auth policy includes their ids), then the two
 # policies (the application references their ids), then the application (its AUD), then the tunnel
 # rule and DNS, which make the host reachable only after Access protects it.

@@ -1,13 +1,15 @@
 ---
-# Cloudflare Access for the memory gateway's public host https://memory.nwlnexus.io
-# (olympus-sdk#736; role roles/cloudflare-access, defaults there). API calls only, from the controller:
+# Cloudflare Access for every application in cloudflare_access_applications (role roles/cloudflare-access,
+# defaults there): the memory gateway https://memory.nwlnexus.io (olympus-sdk#736) and the read-only
+# Kubernetes MCP backend https://k8s-mcp.nwlnexus.io (olympus-sdk#916). API calls only, from the controller:
 # no host is touched, no kubectl. Runbook: olympus-sdk docs/runbooks/memory-access-service-tokens.md.
 #
 # Prerequisites (owner):
 #   - 1Password CI/cloudflare-account field `access_api_token` (an account-owned token: verify it at
 #     /accounts/<id>/tokens/verify, not /user/tokens/verify): a Cloudflare API token with the
 #     permissions listed in roles/cloudflare-access/defaults/main.yml (Access apps/policies and service
-#     tokens Edit, Access organizations Read, Tunnel Edit, DNS Edit + Zone Read on nwlnexus.io; with the
+#     tokens Edit, Access organizations Read, Tunnel Edit, DNS Edit + Zone Read on nwlnexus.io and on the
+#     DNS zone of every other application; with the
 #     MCP portal on, also MCP Portals Edit, which the API calls "MCP Portals Write" and which covers both
 #     the portals and the servers endpoints).
 #   - OP_SERVICE_ACCOUNT_TOKEN exported and `op` on PATH (the account must be able to write vault Dev).
@@ -19,14 +21,27 @@
 # Apply:
 #   ansible-playbook playbooks/push/cloudflare-access.yml \
 #     -e '{"cloudflare_access_owner_emails": ["OWNER@EXAMPLE"]}'
-# The last task prints MEMORY_ACCESS_TEAM_DOMAIN and MEMORY_ACCESS_AUD for olympus-gitops
-# clusters/olympus/memory/gateway/gateway.yaml, and each token's client id for its gateway client row.
+# The last task prints, per application and labelled with its name, the team domain and the application
+# AUD its backend needs, and where they go:
+#   memory:  MEMORY_ACCESS_TEAM_DOMAIN / MEMORY_ACCESS_AUD into olympus-gitops
+#            clusters/olympus/memory/gateway/gateway.yaml, and each token's client id for its gateway client row;
+#   k8s-mcp: ACCESS_TEAM_DOMAIN / ACCESS_AUD into the k8s-mcp proxy Deployment's env in olympus-gitops
+#            (namespace atlas-system). Commit them there; the proxy rejects every request until they match.
+#
+# Add an application: add a dict to cloudflare_access_applications in roles/cloudflare-access/defaults/main.yml
+# (copy cloudflare_access_k8s_mcp_app: name, domain, policy_prefix, tunnel_service; service_token_hosts empty
+# unless hosts need tokens), make sure the API token has DNS Edit + Zone Read on its zone, then run the dry
+# run above and read the plan (one new allow-owner policy, the application, one tunnel rule, one CNAME), then
+# apply, and paste the printed team domain and AUD into the backend's manifest in olympus-gitops.
+# Removing an entry deletes nothing (application, policies, tokens, DNS record and tunnel rule stay): delete
+# those by hand in the dashboard.
 #
 # Rotate one host's secret (same client id; the old secret stays valid 24 h unless grace is 0):
 #   ansible-playbook playbooks/push/cloudflare-access.yml -e '{"cloudflare_access_owner_emails": [...],
 #     "cloudflare_access_rotate_hosts": ["NWL-MBM2"]}'
 # Extend one host's token by a year: cloudflare_access_refresh_hosts instead.
-# Take the public path down (Access stays): -e cloudflare_access_tunnel_enabled=false.
+# Take the public path down (Access stays): -e cloudflare_access_tunnel_enabled=false (every application;
+# for one, set tunnel_enabled: false on its entry).
 #
 # Owner MCP server portal https://mcp.nwlnexus.io/mcp in front of the gateway (olympus-sdk#923). Applied in
 # production on 2026-11-10, so this playbook turns it on (the role default stays off). Every command above
@@ -38,7 +53,7 @@
 # (forget off) can only be applied once the server's tools have synced.
 # Runbook: olympus-sdk docs/runbooks/mcp-portal.md.
 
-- name: Cloudflare Access for the memory gateway
+- name: Cloudflare Access applications (memory gateway, Kubernetes MCP backend)
   hosts: localhost
   connection: local
   gather_facts: false

@@ -1,7 +1,8 @@
 ---
 # Offline checks for roles/cloudflare-access (olympus-sdk#736): runs the role's pure planning steps
-# (compute-policies, compute-app, compute-tunnel) against fake Cloudflare API responses and asserts the
-# result. No API, no token, no 1Password: the placeholders below are not credentials.
+# (compute-applications, compute-policies, compute-app, compute-tunnel) against fake Cloudflare API
+# responses and asserts the result. No API, no token, no 1Password: the placeholders below are not
+# credentials. plan_test.py next to it runs the whole role against a local fake API (olympus-sdk#916).
 #
 #   ansible-playbook -i tests/cloudflare-access/inventory.yml tests/cloudflare-access/render.yml
 - name: Plan the Access objects from fake API responses
@@ -15,9 +16,12 @@
     _compute_hub: "{{ lookup('ansible.builtin.file', '../../inventory/group_vars/compute_hub.yml') | from_yaml }}"
     _playbook: "{{ lookup('ansible.builtin.file', '../../playbooks/push/cloudflare-access.yml') | from_yaml }}"
     _apply: "{{ lookup('ansible.builtin.file', _role ~ '/tasks/apply.yml') | from_yaml }}"
+    _application: "{{ lookup('ansible.builtin.file', _role ~ '/tasks/application.yml') | from_yaml }}"
     _token_tasks: "{{ lookup('ansible.builtin.file', _role ~ '/tasks/service-token.yml') | from_yaml }}"
     _catch_all: {service: "https://traefik.traefik.svc.cluster.local:443", originRequest: {noTLSVerify: true}}
     _other_rule: {hostname: other.nwlnexus.net, service: "http://other.other:80"}
+    _mem_rule: {hostname: memory.nwlnexus.io, service: "http://memory-gateway.memory.svc.cluster.local:80"}
+    _k8s_rule: {hostname: k8s-mcp.nwlnexus.io, service: "http://k8s-mcp.atlas-system.svc.cluster.local:80"}
     _acct_placeholder: "0000000000000000000000000000000a"
     _memory_tools:
       - {name: append}
@@ -39,9 +43,14 @@
 
     - name: Every task that talks to the API or 1Password is no_log, and reads run in --check
       vars:
-        _all: "{{ _apply + _token_tasks + (lookup('ansible.builtin.file', _role ~ '/tasks/tunnel.yml') | from_yaml)
-                  + (lookup('ansible.builtin.file', _role ~ '/tasks/policy.yml') | from_yaml)
-                  + (lookup('ansible.builtin.file', _role ~ '/tasks/mcp.yml') | from_yaml) }}"
+        _nested: "{{ _apply + _application + _token_tasks + (lookup('ansible.builtin.file', _role ~ '/tasks/tunnel.yml') | from_yaml)
+                     + (lookup('ansible.builtin.file', _role ~ '/tasks/dns.yml') | from_yaml)
+                     + (lookup('ansible.builtin.file', _role ~ '/tasks/policy.yml') | from_yaml)
+                     + (lookup('ansible.builtin.file', _role ~ '/tasks/mcp.yml') | from_yaml) }}"
+        # Tasks inside a block (application.yml's service tokens) count too.
+        _flat: >-
+          [{% for t in _nested %}{% for u in (t.block if 'block' in t else [t]) %}{{ u | to_json }},{% endfor %}{% endfor %}null]
+        _all: "{{ (_flat | from_json)[:-1] }}"
         _api: >-
           [{% for t in _all if 'ansible.builtin.uri' in t or 'ansible.builtin.command' in t %}{{ t | to_json }},{% endfor %}null]
         _gets: >-
@@ -57,12 +66,72 @@
         fail_msg: "{{ _api_l | map(attribute='name') | zip(_api_l | map(attribute='no_log', default=false)) | list | to_json }}"
         quiet: true
 
+    # --- applications (olympus-sdk#916) -------------------------------------------------------------
+    - name: Fill in the default application list
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-applications.yml"
+
+    - name: memory comes first from the single-application variables; k8s-mcp is owner-only, no tokens
+      ansible.builtin.assert:
+        that:
+          - _cfa_applications | map(attribute='name') | list == ['memory', 'k8s-mcp']
+          - _cfa_applications[0].domain == cloudflare_access_app_domain
+          - _cfa_applications[0].policy_prefix == cloudflare_access_policy_prefix
+          - _cfa_applications[0].tunnel_service == cloudflare_access_tunnel_service
+          - _cfa_applications[0].service_token_hosts == cloudflare_access_service_token_hosts
+          - _cfa_applications[0].service_token_name_prefix == cloudflare_access_service_token_name_prefix
+          - _cfa_applications[0].op_item == cloudflare_access_op_item
+          - _cfa_applications[0].oauth_allowed_redirect_uris == ['https://claude.ai/*']
+          - _cfa_applications[0].tunnel_enabled
+          - _cfa_applications[1].domain == 'k8s-mcp.nwlnexus.io'
+          - _cfa_applications[1].policy_prefix == 'k8s-mcp-'
+          - _cfa_applications[1].tunnel_service == 'http://k8s-mcp.atlas-system.svc.cluster.local:80'
+          - _cfa_applications[1].service_token_hosts == []
+          - _cfa_applications[1].oauth_allowed_redirect_uris == ['https://claude.ai/*']
+          - _cfa_applications[1].portal_callback_uris == []
+          - not _cfa_applications[1].oauth_allow_localhost
+          - _cfa_applications[1].dns_zone == 'nwlnexus.io'
+          - "_cfa_applications[1].backend_env == {'team_domain': 'ACCESS_TEAM_DOMAIN', 'aud': 'ACCESS_AUD'}"
+        fail_msg: "{{ _cfa_applications | to_json }}"
+        quiet: true
+
+    - name: Plan the k8s-mcp policies (no service tokens)
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-policies.yml"
+      vars:
+        cloudflare_access_owner_emails: [Owner@Example.invalid]
+        _cfa_a: "{{ _cfa_applications[1] }}"
+        _cfa_tokens: {memory-ai-agent-host: tok-1}
+
+    - name: Only k8s-mcp-allow-owner, no service-auth
+      ansible.builtin.assert:
+        that:
+          - "_cfa_policies_desired == [{'name': 'k8s-mcp-allow-owner', 'decision': 'allow',
+             'include': [{'email': {'email': 'owner@example.invalid'}}], 'exclude': [], 'require': []}]"
+        fail_msg: "{{ _cfa_policies_desired | to_json }}"
+        quiet: true
+
+    - name: Plan the k8s-mcp application
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-app.yml"
+      vars:
+        _cfa_a: "{{ _cfa_applications[1] }}"
+        _cfa_apps: []
+        _cfa_policy_ids: {k8s-mcp-allow-owner: pol-k}
+
+    - name: One policy, Managed OAuth with the claude.ai redirect
+      ansible.builtin.assert:
+        that:
+          - _cfa_app_action == 'create'
+          - "_cfa_app_desired.policies == [{'id': 'pol-k', 'precedence': 1}]"
+          - _cfa_app_desired.oauth_configuration.dynamic_client_registration.allowed_uris == ['https://claude.ai/*']
+        fail_msg: "{{ _cfa_app_desired | to_json }}"
+        quiet: true
+
     # --- policies ----------------------------------------------------------------------------------
     - name: Plan the policies with two of three tokens present
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-policies.yml"
       vars:
         # Task vars beat vars_files (the role defaults), play vars do not.
         cloudflare_access_owner_emails: [Owner@Example.invalid]
+        _cfa_a: "{{ _cfa_applications[0] }}"
         _cfa_tokens: {memory-ai-agent-host: tok-1, memory-nwl-mstudio: tok-2, unrelated: tok-9}
 
     - name: The allow-owner policy admits the owner only, service-auth exactly the memory tokens, no Bypass
@@ -103,6 +172,7 @@
     - name: Plan the application when none exists
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-app.yml"
       vars:
+        _cfa_a: "{{ _cfa_applications[0] }}"
         _cfa_apps: [{name: moneta-access, domain: moneta.example.invalid, aud: x}]
         _cfa_policy_ids: {memory-allow-owner: pol-1, memory-service-auth: pol-2}
 
@@ -125,6 +195,7 @@
     - name: Plan against an app that already matches (API view with extra fields and omitted falsy ones)
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-app.yml"
       vars:
+        _cfa_a: "{{ _cfa_applications[0] }}"
         _cfa_policy_ids: {memory-allow-owner: pol-1, memory-service-auth: pol-2}
         _cfa_apps:
           - id: app-1
@@ -164,6 +235,7 @@
     - name: Plan against an app whose policies were changed in the dashboard (a Bypass added)
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-app.yml"
       vars:
+        _cfa_a: "{{ _cfa_applications[0] }}"
         _cfa_policy_ids: {memory-allow-owner: pol-1, memory-service-auth: pol-2}
         _cfa_apps:
           - id: app-1
@@ -193,6 +265,7 @@
     - name: Plan the tunnel rule on a config with another hostname and the catch-all
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-tunnel.yml"
       vars:
+        _cfa_tunnel_apps: "{{ _cfa_applications[:1] }}"
         _cfa_tunnel_config: {ingress: ["{{ _other_rule }}", "{{ _catch_all }}"], warp-routing: {enabled: false}}
 
     - name: The rule goes first, every other rule is kept, the catch-all stays last
@@ -206,6 +279,7 @@
     - name: Plan again on the written config
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-tunnel.yml"
       vars:
+        _cfa_tunnel_apps: "{{ _cfa_applications[:1] }}"
         _cfa_tunnel_config: {ingress: "{{ _cfa_ingress_new }}"}
 
     - name: Second run changes nothing
@@ -216,7 +290,7 @@
     - name: Plan the rollback (tunnel disabled)
       ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-tunnel.yml"
       vars:
-        cloudflare_access_tunnel_enabled: false
+        _cfa_tunnel_apps: "{{ [_cfa_applications[0] | combine({'tunnel_enabled': false})] }}"
         _cfa_tunnel_config: {ingress: "{{ _cfa_ingress_new }}"}
 
     - name: Rollback removes only the memory rule
@@ -224,6 +298,44 @@
         that:
           - _cfa_ingress_changed
           - _cfa_ingress_new == [_other_rule, _catch_all]
+        quiet: true
+
+    - name: Plan both applications' rules on a config that has memory's rule after another one
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-tunnel.yml"
+      vars:
+        _cfa_tunnel_apps: "{{ _cfa_applications }}"
+        _cfa_tunnel_config: {ingress: ["{{ _other_rule }}", "{{ _mem_rule }}", "{{ _catch_all }}"]}
+
+    - name: Both rules first, in list order, every other rule kept, catch-all last
+      ansible.builtin.assert:
+        that:
+          - _cfa_ingress_changed
+          - _cfa_ingress_new == [_mem_rule, _k8s_rule, _other_rule, _catch_all]
+        fail_msg: "{{ _cfa_ingress_new | to_json }}"
+        quiet: true
+
+    - name: Plan both again on the written config
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-tunnel.yml"
+      vars:
+        _cfa_tunnel_apps: "{{ _cfa_applications }}"
+        _cfa_tunnel_config: {ingress: "{{ _cfa_ingress_new }}"}
+
+    - name: Second run with both changes nothing
+      ansible.builtin.assert:
+        that: not _cfa_ingress_changed
+        quiet: true
+
+    - name: Plan with k8s-mcp left out of the run (removed from the list, or its application not created yet)
+      ansible.builtin.include_tasks: "{{ _role }}/tasks/compute-tunnel.yml"
+      vars:
+        _cfa_tunnel_apps: "{{ _cfa_applications[:1] }}"
+        _cfa_tunnel_config: {ingress: ["{{ _mem_rule }}", "{{ _k8s_rule }}", "{{ _other_rule }}", "{{ _catch_all }}"]}
+
+    - name: Its rule is kept, not deleted
+      ansible.builtin.assert:
+        that:
+          - not _cfa_ingress_changed
+        fail_msg: "{{ _cfa_ingress_new | to_json }}"
         quiet: true
 
     # --- MCP portal (olympus-sdk#923) --------------------------------------------------------------
@@ -240,6 +352,8 @@
       vars:
         cloudflare_access_mcp_portal_enabled: true
         cloudflare_access_account_id: "{{ _acct_placeholder }}"
+        # The list was filled in with the default (empty) account id; re-read the callbacks with the placeholder.
+        _cfa_a: "{{ _cfa_applications[0] | combine({'portal_callback_uris': cloudflare_access_mcp_memory_callback_uris}) }}"
         _cfa_policy_ids: "{{ _owner_ids }}"
         _cfa_apps:
           - id: app-1

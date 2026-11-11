@@ -9,6 +9,11 @@
 # 3. The marked node-ip, etcd-expose-metrics and kubelet-arg blocks are byte-identical
 #    to what tasks/node-ip.yml, tasks/etcd-metrics.yml and tasks/kubelet-args.yml write, so blockinfile is a no-op
 #    and k3s needs no restart after the join.
+# 4. Audit log (olympus-sdk#917): flag off renders no kube-apiserver-arg; flag on renders
+#    the marked block once in both the join template and the primary's inline config
+#    (same marker and text as tasks/audit-log.yml, blockinfile a no-op); no top-level key
+#    is ever duplicated; templates/audit-policy.yaml.j2 is a valid audit Policy with the
+#    rules in the required order, with and without the always-logged users/groups.
 - name: k3s join-server render checks
   hosts: localhost
   gather_facts: false
@@ -27,7 +32,7 @@
         that: gv_agent_services[item] == gv_compute_hub[item]
         fail_msg: "{{ item }} differs: agent_services={{ gv_agent_services[item] }} compute_hub={{ gv_compute_hub[item] }}"
         quiet: true
-      loop: [k3s_ha, k3s_vip, k3s_token_op_ref, k3s_disable, k3s_tls_san, k3s_kubelet_args, k3s_etcd_expose_metrics,
+      loop: [k3s_ha, k3s_vip, k3s_token_op_ref, k3s_disable, k3s_tls_san, k3s_kubelet_args, k3s_etcd_expose_metrics, k3s_audit_log_enabled,
              k3s_external_server, k3s_kubeconfig_path, tailscale_tags, tailscale_accept_dns,
              tailscale_accept_routes, tailscale_services, ansible_pull_skip_tags,
              baseline_unattended_auto_reboot, baseline_k8s_node_network, iscsi_mode, atlas_state]
@@ -143,6 +148,285 @@
           - lookup('file', repo ~ '/roles/k3s/tasks/node-ip.yml') is search('ANSIBLE MANAGED - k3s_node_ip')
           - lookup('file', repo ~ '/roles/k3s/tasks/kubelet-args.yml') is search('ANSIBLE MANAGED - k3s_kubelet_args')
           - lookup('file', repo ~ '/roles/k3s/tasks/etcd-metrics.yml') is search('ANSIBLE MANAGED - k3s_etcd_expose_metrics')
+
+    # ── Audit log (olympus-sdk#917) ──────────────────────────────────────────
+    - name: Load the k3s role defaults
+      ansible.builtin.include_vars:
+        file: "{{ repo }}/roles/k3s/defaults/main.yml"
+        name: k3s_def
+
+    - name: The audit log is opt-in in the role and on for the cluster's servers
+      ansible.builtin.assert:
+        that:
+          - not k3s_def.k3s_audit_log_enabled
+          - gv_compute_hub.k3s_audit_log_enabled is sameas true
+          - gv_agent_services.k3s_audit_log_enabled is sameas true
+
+    - name: Render the joining-server config with the audit log on
+      ansible.builtin.template:
+        src: "{{ repo }}/roles/k3s/templates/config-server-join.yaml.j2"
+        dest: "{{ out_dir }}/config-audit.yaml"
+        mode: "0600"
+      vars:
+        _k3s_token: "test-token"
+        k3s_node_ip: "192.168.253.11"
+        _k3s_full_tls_san: "{{ gv_agent_services.k3s_tls_san }}"
+        k3s_vip: "{{ gv_agent_services.k3s_vip }}"
+        k3s_disable: "{{ gv_agent_services.k3s_disable }}"
+        k3s_node_labels: "{{ gv_agent_services.k3s_node_labels }}"
+        k3s_node_taints: "{{ gv_agent_services.k3s_node_taints }}"
+        k3s_kubelet_args: "{{ gv_agent_services.k3s_kubelet_args }}"
+        k3s_etcd_expose_metrics: "{{ gv_agent_services.k3s_etcd_expose_metrics }}"
+        k3s_audit_log_enabled: true
+        k3s_audit_policy_path: "{{ k3s_def.k3s_audit_policy_path }}"
+        k3s_audit_log_dir: "{{ k3s_def.k3s_audit_log_dir }}"
+        k3s_audit_log_maxage: "{{ k3s_def.k3s_audit_log_maxage }}"
+        k3s_audit_log_maxbackup: "{{ k3s_def.k3s_audit_log_maxbackup }}"
+        k3s_audit_log_maxsize: "{{ k3s_def.k3s_audit_log_maxsize }}"
+
+    # The primary's config is an inline `content:` in tasks/linux.yml; copy it out raw
+    # (lookup data is not templated) and render it with the template module.
+    - name: Extract the primary's inline config from tasks/linux.yml
+      ansible.builtin.copy:
+        content: >-
+          {{ (lookup('file', repo ~ '/roles/k3s/tasks/linux.yml') | from_yaml
+              | selectattr('name', 'defined')
+              | selectattr('name', 'equalto', 'Write k3s config — primary (cluster-init, HA)')
+              | first)['ansible.builtin.copy'].content }}
+        dest: "{{ out_dir }}/primary.yaml.j2"
+        mode: "0600"
+
+    - name: Render the primary config with the audit log off and on
+      ansible.builtin.template:
+        src: "{{ out_dir }}/primary.yaml.j2"
+        dest: "{{ out_dir }}/primary-{{ item }}.yaml"
+        mode: "0600"
+      loop: ["off", "on"]
+      vars:
+        _k3s_token: "test-token"
+        k3s_node_ip: "192.168.253.10"
+        _k3s_full_tls_san: "{{ gv_compute_hub.k3s_tls_san }}"
+        k3s_disable: "{{ gv_compute_hub.k3s_disable }}"
+        k3s_node_labels: "{{ gv_compute_hub.k3s_node_labels | default([]) }}"
+        k3s_node_taints: []
+        k3s_etcd_snapshot_dir: ""
+        k3s_etcd_expose_metrics: "{{ gv_compute_hub.k3s_etcd_expose_metrics }}"
+        k3s_audit_log_enabled: "{{ item == 'on' }}"
+        k3s_audit_policy_path: "{{ k3s_def.k3s_audit_policy_path }}"
+        k3s_audit_log_dir: "{{ k3s_def.k3s_audit_log_dir }}"
+        k3s_audit_log_maxage: "{{ k3s_def.k3s_audit_log_maxage }}"
+        k3s_audit_log_maxbackup: "{{ k3s_def.k3s_audit_log_maxbackup }}"
+        k3s_audit_log_maxsize: "{{ k3s_def.k3s_audit_log_maxsize }}"
+
+    - name: Read the audit renders
+      ansible.builtin.slurp:
+        src: "{{ out_dir }}/{{ item }}"
+      loop: [config.yaml, config-audit.yaml, primary-off.yaml, primary-on.yaml]
+      register: _audit_raw
+
+    - name: Flag off renders no audit block, flag on renders it once; no top-level key twice
+      vars:
+        _txt: "{{ item.content | b64decode }}"
+        _keys: "{{ _txt.splitlines() | select('match', '^[A-Za-z0-9_-]+:') | map('regex_replace', ':.*$', '') | list }}"
+        _on: "{{ item.item in ['config-audit.yaml', 'primary-on.yaml'] }}"
+        _cfg: "{{ _txt | from_yaml }}"
+        _want:
+          - "audit-policy-file=/var/lib/rancher/k3s/server/audit.yaml"
+          - "audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log"
+          - "audit-log-maxage=7"
+          - "audit-log-maxbackup=5"
+          - "audit-log-maxsize=100"
+      ansible.builtin.assert:
+        that:
+          - _keys | length == _keys | unique | length
+          - (_keys | select('equalto', 'kube-apiserver-arg') | list | length) == (1 if _on else 0)
+          - (_txt | regex_findall('# BEGIN ANSIBLE MANAGED - k3s_audit_log\n') | length) == (1 if _on else 0)
+          - (_txt | regex_findall('# END ANSIBLE MANAGED - k3s_audit_log\n') | length) == (1 if _on else 0)
+          - (not _on) or (_cfg['kube-apiserver-arg'] == _want)
+        fail_msg: "{{ item.item }}: top-level keys {{ _keys }}"
+        quiet: true
+      loop: "{{ _audit_raw.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: The audit block text is the same in the join render and the primary render
+      vars:
+        _blk: '# BEGIN ANSIBLE MANAGED - k3s_audit_log\n(?:.*\n)*?# END ANSIBLE MANAGED - k3s_audit_log\n'
+      ansible.builtin.assert:
+        that:
+          - (_audit_raw.results[1].content | b64decode | regex_search(_blk))
+            == (_audit_raw.results[3].content | b64decode | regex_search(_blk))
+
+    # Same marker and block as roles/k3s/tasks/audit-log.yml (checked against the file below).
+    - name: Audit blockinfile is a no-op on both renders
+      ansible.builtin.blockinfile:
+        path: "{{ out_dir }}/{{ item }}"
+        marker: "# {mark} ANSIBLE MANAGED - k3s_audit_log"
+        block: |
+          kube-apiserver-arg:
+            - "audit-policy-file={{ k3s_def.k3s_audit_policy_path }}"
+            - "audit-log-path={{ k3s_def.k3s_audit_log_dir }}/audit.log"
+            - "audit-log-maxage={{ k3s_def.k3s_audit_log_maxage }}"
+            - "audit-log-maxbackup={{ k3s_def.k3s_audit_log_maxbackup }}"
+            - "audit-log-maxsize={{ k3s_def.k3s_audit_log_maxsize }}"
+        insertafter: EOF
+        create: false
+      loop: [config-audit.yaml, primary-on.yaml]
+      register: _bi_audit
+
+    - name: Audit blockinfile changed nothing
+      ansible.builtin.assert:
+        that: _bi_audit.results | selectattr('changed') | list | length == 0
+
+    - name: Audit blockinfile removes the block cleanly when the flag is off
+      ansible.builtin.blockinfile:
+        path: "{{ out_dir }}/config-audit.yaml"
+        marker: "# {mark} ANSIBLE MANAGED - k3s_audit_log"
+        state: absent
+        create: false
+
+    - name: Read the config after the removal
+      ansible.builtin.slurp:
+        src: "{{ out_dir }}/config-audit.yaml"
+      register: _audit_removed
+
+    - name: The removal leaves the rest of the config as the flag-off render
+      vars:
+        _cfg: "{{ _audit_removed.content | b64decode | from_yaml }}"
+        _off: "{{ _audit_raw.results[0].content | b64decode | from_yaml }}"
+      ansible.builtin.assert:
+        that:
+          - "'kube-apiserver-arg' not in _cfg"
+          - "'k3s_audit_log' not in (_audit_removed.content | b64decode)"
+          - _cfg['etcd-expose-metrics'] == _off['etcd-expose-metrics']
+          - _cfg['kubelet-arg'] == _off['kubelet-arg']
+
+    - name: The task file writes the same marker, block, mode and order this test mirrors
+      vars:
+        _tasks: "{{ lookup('file', repo ~ '/roles/k3s/tasks/audit-log.yml') | from_yaml }}"
+        _bi: "{{ _tasks | selectattr('name', 'equalto', 'Set the kube-apiserver audit flags in k3s config') | first }}"
+        _names: "{{ _tasks | map(attribute='name') | list }}"
+        _src: "{{ lookup('file', repo ~ '/roles/k3s/templates/config-server-join.yaml.j2') }}"
+      ansible.builtin.assert:
+        that:
+          - _bi['ansible.builtin.blockinfile'].marker == '# {mark} ANSIBLE MANAGED - k3s_audit_log'
+          - _bi['ansible.builtin.blockinfile'].create == false
+          - _bi.diff == false
+          - _bi['ansible.builtin.blockinfile'].block is search('audit-log-maxsize=\{\{ k3s_audit_log_maxsize \}\}')
+          # directory and policy, then the assert, then the config block
+          - _names.index('Create the audit log directory') < _names.index('The audit policy and log directory exist before the config refers to them')
+          - _names.index('Write the audit policy') < _names.index('The audit policy and log directory exist before the config refers to them')
+          - _names.index('The audit policy and log directory exist before the config refers to them') < _names.index(_bi.name)
+          - (_tasks | selectattr('notify', 'defined') | list | length) == 0
+          - (_src | regex_findall('(?m)^kube-apiserver-arg:') | length) == 1
+          - (lookup('file', repo ~ '/roles/k3s/tasks/linux.yml') | regex_findall('(?m)^\s*kube-apiserver-arg:') | length) == 1
+
+    - name: Render the audit policy with the defaults and with empty user/group lists
+      ansible.builtin.template:
+        src: "{{ repo }}/roles/k3s/templates/audit-policy.yaml.j2"
+        dest: "{{ out_dir }}/audit-{{ item.name }}.yaml"
+        mode: "0600"
+      loop:
+        - {name: default, users: "{{ k3s_def.k3s_audit_always_log_users }}", groups: "{{ k3s_def.k3s_audit_always_log_groups }}"}
+        - {name: empty, users: [], groups: []}
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        k3s_audit_always_log_users: "{{ item.users }}"
+        k3s_audit_always_log_groups: "{{ item.groups }}"
+
+    - name: Read the audit policy renders
+      ansible.builtin.slurp:
+        src: "{{ out_dir }}/audit-{{ item }}.yaml"
+      loop: [default, empty]
+      register: _policy_raw
+
+    - name: The audit policy is a valid Policy with the rules in the required order
+      vars:
+        _p: "{{ item.content | b64decode | from_yaml }}"
+        _r: "{{ _p.rules }}"
+        _agents: "{{ item.item == 'default' }}"
+        # Rule c starts two later when the always-logged users/groups rules are present.
+        _o: "{{ 2 if _agents else 0 }}"
+        _rule_keys: [level, users, userGroups, verbs, resources, namespaces, nonResourceURLs, omitStages]
+        _res_keys: [group, resources, resourceNames]
+        _levels: [None, Metadata, Request, RequestResponse]
+        _cp:
+          - "system:kube-proxy"
+          - "system:kube-controller-manager"
+          - "system:kube-scheduler"
+          - "system:apiserver"
+          - "system:k3s-supervisor"
+          - "system:k3s-controller"
+          - "k3s-cloud-controller-manager"
+        _machine: ["system:nodes", "system:serviceaccounts"]
+        _reads: [get, list, watch]
+        _writes: [create, update, patch, delete, deletecollection]
+        _leases: [{group: coordination.k8s.io, resources: [leases]}]
+        _events: [{group: "", resources: [events]}, {group: events.k8s.io, resources: [events]}]
+        _lease_verbs: [get, list, watch, update, patch]
+        _heartbeat: [{group: "", resources: [nodes/status, pods/status]}]
+        _sensitive:
+          - {group: "", resources: [secrets, configmaps, serviceaccounts/token]}
+          - {group: authentication.k8s.io, resources: [tokenreviews]}
+        # Expected rules from c on, in order (the agent rules b come before them).
+        _tail:
+          - {level: None, userGroups: [system:nodes], verbs: "{{ _reads }}"}
+          - {level: None, users: "{{ _cp }}", verbs: "{{ _reads }}"}
+          - {level: None, userGroups: [system:nodes], verbs: [update, patch], resources: "{{ _heartbeat }}"}
+          - {level: None, userGroups: "{{ _machine }}", verbs: "{{ _lease_verbs }}", resources: "{{ _leases }}"}
+          - {level: None, users: "{{ _cp }}", verbs: "{{ _lease_verbs }}", resources: "{{ _leases }}"}
+          - {level: None, userGroups: "{{ _machine }}", resources: "{{ _events }}"}
+          - {level: None, users: "{{ _cp }}", resources: "{{ _events }}"}
+          - {level: Metadata, resources: "{{ _sensitive }}"}
+          - {level: None, userGroups: [system:serviceaccounts], verbs: "{{ _reads }}"}
+          - {level: Metadata, userGroups: "{{ _machine }}", verbs: "{{ _writes }}"}
+          - {level: Metadata, users: "{{ _cp }}", verbs: "{{ _writes }}"}
+          - {level: Request, verbs: "{{ _writes }}"}
+          - {level: Metadata}
+        # Per rule: the resource names it lists (empty = no resources key).
+        _names: "{{ _r | map(attribute='resources', default=[]) | map('map', attribute='resources') | map('flatten') | list }}"
+        # Index of the first rule that names secrets (rule d).
+        _d: "{{ _names | map('intersect', ['secrets']) | map('length') | list | ansible.builtin.flatten }}"
+        _scoped: "{{ (_r | selectattr('users', 'defined') | list) + (_r | rejectattr('users', 'defined') | selectattr('userGroups', 'defined') | list) }}"
+        _le_all: "{{ _names | map('intersect', ['leases', 'events']) | select | list | length }}"
+        _le_scoped: >-
+          {{ _scoped | map(attribute='resources', default=[]) | map('map', attribute='resources') | map('flatten')
+             | map('intersect', ['leases', 'events']) | select | list | length }}
+      ansible.builtin.assert:
+        that:
+          - _p.apiVersion == 'audit.k8s.io/v1'
+          - _p.kind == 'Policy'
+          - _p.omitStages == ['RequestReceived']
+          - _p.keys() | list | sort == ['apiVersion', 'kind', 'omitStages', 'rules']
+          - _r | map(attribute='level') | reject('in', _levels) | list | length == 0
+          - _r | map('dict2items') | flatten | map(attribute='key') | reject('in', _rule_keys) | list | length == 0
+          - _r | selectattr('resources', 'defined') | map(attribute='resources') | flatten
+            | map('dict2items') | flatten | map(attribute='key') | reject('in', _res_keys) | list | length == 0
+          # a. probes dropped first
+          - _r[0].level == 'None'
+          - _r[0].nonResourceURLs == ['/healthz*', '/readyz*', '/livez*', '/metrics', '/version', '/openapi*']
+          # b. always-recorded identities (only when configured), before c
+          - "(not _agents) or (_r[1] == {'level': 'Metadata', 'users': k3s_def.k3s_audit_always_log_users})"
+          - "(not _agents) or (_r[2] == {'level': 'Metadata', 'userGroups': k3s_def.k3s_audit_always_log_groups})"
+          - "_agents or (_r | selectattr('users', 'defined') | map(attribute='users') | flatten
+               | select('equalto', 'system:serviceaccount:atlas-system:k8s-mcp') | list | length == 0)"
+          # c to g, exactly and in order
+          - _r[1 + (_o | int):] == _tail
+          # Rule d is the first rule that names secrets, is unconditional Metadata, and no rule
+          # above Metadata comes before it (first match wins, so none can reach a secret).
+          - "_r[_d.index(1)] == {'level': 'Metadata', 'resources': _sensitive}"
+          - _r[:_d.index(1)] | selectattr('level', 'in', ['Request', 'RequestResponse']) | list | length == 0
+          # the lease and event drops are scoped (each has users or userGroups)
+          - _le_all | int == 4
+          - _le_scoped | int == _le_all | int
+          # never RequestResponse
+          - _r | selectattr('level', 'equalto', 'RequestResponse') | list | length == 0
+        fail_msg: "{{ item.item }} policy: {{ _r | default('unparsed') }}"
+        quiet: true
+      loop: "{{ _policy_raw.results }}"
+      loop_control:
+        label: "{{ item.item }}"
 
     - name: Remove the output directory
       ansible.builtin.file:

@@ -345,7 +345,8 @@
               'node-label', 'node-taint', 'kubelet-arg']
              + (['etcd-snapshot-dir', 'etcd-snapshot-schedule-cron', 'etcd-snapshot-retention']
                 if k3s_etcd_snapshot_dir | default('') != '' else [])
-             + (['etcd-expose-metrics'] if k3s_etcd_expose_metrics | default(false) | bool else []) }}
+             + (['etcd-expose-metrics'] if k3s_etcd_expose_metrics | default(false) | bool else [])
+             + (['kube-apiserver-arg'] if k3s_audit_log_enabled | default(false) | bool else []) }}
         _uncovered: "{{ _r['keys'] | difference(_identity) | difference(_new_keys) }}"
         _extra_env: "{{ _r['env'] | difference(['K3S_TOKEN', 'K3S_URL']) }}"
       ansible.builtin.assert:

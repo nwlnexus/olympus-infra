@@ -1,0 +1,94 @@
+---
+# Kubernetes API audit log on the k3s servers (k3s_audit_log_enabled).
+#
+# 1. The log directory (root, 0700) and the audit policy (root, 0600,
+#    templates/audit-policy.yaml.j2) are written FIRST, and both are asserted to
+#    exist: kube-apiserver does not start when --audit-policy-file is missing.
+# 2. Only then the `kube-apiserver-arg:` list goes into /etc/rancher/k3s/config.yaml
+#    as a marked block (the rest of the file, token included, is never rewritten).
+#    templates/config-server-join.yaml.j2 and the primary's inline config in
+#    tasks/linux.yml render the same marker and content, so this is a no-op on a
+#    freshly written config (tests/k3s-join-server checks that).
+#
+# `kube-apiserver-arg` is a list-valued key, and a second top-level copy of it in
+# config.yaml would silently replace the first. This block is the only place the
+# role writes that key; the render test fails if it ever appears twice.
+#
+# k3s_audit_log_enabled: false removes the block and keeps the policy file and the
+# logs: a server that has not been restarted yet still runs with the flags, and its
+# kube-apiserver keeps writing there until the next restart. Delete them by hand
+# after every server has been restarted, if ever needed.
+#
+# This never restarts k3s and never notifies the restart handler: k3s reads the
+# file only at start. Restart one server at a time, the canary first, and run
+# scripts/k3s-health-gate.sh before the next.
+
+- name: Create the audit log directory
+  ansible.builtin.file:
+    path: "{{ k3s_audit_log_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  become: true
+  when: k3s_audit_log_enabled | bool
+
+- name: Write the audit policy
+  ansible.builtin.template:
+    src: audit-policy.yaml.j2
+    dest: "{{ k3s_audit_policy_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  become: true
+  when: k3s_audit_log_enabled | bool
+
+- name: Check the audit policy and log directory
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ k3s_audit_policy_path }}"
+    - "{{ k3s_audit_log_dir }}"
+  register: _k3s_audit_paths
+  become: true
+  when: k3s_audit_log_enabled | bool
+
+# In check mode on a first run the two tasks above wrote nothing, so the paths are
+# missing; the real run writes them before it gets here.
+- name: The audit policy and log directory exist before the config refers to them
+  ansible.builtin.assert:
+    that:
+      - ansible_check_mode or _k3s_audit_paths.results[0].stat.isreg | default(false)
+      - ansible_check_mode or _k3s_audit_paths.results[1].stat.isdir | default(false)
+    fail_msg: >-
+      {{ k3s_audit_policy_path }} or {{ k3s_audit_log_dir }} is missing on
+      {{ inventory_hostname }}; not writing the kube-apiserver audit flags.
+    quiet: true
+  when: k3s_audit_log_enabled | bool
+
+- name: Check for the k3s config file (audit)
+  ansible.builtin.stat:
+    path: /etc/rancher/k3s/config.yaml
+  register: _k3s_audit_cfg
+  become: true
+
+- name: Set the kube-apiserver audit flags in k3s config
+  ansible.builtin.blockinfile:
+    path: /etc/rancher/k3s/config.yaml
+    marker: "# {mark} ANSIBLE MANAGED - k3s_audit_log"
+    block: |
+      kube-apiserver-arg:
+        - "audit-policy-file={{ k3s_audit_policy_path }}"
+        - "audit-log-path={{ k3s_audit_log_dir }}/audit.log"
+        - "audit-log-maxage={{ k3s_audit_log_maxage }}"
+        - "audit-log-maxbackup={{ k3s_audit_log_maxbackup }}"
+        - "audit-log-maxsize={{ k3s_audit_log_maxsize }}"
+    state: "{{ 'present' if (k3s_audit_log_enabled | bool) else 'absent' }}"
+    insertafter: EOF
+    # The file must already exist; its owner and mode (0600, it holds the token) are kept.
+    create: false
+  become: true
+  # The diff would print the whole file, cluster token included.
+  diff: false
+  # In check mode on a fresh node the config was not written yet.
+  when: _k3s_audit_cfg.stat.exists or not ansible_check_mode

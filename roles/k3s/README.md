@@ -58,7 +58,7 @@ arguments to this block instead. `tests/k3s-join-server` fails if the key appear
 | `k3s_audit_log_maxage` | `7` | Days to keep rotated files |
 | `k3s_audit_log_maxbackup` | `5` | Rotated files to keep |
 | `k3s_audit_log_maxsize` | `100` | MB per file before rotation |
-| `k3s_audit_always_log_users` | `[system:serviceaccount:atlas-system:k8s-mcp]` | Users whose every request is recorded |
+| `k3s_audit_always_log_users` | `[system:serviceaccount:atlas-system:k8s-mcp, system:serviceaccount:tailscale:operator]` | Users whose every request is recorded (the operator: see below) |
 | `k3s_audit_always_log_groups` | `[olympus:agents-view]` | Groups whose every request is recorded |
 | `k3s_audit_drop_lease_names` | `[plndr-cp-lock, plndr-svcs-lock]` | kube-system Leases whose get/update is never recorded, for any user (empty omits the rule) |
 | `k3s_audit_discovery_drop_users` | `[system:serviceaccount:atlas-system:k8s-mcp]` | Always-logged users whose API discovery reads (`GET /api`, `/apis` and below) are not recorded (empty omits the rule) |
@@ -76,7 +76,12 @@ response code, never a body; Request adds the request body, never the response):
   `k3s_audit_discovery_drop_users` (the Kubernetes MCP server's background discovery polling).
   Non-resource URLs never match a resource request, so every object they read is still recorded;
 - Metadata for every request (reads included) by the always-logged users and groups,
-  ahead of all noise rules (an empty list omits its rule);
+  ahead of all noise rules (an empty list omits its rule). Rules match the authenticated
+  user, never the impersonated one, so a group in `k3s_audit_always_log_groups` is only
+  matched when it is the caller's own group. Requests through the Tailscale operator's
+  API-server proxy (agent hosts impersonated as `olympus:agents-view`) arrive as the
+  operator's ServiceAccount; listing that ServiceAccount here records them, with the
+  group in `impersonatedUser` (it also records the operator's own reads);
 - dropped: get/update/patch of the kube-system Leases in `k3s_audit_drop_lease_names`
   (the kube-vip VIP and Service elections, every few seconds), for every user: kube-vip
   uses the admin identity, which a person can also use, so it is matched by Lease name,

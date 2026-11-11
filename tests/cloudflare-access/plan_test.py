@@ -160,7 +160,7 @@ def serve(fake):
     return httpd
 
 
-def run_play(port, extra, roles_path, check=False):
+def run_play(port, extra, roles_path, check=False, expect_fail=False):
     """One ansible-playbook run of plan.yml; returns (stdout, op lines)."""
     with tempfile.NamedTemporaryFile("r", suffix=".op", delete=False) as oplog:
         op_path = oplog.name
@@ -174,6 +174,10 @@ def run_play(port, extra, roles_path, check=False):
     with open(op_path) as f:
         ops = f.read().splitlines()
     os.unlink(op_path)
+    if expect_fail:
+        if proc.returncode == 0:
+            raise SystemExit("ansible-playbook was expected to fail (%s)" % " ".join(cmd))
+        return proc.stdout, ops
     if proc.returncode != 0:
         sys.stdout.write(proc.stdout + proc.stderr)
         raise SystemExit("ansible-playbook failed (%s)" % " ".join(cmd))
@@ -197,15 +201,16 @@ SCENARIOS = {
 MEMORY_ONLY = {"cloudflare_access_applications": "{{ [cloudflare_access_memory_app] }}"}
 
 
-def run_scenario(name, roles_path, base_extra):
+def run_scenario(name, roles_path, base_extra, runs=None):
     fake = FakeCloudflare()
     httpd = serve(fake)
     out = {}
     try:
-        for run in SCENARIOS[name]:
+        for run in runs or SCENARIOS[name]:
             start = len(fake.log)
             extra = dict(base_extra, cloudflare_access_mcp_portal_enabled=(name == "portal-on"), **run["extra"])
-            stdout, ops = run_play(httpd.server_address[1], extra, roles_path, run.get("check", False))
+            stdout, ops = run_play(httpd.server_address[1], extra, roles_path, run.get("check", False),
+                                   run.get("expect_fail", False))
             out[run["name"]] = {"requests": fake.log[start:], "op": ops, "stdout": stdout}
     finally:
         httpd.shutdown()
@@ -321,6 +326,36 @@ def test_two_applications(roles_path):
           "backend_values: team domain and AUD printed per application", out[-3000:])
 
 
+def test_per_app_session(roles_path):
+    own = {"session_duration": "1h", "oauth_access_token_lifetime": "5m", "oauth_grant_session_duration": "24h"}
+    apps = {"cloudflare_access_applications":
+            "{{ [cloudflare_access_memory_app, cloudflare_access_k8s_mcp_app | combine(%s)] }}" % json.dumps(own)}
+    got, _ = run_scenario("portal-off", roles_path, apps, [{"name": "apply", "extra": {}}])
+    by_domain = {a.get("domain"): a for a in bodies(got["apply"]["requests"], "POST", "/access/apps")}
+    k, m = by_domain.get("k8s-mcp.nwlnexus.io", {}), by_domain.get("memory.nwlnexus.io", {})
+    check(k.get("session_duration") == "1h" and k.get("oauth_configuration", {}).get("grant")
+          == {"access_token_lifetime": "5m", "session_duration": "24h"},
+          "per_app_session_own: an entry with its own lifetimes gets them in the app body", k)
+    check(m.get("session_duration") == "24h" and m.get("oauth_configuration", {}).get("grant")
+          == {"access_token_lifetime": "15m", "session_duration": "336h"},
+          "per_app_session_shared: an entry without them gets the shared lifetimes", m)
+    got, _ = run_scenario("portal-on", roles_path, {}, [{"name": "apply", "extra": {}}])
+    k = [a for a in bodies(got["apply"]["requests"], "POST", "/access/apps") if a.get("domain") == "k8s-mcp.nwlnexus.io"]
+    check(k and k[0]["session_duration"] == "24h"
+          and k[0]["oauth_configuration"]["grant"] == {"access_token_lifetime": "15m", "session_duration": "336h"},
+          "per_app_session_default: k8s-mcp uses memory's lifetimes by default", k)
+
+
+def test_portal_needs_memory(roles_path):
+    only_k8s = {"cloudflare_access_applications": "{{ [cloudflare_access_k8s_mcp_app] }}"}
+    got, _ = run_scenario("portal-on", roles_path, only_k8s, [{"name": "fail", "extra": {}, "expect_fail": True}])
+    run = got["fail"]
+    check(writes(run["requests"]) == [] and run["op"] == []
+          and "the memory application the portal uses" in run["stdout"],
+          "portal_needs_memory: portal on without memory fails before any write (%d request(s) made)"
+          % len(run["requests"]), {"requests": run["requests"], "stdout": run["stdout"][-2000:]})
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--record", help="write the memory-only fixture to this file")
@@ -338,6 +373,8 @@ def main():
         return
     test_memory_unchanged(args.roles_path)
     test_two_applications(args.roles_path)
+    test_per_app_session(args.roles_path)
+    test_portal_needs_memory(args.roles_path)
     if FAILURES:
         raise SystemExit("%d check(s) failed" % len(FAILURES))
     print("all checks passed")

@@ -221,7 +221,10 @@ reads the single-application variables above, so existing `-e` overrides still a
 only, no service tokens, Managed OAuth/DCR for claude.ai, not in the portal). Each entry gets the same tasks;
 service tokens and the service-auth policy only when its `service_token_hosts` is not empty; all tunnel
 rules go first in list order in one write. The play prints each application's team domain and AUD by name.
-Removing an entry deletes nothing. `tests/cloudflare-access/plan_test.py` runs the whole role against a local
+Removing an entry deletes nothing. k8s-mcp uses the same session and grant lifetimes as memory (owner-only,
+read-only backend); set the per-application keys (`session_duration`, `oauth_access_token_lifetime`,
+`oauth_grant_session_duration`) to tighten them. With the portal on, the memory entry must stay in the list
+(asserted before any request). `tests/cloudflare-access/plan_test.py` runs the whole role against a local
 fake API and requires memory's requests to equal the fixture recorded before the change, byte for byte.
 
 Opt-in `cloudflare_access_mcp_portal_enabled` (olympus-sdk#923, off by default) adds the owner MCP server

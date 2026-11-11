@@ -15,6 +15,9 @@
       portal_callback_uris: []
       backend_env: {team_domain: ACCESS_TEAM_DOMAIN, aud: ACCESS_AUD}
       backend_config: ""
+      session_duration: "{{ cloudflare_access_session_duration }}"
+      oauth_access_token_lifetime: "{{ cloudflare_access_oauth_access_token_lifetime }}"
+      oauth_grant_session_duration: "{{ cloudflare_access_oauth_grant_session_duration }}"
     _filled: >-
       [{% for a in cloudflare_access_applications %}{{ _defaults
          | combine({'dns_comment': (a.name | default('?')) ~ ' public host (olympus-infra roles/cloudflare-access)',

@@ -149,6 +149,9 @@ cloudflare_access_dns_zone: "nwlnexus.io"
 #                                                       cloudflare_access_mcp_portal_enabled is on
 #   backend_env: {team_domain: ACCESS_TEAM_DOMAIN, aud: ACCESS_AUD}   names printed for the backend
 #   backend_config: ""                                  where the operator pastes those values
+#   session_duration: cloudflare_access_session_duration                    Access session
+#   oauth_access_token_lifetime: cloudflare_access_oauth_access_token_lifetime    OAuth access token
+#   oauth_grant_session_duration: cloudflare_access_oauth_grant_session_duration  OAuth refresh grant
 # cloudflare_access_rotate_hosts / _refresh_hosts are host names; they act on every entry that lists the host.
 #
 # Removing an entry deletes nothing: its application, policies, tokens, DNS record and tunnel rule stay
@@ -176,8 +179,12 @@ cloudflare_access_memory_app:
 
 # The read-only Kubernetes MCP backend (olympus-sdk#916): owner only, no service tokens yet (a later issue
 # adds host tokens: list the hosts in service_token_hosts then), not in any MCP portal yet.
+# Decision: k8s-mcp uses the same session and grant lifetimes as memory (owner-only, read-only backend); set
+# the per-application keys (session_duration, oauth_access_token_lifetime, oauth_grant_session_duration) to
+# tighten them.
 cloudflare_access_k8s_mcp_oauth_allowed_redirect_uris: "{{ cloudflare_access_oauth_allowed_redirect_uris }}"
-# Fill when the server is added to a portal (the dashboard and portal callbacks, as for memory below).
+# Intentionally empty until the server is added to a portal; then the dashboard and portal callbacks, as
+# cloudflare_access_mcp_memory_callback_uris has them for memory.
 cloudflare_access_k8s_mcp_portal_callback_uris: []
 cloudflare_access_k8s_mcp_app:
   name: "k8s-mcp"
@@ -189,7 +196,7 @@ cloudflare_access_k8s_mcp_app:
   oauth_allowed_redirect_uris: "{{ cloudflare_access_k8s_mcp_oauth_allowed_redirect_uris }}"
   portal_callback_uris: "{{ cloudflare_access_k8s_mcp_portal_callback_uris }}"
   backend_env: {team_domain: ACCESS_TEAM_DOMAIN, aud: ACCESS_AUD}
-  backend_config: "the k8s-mcp proxy Deployment env in olympus-gitops (namespace atlas-system)"
+  backend_config: "the k8s-mcp-proxy container env in the olympus-gitops atlas-system manifests"
 
 # --- MCP server portal (olympus-sdk#923, follow-up to spike #909) --------------------------------------
 # Off by default, so a run without it is unchanged. With it on, the role also manages (look-up-before-

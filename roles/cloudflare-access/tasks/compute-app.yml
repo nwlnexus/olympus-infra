@@ -15,7 +15,7 @@
       destinations:
         - type: public
           uri: "{{ _cfa_a.domain }}"
-      session_duration: "{{ cloudflare_access_session_duration }}"
+      session_duration: "{{ _cfa_a.session_duration }}"
       app_launcher_visible: false
       allowed_idps: "{{ cloudflare_access_allowed_idps }}"
       auto_redirect_to_identity: "{{ cloudflare_access_allowed_idps | length == 1 }}"
@@ -38,8 +38,8 @@
               'allow_any_on_localhost': _cfa_a.oauth_allow_localhost | bool,
               'allow_any_on_loopback': _cfa_a.oauth_allow_loopback | bool},
             'grant': {
-              'access_token_lifetime': cloudflare_access_oauth_access_token_lifetime,
-              'session_duration': cloudflare_access_oauth_grant_session_duration}}
+              'access_token_lifetime': _cfa_a.oauth_access_token_lifetime,
+              'session_duration': _cfa_a.oauth_grant_session_duration}}
            if cloudflare_access_managed_oauth | bool else {'enabled': false} }}
 
 - name: Find the existing application

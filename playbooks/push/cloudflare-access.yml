@@ -25,8 +25,11 @@
 # AUD its backend needs, and where they go:
 #   memory:  MEMORY_ACCESS_TEAM_DOMAIN / MEMORY_ACCESS_AUD into olympus-gitops
 #            clusters/olympus/memory/gateway/gateway.yaml, and each token's client id for its gateway client row;
-#   k8s-mcp: ACCESS_TEAM_DOMAIN / ACCESS_AUD into the k8s-mcp proxy Deployment's env in olympus-gitops
-#            (namespace atlas-system). Commit them there; the proxy rejects every request until they match.
+#   k8s-mcp: the `k8s-mcp-proxy` container env in the olympus-gitops `atlas-system` manifests
+#            (ACCESS_TEAM_DOMAIN, ACCESS_AUD). Commit them there; the proxy rejects every request until they match.
+# k8s-mcp is in no MCP portal: its portal callback list (cloudflare_access_k8s_mcp_portal_callback_uris) is
+# intentionally empty until the server is added to a portal. It uses the same session and grant lifetimes as
+# memory (owner-only, read-only backend); set the per-application keys to tighten them.
 #
 # Add an application: add a dict to cloudflare_access_applications in roles/cloudflare-access/defaults/main.yml
 # (copy cloudflare_access_k8s_mcp_app: name, domain, policy_prefix, tunnel_service; service_token_hosts empty

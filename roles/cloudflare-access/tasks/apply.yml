@@ -32,6 +32,21 @@
 - name: Fill in the application list
   ansible.builtin.include_tasks: compute-applications.yml
 
+- name: The MCP portal needs the memory application in the list
+  # mcp.yml uses memory's allow-owner policy and domain (cloudflare_access_policy_prefix / _app_domain).
+  # Checked before any request, so a run with the portal on and memory removed changes nothing.
+  ansible.builtin.assert:
+    that: >-
+      _cfa_applications | selectattr('policy_prefix', 'equalto', cloudflare_access_policy_prefix)
+      | selectattr('domain', 'equalto', cloudflare_access_app_domain) | list | length == 1
+    fail_msg: >-
+      cloudflare_access_mcp_portal_enabled is on, but cloudflare_access_applications has no entry with
+      policy_prefix {{ cloudflare_access_policy_prefix }} and domain {{ cloudflare_access_app_domain }}
+      (the memory application the portal uses). Put it back in the list, or turn the portal off (which
+      resets the memory application's redirect URIs; see the playbook header). Nothing was changed.
+    quiet: true
+  when: cloudflare_access_mcp_portal_enabled | bool
+
 - name: Check the service-token inputs of every application
   vars:
     _all_hosts: "{{ _cfa_applications | map(attribute='service_token_hosts') | flatten | unique }}"

@@ -38,25 +38,16 @@
   become: true
   when: ansible_pull_state == "present"
 
-# The wrapper runs as ansible_pull_user and must read the Connect token it
-# exports (playbooks/place-connect-token.yml historically wrote it root 0600,
-# which made every run die). Only adjusts the file if it exists.
-- name: Check for 1Password Connect token
-  ansible.builtin.stat:
-    path: /etc/olympus/op-connect-token
-  register: _ansible_pull_connect_token
-  become: true
-  when: ansible_pull_state == "present"
-
-- name: Make 1Password Connect token readable by the ansible-pull user
+# Fleet hosts hold no 1Password Connect token (olympus-sdk#1002). The wrapper
+# does not export it (it unsets OP_CONNECT_*) and no pull role reads it, but the
+# token can write vault Dev. playbooks/place-connect-token.yml, which placed it,
+# is retired; this removes the copies already on the hosts.
+- name: Remove the 1Password Connect token from the host
   ansible.builtin.file:
     path: /etc/olympus/op-connect-token
-    owner: "{{ ansible_pull_user }}"
-    mode: "0600"
+    state: absent
   become: true
-  when:
-    - ansible_pull_state == "present"
-    - _ansible_pull_connect_token.stat.exists | default(false)
+  when: ansible_pull_state == "present"
 
 - name: ansible-pull — macOS (LaunchDaemon)
   ansible.builtin.include_tasks: macos.yml

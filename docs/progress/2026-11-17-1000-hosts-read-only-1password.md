@@ -4,7 +4,7 @@
 - **Branch / worktree:** `fix/1000-hosts-read-only-1password` in `~/projects/personal/.worktrees/olympus-infra-1000` (olympus-infra)
 - **Session:** `personal-olympus-sdk-1000` on `ai-agent-host`; registry id `259c2d06-07c9-49e3-bbbb-70c1d8f10f15`
 - **Started:** 2026-11-17 16:10 UTC · **Turn cap:** 60
-- **Draft PR:** not yet
+- **Draft PR:** https://github.com/nwlnexus/olympus-infra/pull/149 (docs: https://github.com/nwlnexus/olympus-sdk/pull/1001)
 
 ## Goal
 
@@ -22,7 +22,7 @@
 | 4 | `ssh <onode> 'sudo -n test -e /opt/ansible-pull/.op-service-account-token; echo $?'` on the 3 onodes after merge + pull | `1` | not run (after merge) | |
 | 5 | Owner checklist in the issue | all ticked | waiting on owner | |
 | 6 | Write probe on onode-0314ac (issue body) | permission error, no item | waiting on owner steps 1-4 | |
-| 7 | `gh issue view 413 --repo nwlnexus/olympus-sdk --comments` | a comment links #1000 | not run | |
+| 7 | `gh issue view 413 --repo nwlnexus/olympus-sdk --comments` | a comment links #1000 | PASS (issuecomment-6953679899) | - |
 
 ## Plan
 
@@ -62,6 +62,7 @@ push-only today, so no pull on a host changes behaviour except the legacy file r
 | 16:40 | legacy-removal condition test | 0 | `both remove=True`, `tokenmissing remove=False`, `skipped remove=False` | this branch |
 | 16:42 | `bash syntax.sh .` | 0 | `playbooks=20 syntax_fail=0` | this branch |
 | 16:48 | `git grep` for `argocd`/`flux` role use in olympus-infra playbooks, inventory, tests | 0 | only `playbooks/pull/management-hub.yml:8:# (argocd role removed ...)`; the flux vars in compute_hub.yml had no reader. Removed both roles (host-side `op item/document create/edit` under /opt/homebrew, ai-hub era) | this branch |
+| 17:05 | claim-verifier (sonnet) on checks 1, 2, 7, fake-op tests, place-op-token | - | `VERDICT: PASS` (merge scope; Done-when 3-6 not claimed) | e26fbee |
 | 16:50 | Done-when 1 grep after removal, then `bash syntax.sh .` | 0 | 14 hits, all in the controller-only roles or delegated tasks (see check 1); `playbooks=20 syntax_fail=0` | this branch |
 
 ## Decisions

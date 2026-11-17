@@ -107,7 +107,7 @@
   when: ansible_pull_state == "present"
 
 # Fleet hosts hold no 1Password Connect server credentials (olympus-sdk#1002).
-# The file seeded the in-cluster Connect (roles/1password-connect, retired); the
+# The file seeded the in-cluster Connect, which is retired; the
 # Connect that ESO and CI use runs on Fly. Anyone holding the file can run a
 # Connect server with the same vault access, so remove the copies on the hosts.
 - name: Remove the 1Password Connect server credentials from the host

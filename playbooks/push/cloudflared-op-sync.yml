@@ -1,0 +1,26 @@
+---
+# Owner-run: write the compute-hub tunnel credentials to the 1Password item ESO reads
+# (Dev/compute-hub-cloudflared, olympus-gitops clusters/olympus/cloudflared/externalsecret.yaml).
+# Fleet hosts never write to 1Password (olympus-sdk#1000): a pull on the primary only reads the item and
+# warns when it is missing or names another tunnel. Run this after the tunnel was created or its secret
+# rotated, or when that warning shows.
+#
+# The cloudflared-k8s role runs against the HA primary as in a pull (Cloudflare API calls, the namespace
+# check); with cloudflared_op_write every `op` call for the item runs here, on the controller, with your
+# own sign-in. Prerequisites: SSH to the primary as `ansible` (inventory/olympus.yml), and `op` signed in
+# as an account that can read vault Dev/cloudflare-account and write vault Dev (your own `op signin`).
+#
+# Dry run (reads everything, writes nothing), then apply:
+#   env -u OP_CONNECT_HOST -u OP_CONNECT_TOKEN -u OP_SERVICE_ACCOUNT_TOKEN ansible-playbook -i inventory/olympus.yml playbooks/push/cloudflared-op-sync.yml --check
+#   env -u OP_CONNECT_HOST -u OP_CONNECT_TOKEN -u OP_SERVICE_ACCOUNT_TOKEN ansible-playbook -i inventory/olympus.yml playbooks/push/cloudflared-op-sync.yml
+
+- name: Sync the cloudflared tunnel credentials to 1Password
+  hosts: compute_hub
+  gather_facts: true
+  vars:
+    cloudflared_op_write: true
+  roles:
+    - role: cloudflared-k8s
+      when:
+        - k3s_primary | default(false) | bool
+        - cloudflared_op_enabled | default(false) | bool

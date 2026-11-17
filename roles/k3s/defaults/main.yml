@@ -45,10 +45,14 @@ k3s_vip: ""
 # Created with: openssl rand -hex 32, stored in 1Password, referenced as:
 #   op://Dev/compute-hub-k3s-token/password
 k3s_token_op_ref: ""
-# Export kubeconfig to 1Password after cluster init (primary only).
-# Leave empty to skip. Enables management-hub Headlamp to import the cluster.
+# Export the VIP-patched admin kubeconfig of the HA primary to 1Password: the owner's
+# break-glass cluster access (olympus-sdk#413). Fleet hosts never write to 1Password
+# (olympus-sdk#1000): the host only hands its kubeconfig to the controller, which writes
+# the document with its own `op` sign-in. Owner-run: playbooks/push/export-kubeconfig.yml,
+# which sets k3s_kubeconfig_export. A plain k3s role run never exports.
 k3s_kubeconfig_op_item: ""
 k3s_kubeconfig_op_vault: "Dev"
+k3s_kubeconfig_export: false
 
 # --- Agent (worker) mode ---
 # Set k3s_agent: true to join this node as a worker (agent) instead of a server.

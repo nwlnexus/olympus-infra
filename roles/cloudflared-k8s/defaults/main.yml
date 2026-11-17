@@ -53,10 +53,22 @@ cloudflared_catch_all_service: "https://traefik.kube-system:443"
 # but the K8s Secret is created by ESO from the 1Password item below instead of
 # by Ansible. Pairs with cloudflared_skip_k8s_secret (defaults to the same).
 #
-# The tunnel item is written via the `op` CLI using the same service-account
-# token used for the CF token read — no Connect token (or any extra secret)
-# on disk.
+# Fleet hosts never write the item (olympus-sdk#1000): on a host the role only reads
+# its tunnel-id and warns on drift. The `op` CLI writes it on the controller, with the
+# controller's own sign-in, when cloudflared_op_write is true
+# (playbooks/push/cloudflared-op-sync.yml, owner-run).
 cloudflared_op_enabled: false
+# Write (create/update) the item. Never true in a pull: only the owner-run push sets it.
+cloudflared_op_write: false
+# How the role runs `op`: the Connect variables are dropped (`op` refuses item
+# create/edit under Connect and answers only JSON there) and stdin is /dev/null (under
+# Ansible stdin is a pipe, which `op item create/edit` reads as a JSON item template).
+# Arguments that follow are passed through "$@" unchanged.
+cloudflared_op_cmd:
+  - sh
+  - -c
+  - exec env -u OP_CONNECT_HOST -u OP_CONNECT_TOKEN op "$@" </dev/null
+  - op
 # 1Password vault name (must match the vault ESO is configured to read).
 cloudflared_op_vault: "Dev"
 # 1Password item title. Default: <tunnel_name>-cloudflared.

@@ -17,7 +17,8 @@ ddclient_extra_fqdns:
 # the primary until each has been run deliberately by hand:
 #   qnap-csi-bootstrap — git checkout in /opt/qnap-csi-plugin has local edits
 #   1password-connect  — `helm upgrade --install --wait` of the live release
-#   cloudflared-k8s    — rewrites the 1Password item / tunnel config each run
+#   cloudflared-k8s    — re-applies the tunnel config each run (it only reads the
+#                        1Password item since olympus-sdk#1000)
 #   eso-bootstrap      — one-time seed (secret already exists); re-applies the
 #                        Connect token secret (skips itself if the token
 #                        cannot be read)

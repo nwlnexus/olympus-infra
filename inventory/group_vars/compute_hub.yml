@@ -2,8 +2,10 @@
 # Shared vars for all compute-hub nodes (applied to group: compute_hub)
 # Secrets are read at runtime from 1Password via `op read` in playbook pre_tasks.
 # 1Password service account token (item: olympus-edge-service-account) must be on
-# each node at: /etc/olympus/op-service-account-token
-# and must have read/write access to the Dev vault.
+# each node at: /etc/olympus/op-service-account-token (playbooks/push/place-op-token.yml).
+# It is READ-ONLY (vaults Dev and CI): fleet hosts never write to 1Password (owner
+# decision 2026-11-17, olympus-sdk#1000). The two writers run on the controller,
+# owner-run: playbooks/push/export-kubeconfig.yml and playbooks/push/cloudflared-op-sync.yml.
 
 ansible_user: ansible
 
@@ -43,6 +45,7 @@ k3s_kubeconfig_users:
 # Export the VIP-patched admin kubeconfig to 1Password. Its only consumer is the owner's break-glass
 # cluster access (agent hosts have no cluster admin since olympus-sdk#935; the kubeconfig-merger and the
 # management-hub Headlamp that used to import it are gone). Kept by decision, olympus-sdk#413.
+# Owner-run from a workstation (the controller writes, never the host): playbooks/push/export-kubeconfig.yml.
 k3s_kubeconfig_op_item: "compute-hub-kubeconfig"
 k3s_kubeconfig_op_vault: "Dev"
 # Context/cluster/user names in the exported kubeconfig
@@ -86,15 +89,12 @@ cloudflared_bootstrap_only: true
 cloudflared_ingress_hostname: "ing.compute.nwlnexus.net"
 cloudflared_catch_all_service: "https://traefik.kube-system:443"
 
-# GitOps mode — push creds to 1Password via op CLI + service-account token
-# (/etc/olympus/op-service-account-token, already on every host).
+# GitOps mode: ESO reads the tunnel creds from this 1Password item. A pull on the primary only
+# reads it and warns on drift; the owner writes it from the controller with
+# playbooks/push/cloudflared-op-sync.yml (olympus-sdk#1000).
 cloudflared_op_enabled: true
 cloudflared_op_vault: "Dev"
 cloudflared_op_item_title: "compute-hub-cloudflared"
-
-# --- Flux CD (primary node only) ---
-flux_cluster_path: "clusters/olympus"
-flux_kubeconfig_path: "/etc/rancher/k3s/k3s.yaml"
 
 # --- ansible-pull (all nodes) ---
 # The ansible-pull role installs the cron that replaces the cloud-init systemd timer.

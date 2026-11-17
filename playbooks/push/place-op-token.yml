@@ -1,0 +1,63 @@
+---
+# Owner-run: place or rotate the 1Password service-account token that a host's ansible-pull uses, at
+# /etc/olympus/op-service-account-token (0600, the pull user). The token must belong to a READ-ONLY service
+# account: fleet hosts never write to 1Password (owner decision 2026-11-17, olympus-sdk#1000). It is read
+# once on the controller with your own `op` sign-in and copied to each host; never printed, never diffed.
+#
+# Always pass --limit (the play refuses to run without one). Dry run, then apply:
+#   ansible-playbook -i inventory/olympus.yml playbooks/push/place-op-token.yml --limit onode-0314ac --check --diff
+#   ansible-playbook -i inventory/olympus.yml playbooks/push/place-op-token.yml --limit onode-0314ac
+# Then check one pull per host. op_token_ref names the secret reference (default below).
+
+- name: Place the host service-account token
+  hosts: all:!localhost
+  become: true
+  gather_facts: true
+  vars:
+    op_token_ref: "op://Dev/olympus-edge-service-account/credential"
+  tasks:
+    - name: Require --limit
+      ansible.builtin.assert:
+        that: ansible_limit is defined and ansible_limit | length > 0
+        fail_msg: Pass --limit with the hosts to update.
+      run_once: true
+
+    # Once, on the controller, with your own `op` sign-in (an implicit-localhost play would be
+    # dropped by --limit).
+    - name: Read the token (controller, once)
+      ansible.builtin.command:
+        argv: [op, read, "{{ op_token_ref }}"]
+      register: _op_host_token
+      changed_when: false
+      check_mode: false
+      no_log: true
+      become: false
+      delegate_to: localhost
+      run_once: true
+
+    - name: The token is not empty
+      ansible.builtin.assert:
+        that: _op_host_token.stdout | length > 0
+        fail_msg: "{{ op_token_ref }} is empty."
+      no_log: true
+      run_once: true
+
+    - name: Check /etc/olympus exists (bootstrap creates it)
+      ansible.builtin.stat:
+        path: /etc/olympus
+      register: _etc_olympus
+
+    - name: Fail when the host was never bootstrapped
+      ansible.builtin.assert:
+        that: _etc_olympus.stat.isdir | default(false)
+        fail_msg: /etc/olympus is missing on {{ inventory_hostname }}; bootstrap the host first.
+
+    - name: Write the service-account token
+      ansible.builtin.copy:
+        dest: /etc/olympus/op-service-account-token
+        content: "{{ _op_host_token.stdout }}"
+        owner: "{{ ansible_pull_user | default('ansible') }}"
+        group: "{{ 'staff' if ansible_facts['os_family'] == 'Darwin' else (ansible_pull_user | default('ansible')) }}"
+        mode: "0600"
+      no_log: true
+      diff: false

@@ -166,6 +166,22 @@
     - ansible_pull_state == "present"
     - item.stat.exists
 
+# Disk images (autoinstall/packer) used to place a second copy of the service-account
+# token at /opt/ansible-pull/.op-service-account-token. Nothing reads it since the
+# wrapper moved to /etc/olympus, and an old copy would outlive a rotation to the
+# read-only token (olympus-sdk#1000). Remove it once the /etc/olympus copy exists.
+- name: Remove the legacy copy of the 1Password service-account token
+  ansible.builtin.file:
+    path: /opt/ansible-pull/.op-service-account-token
+    state: absent
+  become: true
+  when:
+    - ansible_pull_state == "present"
+    - (_ansible_pull_op_files.results | default([])
+       | selectattr('item', 'equalto', 'op-service-account-token')
+       | selectattr('stat', 'defined') | map(attribute='stat')
+       | selectattr('exists') | list | length) > 0
+
 # After removal, /etc/olympus/hermes-token (if present) still counts as
 # fallback evidence of Ansible management in the atlas host inventory.
 - name: Remove managed-by marker (state=absent)

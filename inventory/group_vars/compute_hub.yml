@@ -40,7 +40,9 @@ k3s_tls_san:
   - "compute-hub.nwlnexus.net"
 k3s_kubeconfig_users:
   - ansible
-# Export kubeconfig to 1Password so management-hub Headlamp can import it
+# Export the VIP-patched admin kubeconfig to 1Password. Its only consumer is the owner's break-glass
+# cluster access (agent hosts have no cluster admin since olympus-sdk#935; the kubeconfig-merger and the
+# management-hub Headlamp that used to import it are gone). Kept by decision, olympus-sdk#413.
 k3s_kubeconfig_op_item: "compute-hub-kubeconfig"
 k3s_kubeconfig_op_vault: "Dev"
 # Context/cluster/user names in the exported kubeconfig

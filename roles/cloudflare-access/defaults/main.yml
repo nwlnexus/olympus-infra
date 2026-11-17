@@ -85,6 +85,8 @@ cloudflare_access_service_token_hosts:
   - ai-agent-host
   - nwl-mstudio
   - NWL-MBM2
+  # Not a host: the IRIS edge Worker's review queue (olympus-sdk#969) calls the memory gateway's admin API.
+  - iris
 cloudflare_access_service_token_name_prefix: "memory-"
 cloudflare_access_service_token_duration: "8760h"
 # Opt-in maintenance, by host name (see docs/runbooks/memory-access-service-tokens.md in olympus-sdk):

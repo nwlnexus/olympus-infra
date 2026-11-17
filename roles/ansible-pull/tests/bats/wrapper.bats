@@ -33,7 +33,6 @@ setup() {
   export WRAPPER_LOG_DIR="$TMPDIR/var/log"
   export WRAPPER_LOG_FILE="$TMPDIR/var/log/run.log"
   export WRAPPER_OP_TOKEN_FILE="$TMPDIR/etc/olympus/op-service-account-token"
-  export WRAPPER_OP_CONNECT_TOKEN_FILE="$TMPDIR/etc/olympus/op-connect-token"
   export WRAPPER_PARSER="$PARSER"
   export WRAPPER_ANSIBLE_PULL_BIN="$MOCK_PULL"
   export MOCK_PULL_ARGS="$TMPDIR/pull-args"
@@ -159,7 +158,6 @@ pull_arg_after() {
 
 @test "only the service-account token reaches ansible-pull, even with Connect configured" {
   touch "$WRAPPER_HERMES_DISABLED_FLAG"
-  echo "connect-token" > "$WRAPPER_OP_CONNECT_TOKEN_FILE"
   export MOCK_PULL_ENV="$TMPDIR/pull-env"
   OP_CONNECT_HOST=https://connect.example OP_CONNECT_TOKEN=x run bash "$WRAPPER"
   [ "$status" -eq 0 ]

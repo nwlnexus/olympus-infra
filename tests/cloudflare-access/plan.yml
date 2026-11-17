@@ -12,6 +12,9 @@
     cloudflare_access_api_url: "{{ lookup('ansible.builtin.env', 'CFA_FAKE_API') }}"
     cloudflare_access_api_token: "fake-token-not-a-credential"
     cloudflare_access_owner_emails: [owner@example.invalid]
+    # The memory fixture (fixtures/memory-origin-main.json) was recorded with these three service-token hosts;
+    # pinned here so a change to the role's default list does not change the recorded requests.
+    cloudflare_access_service_token_hosts: [ai-agent-host, nwl-mstudio, NWL-MBM2]
     cloudflare_access_op_cmd: [sh, -c, 'printf "%s\n" "$*" >> "$CFA_OP_LOG"', op]
   roles:
     - role: cloudflare-access

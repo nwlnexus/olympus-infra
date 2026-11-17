@@ -13,13 +13,10 @@ bootstrap_creds_src: "~/olympus-creds"
 bootstrap_creds_dest: /etc/olympus
 
 # Credential files to copy from bootstrap_creds_src → bootstrap_creds_dest
-# Note: cloudflare-api-token and 1password-credentials.json come from vault vars now;
-# add any extra files here only if they don't have a vault var equivalent
+# Note: cloudflare-api-token comes from a vault var now; add any extra files here
+# only if they don't have a vault var equivalent. Hosts hold no 1Password Connect
+# server credentials (1password-credentials.json, olympus-sdk#1002).
 bootstrap_cred_files: []
-
-# 1Password Connect credentials JSON (set via vault var onepassword_credentials_json)
-# If non-empty, written to bootstrap_creds_dest/1password-credentials.json
-onepassword_credentials_json: ""
 
 # Hermes per-host token (issued via Atlas; stored in 1Password).
 # Empty by default — host opts in by setting hermes_token_op_item in host_vars,

@@ -29,8 +29,6 @@ cloudflared_zone_id: ""
 cloudflared_services:
   - subdomain: argocd
     k8s_service: "http://argocd-server.argocd:80"
-  - subdomain: connect
-    k8s_service: "http://connect-1password-connect.1password:8080"
   - subdomain: traefik
     k8s_service: "http://traefik-dashboard.traefik:9000"
 

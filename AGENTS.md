@@ -15,7 +15,6 @@ olympus-infra/
 │   ├── bootstrap-user        # Create ansible user, SSH keys, sudo
 │   ├── tailscale             # Install + configure Tailscale
 │   ├── k3s                   # Install k3s (single-node or HA)
-│   ├── 1password-connect     # Deploy 1Password Connect server
 │   ├── traefik               # Traefik ingress (Helm, for standalone hosts)
 │   ├── cloudflared           # Cloudflare Tunnel daemon
 │   ├── cloudflared-k8s       # cloudflared as k8s Deployment (via Helm)

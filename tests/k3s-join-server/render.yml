@@ -50,7 +50,6 @@
           - "'olympus.io/ci=true' not in gv_agent_services.k3s_node_labels"
           - gv_agent_services.k3s_node_taints == ['olympus.io/role=agent-services:NoSchedule']
           - gv_agent_services.ansible_pull_inventory == 'inventory/agent-services.yml'
-          - "'onepassword_connect_state' not in gv_agent_services"
           - "'eso_bootstrap_state' not in gv_agent_services"
           - "'qnap_csi_state' not in gv_agent_services"
           - "'cloudflared_k8s_state' not in gv_agent_services"

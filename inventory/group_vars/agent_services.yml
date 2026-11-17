@@ -9,8 +9,8 @@
 # so the former olympus.io/ci=true label is dropped.
 #
 # Why a group of its own and not compute_hub:
-#   - compute_hub carries cluster-scoped one-shot roles (1password-connect,
-#     eso-bootstrap, cloudflared-k8s, qnap-csi-bootstrap, the kubeconfig export to
+#   - compute_hub carries cluster-scoped one-shot roles (eso-bootstrap,
+#     cloudflared-k8s, qnap-csi-bootstrap, the kubeconfig export to
 #     1Password) whose only guard in the pull playbook is `k3s_primary | default(true)`,
 #     the label olympus.io/role=compute-hub, and ddclient. None of that belongs here,
 #     and none of it is defined below (so a missing host var cannot turn it on).

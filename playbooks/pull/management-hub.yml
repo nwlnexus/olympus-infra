@@ -32,9 +32,6 @@
       tags: [ddclient]
       when: ddclient_state is defined
 
-    - role: 1password-connect
-      tags: [1password-connect]
-
     # ── Hermes ENC (must be LAST — appends roles, never displaces) ───────────
     - role: hermes-classify-include
       tags: [hermes-classify]

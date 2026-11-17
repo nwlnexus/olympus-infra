@@ -1,8 +1,8 @@
 ---
 # naraka-01 vars for ansible-pull (inventory/management-hub.yml).
 # The single-node management-hub cluster is retired: naraka-01 is now a k3s
-# AGENT in the olympus cluster. Cluster-scoped roles (1password-connect,
-# eso-bootstrap, qnap-csi-bootstrap, cloudflared-k8s) run only on the olympus
+# AGENT in the olympus cluster. Cluster-scoped roles (eso-bootstrap,
+# qnap-csi-bootstrap, cloudflared-k8s) run only on the olympus
 # primary (onode-030c31, group_vars/compute_hub.yml) and must stay disabled
 # here — this node has no server kubeconfig (/etc/rancher/k3s/k3s.yaml).
 ansible_user: ansible

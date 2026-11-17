@@ -138,8 +138,18 @@
   become: true
   when: ansible_pull_state == "present"
 
-# The 1Password service-account token and the Connect server credentials must
-# only be readable by the pull user
+# Fleet hosts hold no 1Password Connect server credentials (olympus-sdk#1002).
+# The file seeded the in-cluster Connect (roles/1password-connect, retired); the
+# Connect that ESO and CI use runs on Fly. Anyone holding the file can run a
+# Connect server with the same vault access, so remove the copies on the hosts.
+- name: Remove the 1Password Connect server credentials from the host
+  ansible.builtin.file:
+    path: /etc/olympus/1password-credentials.json
+    state: absent
+  become: true
+  when: ansible_pull_state == "present"
+
+# The 1Password service-account token must only be readable by the pull user
 # (the wrapper reads it as that user; roles that need it run with become).
 # Hosts provisioned by hand had it at 0755; olympus-infra#301.
 - name: Check the 1Password secret files under /etc/olympus
@@ -148,7 +158,6 @@
   register: _ansible_pull_op_files
   loop:
     - op-service-account-token
-    - 1password-credentials.json
   become: true
   when: ansible_pull_state == "present"
 

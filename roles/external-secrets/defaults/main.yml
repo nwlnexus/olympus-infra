@@ -1,9 +1,0 @@
----
-external_secrets_state: present
-external_secrets_namespace: external-secrets
-external_secrets_chart_version: "0.10.5"
-# 1Password Connect server details (for ClusterSecretStore)
-onepassword_connect_url: "http://onepassword-connect.1password:8080"
-onepassword_connect_token: ""          # Connect API token (from vault)
-onepassword_connect_vaults: {}         # map of vault name -> vault UUID, e.g. {homelab: "abc123"}
-k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml

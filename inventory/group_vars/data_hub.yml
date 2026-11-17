@@ -139,9 +139,8 @@ pull_excluded_roles:
   - tailscale
 
 # Not a k3s node (the k3s agent is the data-hub-vm guest). Keeps the cluster-scoped
-# roles (1password-connect, eso-bootstrap: `k3s_primary | default(true)` in
-# playbooks/pull/olympus.yml) out of this host's pull: a credentials file exists in
-# /etc/olympus, so 1password-connect would otherwise run `helm upgrade --install`.
+# roles (eso-bootstrap: `k3s_primary | default(true)` in playbooks/pull/olympus.yml)
+# out of this host's pull.
 k3s_primary: false
 
 # Cloudflared binary present (tunnel deleted — binary kept for potential future use)

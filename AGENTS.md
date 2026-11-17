@@ -15,13 +15,11 @@ olympus-infra/
 │   ├── bootstrap-user        # Create ansible user, SSH keys, sudo
 │   ├── tailscale             # Install + configure Tailscale
 │   ├── k3s                   # Install k3s (single-node or HA)
-│   ├── 1password-connect     # Deploy 1Password Connect server
 │   ├── traefik               # Traefik ingress (Helm, for standalone hosts)
 │   ├── cloudflared           # Cloudflare Tunnel daemon
 │   ├── cloudflared-k8s       # cloudflared as k8s Deployment (via Helm)
 │   ├── cloudflare-access     # API-only: Access apps/policies/service tokens, tunnel rules + DNS for memory.nwlnexus.io (olympus-sdk#736) and k8s-mcp.nwlnexus.io (#916); MCP servers memory + k8s, portals owner + hosts (#923, #929)
 │   ├── flux                  # Flux CD bootstrap
-│   ├── external-secrets      # ESO bootstrap (CRDs + ClusterSecretStore)
 │   ├── eso-bootstrap         # ExternalSecret for cluster secrets
 │   ├── external-dns          # external-dns Helm deployment
 │   ├── cert-manager          # cert-manager Helm deployment

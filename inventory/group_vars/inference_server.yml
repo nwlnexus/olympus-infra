@@ -35,7 +35,7 @@ tailscale_services: [ssh]
 tailscale_oauth_client_id: "{{ lookup('community.general.onepassword', 'ansible-tailscale-oauth', field='client-id', vault='Dev') }}"
 tailscale_oauth_client_secret: "{{ lookup('community.general.onepassword', 'ansible-tailscale-oauth', field='client-secret', vault='Dev') }}"
 
-# Not a k3s node: keeps the pull playbook from running 1password-connect / eso-bootstrap.
+# Not a k3s node: keeps the pull playbook from running eso-bootstrap.
 k3s_primary: false
 # `common` is skipped fleet-wide, as on compute_hub.
 ansible_pull_skip_tags: common

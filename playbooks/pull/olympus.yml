@@ -71,12 +71,6 @@
         - atlas_state is defined
         - ansible_facts['os_family'] != 'Darwin'
 
-    - role: 1password-connect
-      tags: [1password-connect]
-      when:
-        - onepassword_connect_state is defined
-        - k3s_primary | default(true)
-
     - role: eso-bootstrap
       tags: [eso-bootstrap]
       when:

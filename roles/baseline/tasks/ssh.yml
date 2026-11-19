@@ -107,47 +107,41 @@
   become: true
   when: baseline_state == "present"
 
-- name: Read OP service account token
-  ansible.builtin.slurp:
-    src: "{{ baseline_op_token_file }}"
-  register: _baseline_op_sat
-  no_log: true
-  failed_when: false
+# The key changes rarely, so it is read from 1Password at most once a day and cached on the host
+# (roles/op-cache, root-only under /var/lib/olympus/op-cache). An hourly read on every host spent
+# the account-wide service-account budget (olympus-sdk#1039). On a failed read the cached key is
+# used; with nothing cached the task below is skipped (the key is already in authorized_keys).
+# `op read` with the field name as one argv element: no quoting needed for the space.
+- name: Ansible SSH public key from 1Password (cached on the host)
+  ansible.builtin.include_role:
+    name: op-cache
+    apply:
+      tags: [baseline, baseline-ssh]
+  vars:
+    op_cache_name: ansible-ssh-public-key
+    op_cache_ref: "op://{{ baseline_op_ssh_pubkey_vault }}/{{ baseline_op_ssh_pubkey_item }}/{{ baseline_op_ssh_pubkey_field }}"
+    op_cache_token_file: "{{ baseline_op_token_file }}"
+    op_cache_validate_regex: '^(ssh-|ecdsa-|sk-)'
   when:
     - baseline_state == "present"
     - baseline_op_ssh_pubkey_item != ""
+  tags: [baseline, baseline-ssh]
 
-# argv passes "label=public key" as a single argument — no shell quoting
-# or %20 encoding needed for the space in the field name.
-- name: Fetch ansible SSH public key from 1Password
-  ansible.builtin.command:
-    argv:
-      - op
-      - item
-      - get
-      - "{{ baseline_op_ssh_pubkey_item }}"
-      - "--fields"
-      - "label={{ baseline_op_ssh_pubkey_field }}"
-      - "--vault"
-      - "{{ baseline_op_ssh_pubkey_vault }}"
-  environment:
-    OP_SERVICE_ACCOUNT_TOKEN: "{{ _baseline_op_sat.content | b64decode | trim }}"
-  register: _baseline_ssh_pubkey
-  changed_when: false
-  no_log: true
+- name: Keep the SSH public key for this role
+  ansible.builtin.set_fact:
+    _baseline_ssh_pubkey: "{{ op_cache_value | default('') }}"
   when:
     - baseline_state == "present"
     - baseline_op_ssh_pubkey_item != ""
-    - _baseline_op_sat.content is defined
+  tags: [baseline, baseline-ssh]
 
 - name: Provision ansible user SSH public key
   ansible.posix.authorized_key:
     user: ansible
-    key: "{{ _baseline_ssh_pubkey.stdout | trim }}"
+    key: "{{ _baseline_ssh_pubkey | trim }}"
     state: present
   become: true
   when:
     - baseline_state == "present"
-    - _baseline_ssh_pubkey.stdout is defined
-    - _baseline_ssh_pubkey.stdout | trim | length > 0
+    - _baseline_ssh_pubkey | default('') | trim | length > 0
   tags: [baseline, baseline-ssh]

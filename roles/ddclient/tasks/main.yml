@@ -66,35 +66,30 @@
     - _ddclient_state == 'present'
     - ddclient_cf_api_token != ""
 
-- name: Read Cloudflare token from 1Password (pull-mode)
-  ansible.builtin.shell: |
-    set -o pipefail
-    OP_SERVICE_ACCOUNT_TOKEN=$(cat /etc/olympus/op-service-account-token 2>/dev/null || echo "")
-    if [ -n "$OP_SERVICE_ACCOUNT_TOKEN" ]; then
-      export OP_SERVICE_ACCOUNT_TOKEN
-      op read "{{ ddclient_cf_token_op_ref }}"
-    else
-      echo ""
-    fi
-  args:
-    executable: /bin/bash
-  register: _op_token_read
-  no_log: true
-  changed_when: false
-  check_mode: false  # read-only; without it --check skips the whole role
-  failed_when: false
+# Pull mode: read from 1Password at most once a day, cached on the host (roles/op-cache,
+# root-only under /var/lib/olympus/op-cache); an hourly read on every host spent the account-wide
+# service-account budget (olympus-sdk#1039). On a failed read the cached token is used; with
+# nothing cached ddclient keeps its running config and this run skips configuring it. After a
+# token rotation, delete /var/lib/olympus/op-cache/ddclient-cloudflare-token to pick it up at once.
+- name: Cloudflare token from 1Password (pull-mode, cached on the host)
+  ansible.builtin.include_role:
+    name: op-cache
+  vars:
+    op_cache_name: ddclient-cloudflare-token
+    op_cache_ref: "{{ ddclient_cf_token_op_ref }}"
+    op_cache_token_file: /etc/olympus/op-service-account-token
   when:
     - _ddclient_state == 'present'
     - ddclient_cf_api_token == ""
 
 - name: Set token fact from 1Password read
   ansible.builtin.set_fact:
-    _ddclient_cf_token: "{{ _op_token_read.stdout | trim }}"
+    _ddclient_cf_token: "{{ op_cache_value }}"
   no_log: true
   when:
     - _ddclient_state == 'present'
     - ddclient_cf_api_token == ""
-    - _op_token_read.stdout | default('') | trim != ''
+    - op_cache_value | default('') | trim != ''
 
 - name: Skip ddclient setup — no Cloudflare token available
   ansible.builtin.debug:

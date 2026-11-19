@@ -39,7 +39,8 @@ baseline_ssh_max_auth_tries: 3
 
 # 1Password — ansible user SSH public key
 # Set baseline_op_ssh_pubkey_item to the 1Password item ID to enable key provisioning.
-# The community.general.onepassword lookup handles spaces in field names natively.
+# Read with `op read op://<vault>/<item>/<field>` (the field name may hold spaces) through
+# roles/op-cache: at most once a day per host (olympus-sdk#1039).
 baseline_op_token_file: /etc/olympus/op-service-account-token
 baseline_op_ssh_pubkey_item: ""          # 1Password item ID; empty = skip key provisioning
 baseline_op_ssh_pubkey_field: "public key"

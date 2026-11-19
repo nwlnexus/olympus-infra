@@ -42,6 +42,10 @@ k3s_kubelet_args:
 
 # --- Tailscale (tagged device, no key expiry, no personal login) ---
 tailscale_state: present
+# The tailnet name is the inventory name, which is also each VM's OS hostname. Left empty, the
+# role saw hostname "drift" in every run: an hourly `tailscale up` plus the OAuth lookups
+# (four `op` calls) against the 1Password service-account budget (olympus-sdk#1039).
+tailscale_hostname: "{{ inventory_hostname }}"
 tailscale_ephemeral: false
 tailscale_accept_routes: false
 tailscale_accept_dns: false

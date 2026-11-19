@@ -1,0 +1,281 @@
+---
+# Offline test of roles/op-cache (olympus-sdk#1039) with a fake `op` (tests/op-cache/bin/op): no
+# network, no 1Password, no real token. Runs the role against a temporary cache directory and checks
+# when it reads, what it keeps on a failed read (rate limit), and that it works under 1Password
+# Connect (the fake rejects non-JSON `op item get` there, like the real CLI). Also checks that every
+# role in the pull playbook calls `op` in a Connect-compatible form and that the hourly reads go
+# through the cache.
+#
+#   ansible-playbook -i tests/op-cache/inventory.yml tests/op-cache/render.yml
+- name: op-cache role
+  hosts: all
+  gather_facts: false
+  vars:
+    _role_vars: &role_vars
+      op_cache_name: test-secret
+      op_cache_ref: "op://Dev/test-item/credential"
+      op_cache_dir: "{{ _tmp.path }}/cache"
+      op_cache_token_file: "{{ _tmp.path }}/token"
+      op_cache_become: false
+      op_cache_owner: "{{ omit }}"
+      op_cache_group: "{{ omit }}"
+  tasks:
+    - name: Make a temporary directory
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: op-cache
+      register: _tmp
+
+    - name: Set the test paths
+      ansible.builtin.set_fact:
+        _log: "{{ _tmp.path }}/op-calls.log"
+        _cache: "{{ _tmp.path }}/cache"
+        _token: "{{ _tmp.path }}/token"
+        _env_base:
+          PATH: "{{ playbook_dir }}/bin:{{ ansible_env.PATH | default(lookup('ansible.builtin.env', 'PATH')) }}"
+          FAKE_OP_LOG: "{{ _tmp.path }}/op-calls.log"
+          OP_CONNECT_HOST: ""
+          OP_CONNECT_TOKEN: ""
+
+    - name: Write a placeholder token file
+      ansible.builtin.copy:
+        content: placeholder-not-a-token
+        dest: "{{ _token }}"
+        mode: "0600"
+
+    # 1. Nothing cached, read works: read once, cache it (0600, dir 0700).
+    - name: "1: miss, read ok"
+      environment: "{{ _env_base | combine({'FAKE_OP_VALUE': 'value-one'}) }}"
+      block:
+        - ansible.builtin.include_role:
+            name: op-cache
+          vars: *role_vars
+
+    - name: "1: stat the cache file"
+      ansible.builtin.stat:
+        path: "{{ _cache }}/test-secret"
+      register: _c1
+
+    - name: "1: assertions"
+      vars:
+        _calls: "{{ lookup('ansible.builtin.file', _log).splitlines() }}"
+      ansible.builtin.assert:
+        that:
+          - op_cache_status == 'refreshed'
+          - op_cache_value == 'value-one'
+          - _calls | length == 1
+          - _calls[0] == 'ok connect=0 sa=set read op://Dev/test-item/credential'
+          - _c1.stat.mode == '0600'
+          - lookup('ansible.builtin.file', _cache ~ '/test-secret') == 'value-one'
+        quiet: true
+
+    # 2. Cache younger than the max age: no 1Password request at all.
+    - name: "2: fresh"
+      environment: "{{ _env_base | combine({'FAKE_OP_VALUE': 'value-two'}) }}"
+      block:
+        - ansible.builtin.include_role:
+            name: op-cache
+          vars: *role_vars
+
+    - name: "2: assertions (no new call, cached value)"
+      ansible.builtin.assert:
+        that:
+          - op_cache_status == 'fresh'
+          - op_cache_value == 'value-one'
+          - lookup('ansible.builtin.file', _log).splitlines() | length == 1
+        quiet: true
+
+    # 3. Cache older than the max age and 1Password rate-limits: keep the cached value, no failure.
+    - name: "3: age the cache"
+      ansible.builtin.file:
+        path: "{{ _cache }}/test-secret"
+        state: touch
+        modification_time: "202001010000.00"
+
+    - name: "3: stale, rate-limited"
+      environment: "{{ _env_base | combine({'FAKE_OP_MODE': 'ratelimit'}) }}"
+      block:
+        - ansible.builtin.include_role:
+            name: op-cache
+          vars: *role_vars
+
+    - name: "3: assertions (cached value kept)"
+      ansible.builtin.assert:
+        that:
+          - op_cache_status == 'stale'
+          - op_cache_value == 'value-one'
+          - _op_cache_rate_limited | bool
+          - lookup('ansible.builtin.file', _log).splitlines() | length == 2
+          - lookup('ansible.builtin.file', _cache ~ '/test-secret') == 'value-one'
+        quiet: true
+
+    # 4. Stale and the read works again: new value cached, mtime bumped so the next run is fresh.
+    - name: "4: stale, read ok"
+      environment: "{{ _env_base | combine({'FAKE_OP_VALUE': 'value-two'}) }}"
+      block:
+        - ansible.builtin.include_role:
+            name: op-cache
+          vars: *role_vars
+
+    - name: "4: next run is fresh"
+      environment: "{{ _env_base | combine({'FAKE_OP_VALUE': 'value-three'}) }}"
+      block:
+        - ansible.builtin.include_role:
+            name: op-cache
+          vars: *role_vars
+
+    - name: "4: assertions"
+      ansible.builtin.assert:
+        that:
+          - op_cache_status == 'fresh'
+          - op_cache_value == 'value-two'
+          - lookup('ansible.builtin.file', _log).splitlines() | length == 3
+          - lookup('ansible.builtin.file', _cache ~ '/test-secret') == 'value-two'
+        quiet: true
+
+    # 5. Same value again after the max age: mtime is bumped even though the content is unchanged.
+    - name: "5: age the cache"
+      ansible.builtin.file:
+        path: "{{ _cache }}/test-secret"
+        state: touch
+        modification_time: "202001010000.00"
+
+    - name: "5: stale, read returns the same value"
+      environment: "{{ _env_base | combine({'FAKE_OP_VALUE': 'value-two'}) }}"
+      block:
+        - ansible.builtin.include_role:
+            name: op-cache
+          vars: *role_vars
+
+    - name: "5: then fresh"
+      environment: "{{ _env_base | combine({'FAKE_OP_VALUE': 'value-two'}) }}"
+      block:
+        - ansible.builtin.include_role:
+            name: op-cache
+          vars: *role_vars
+
+    - name: "5: assertions"
+      ansible.builtin.assert:
+        that:
+          - op_cache_status == 'fresh'
+          - lookup('ansible.builtin.file', _log).splitlines() | length == 4
+        quiet: true
+
+    # 6. Nothing cached and 1Password fails: empty value, status missing, the play goes on.
+    - name: "6: remove the cache"
+      ansible.builtin.file:
+        path: "{{ _cache }}/test-secret"
+        state: absent
+
+    - name: "6: miss, rate-limited"
+      environment: "{{ _env_base | combine({'FAKE_OP_MODE': 'ratelimit'}) }}"
+      block:
+        - ansible.builtin.include_role:
+            name: op-cache
+          vars: *role_vars
+
+    - name: "6: assertions"
+      ansible.builtin.assert:
+        that:
+          - op_cache_status == 'missing'
+          - op_cache_value == ''
+          - lookup('ansible.builtin.file', _log).splitlines() | length == 5
+        quiet: true
+
+    # 7. Under 1Password Connect (OP_CONNECT_* exported by the pull wrapper): `op read` works.
+    - name: "7: miss, Connect"
+      environment: "{{ _env_base | combine({'FAKE_OP_VALUE': 'value-connect', 'OP_CONNECT_HOST': 'https://connect.example.invalid', 'OP_CONNECT_TOKEN': 'placeholder'}) }}"
+      block:
+        - ansible.builtin.include_role:
+            name: op-cache
+          vars: *role_vars
+
+    - name: "7: assertions"
+      vars:
+        _calls: "{{ lookup('ansible.builtin.file', _log).splitlines() }}"
+      ansible.builtin.assert:
+        that:
+          - op_cache_status == 'refreshed'
+          - op_cache_value == 'value-connect'
+          - _calls[-1] is match('ok connect=1 .* read op://Dev/test-item/credential$')
+        quiet: true
+
+    # 8. A value that fails op_cache_validate_regex is neither used nor cached.
+    - name: "8: miss, invalid value"
+      environment: "{{ _env_base | combine({'FAKE_OP_VALUE': 'not-a-key'}) }}"
+      block:
+        - ansible.builtin.include_role:
+            name: op-cache
+          vars:
+            <<: *role_vars
+            op_cache_name: test-key
+            op_cache_validate_regex: '^ssh-'
+
+    - name: "8: assertions"
+      ansible.builtin.stat:
+        path: "{{ _cache }}/test-key"
+      register: _c8
+
+    - name: "8: nothing cached"
+      ansible.builtin.assert:
+        that:
+          - op_cache_status == 'missing'
+          - op_cache_value == ''
+          - not _c8.stat.exists
+        quiet: true
+
+    - name: Remove the temporary directory
+      ansible.builtin.file:
+        path: "{{ _tmp.path }}"
+        state: absent
+
+- name: Pull roles read 1Password through the cache, in a Connect-compatible form
+  hosts: all
+  gather_facts: false
+  vars:
+    _repo: "{{ playbook_dir }}/../.."
+    _pull_play: "{{ lookup('ansible.builtin.file', _repo ~ '/playbooks/pull/olympus.yml') | from_yaml }}"
+    _pull_roles: "{{ _pull_play[0].roles | map(attribute='role') | list }}"
+    _ssh: "{{ lookup('ansible.builtin.file', _repo ~ '/roles/baseline/tasks/ssh.yml') }}"
+    _ddclient: "{{ lookup('ansible.builtin.file', _repo ~ '/roles/ddclient/tasks/main.yml') }}"
+    _ts_linux: "{{ lookup('ansible.builtin.file', _repo ~ '/roles/tailscale/tasks/linux.yml') | from_yaml }}"
+    _mac_agents: "{{ lookup('ansible.builtin.file', _repo ~ '/inventory/group_vars/k3s_mac_agents.yml') | from_yaml }}"
+  tasks:
+    # `op item get` without --format json fails under Connect; `op read` and the
+    # community.general.onepassword lookup (always --format json) work with both.
+    - name: No pull role calls `op item get` without --format json
+      vars:
+        _text: "{{ lookup('ansible.builtin.file', item) }}"
+      ansible.builtin.assert:
+        that: >-
+          _text is not search('(op item get|- item\n\s*- get)')
+          or _text is search('--format[ =]json|- --format\n\s*- json')
+        fail_msg: "{{ item }} calls `op item get` without --format json (breaks under 1Password Connect)"
+        quiet: true
+      loop: "{{ query('ansible.builtin.fileglob', *(_pull_roles | map('regex_replace', '^', _repo ~ '/roles/') | map('regex_replace', '$', '/tasks/*.yml'))) }}"
+      loop_control:
+        label: "{{ item | regex_replace('^.*/roles/', 'roles/') }}"
+
+    - name: The SSH public key and the ddclient token go through op-cache
+      ansible.builtin.assert:
+        that:
+          - "_ssh is search('name: op-cache')"
+          - _ssh is not search('- item\n\s*- get')
+          - "_ddclient is search('name: op-cache')"
+          - _ddclient is not search('ansible.builtin.shell:\s*\|\s*\n(.*\n)*?.*op read')
+        quiet: true
+
+    # The OAuth lookups (two `op` calls each) are evaluated only when a tailscale API call follows.
+    - name: Tailscale evaluates the OAuth lookups only after the drift check
+      vars:
+        _ts_task: "{{ _ts_linux | selectattr('name', 'defined') | selectattr('name', 'equalto', 'Get OAuth token for device updates') | first }}"
+      ansible.builtin.assert:
+        that:
+          - (_ts_task.when | map('string') | list).index(_ts_task.when | map('string') | select('search', 'ts_tags_current') | first)
+            < (_ts_task.when | map('string') | list).index(_ts_task.when | map('string') | select('search', 'tailscale_oauth_client_id') | first)
+        quiet: true
+
+    - name: Mac-agent VMs set tailscale_hostname (an empty one is "drift" in every run)
+      ansible.builtin.assert:
+        that: _mac_agents.tailscale_hostname is defined and _mac_agents.tailscale_hostname | length > 0
+        quiet: true

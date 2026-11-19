@@ -1,0 +1,87 @@
+---
+# Owner-run: place or rotate the READ-ONLY 1Password Connect token that a host's ansible-pull reads
+# through (olympus-sdk#1039), at /etc/olympus/op-connect-token (0600, the pull user). Reads through
+# Connect do not count against the account-wide service-account budget (1,000 requests per 24 h for
+# all service accounts), which the hourly fleet pulls exhausted on 2026-11-18.
+#
+# The token must be a Connect access token with READ on vaults Dev and CI only, from the Fly-hosted
+# Connect server (connect.nwlnexus.net). Hosts never write to 1Password (olympus-sdk#1000); the old
+# host Connect token was removed because it could write (olympus-sdk#1002).
+#
+# The play writes the marker /etc/olympus/op-connect-token.read-only first, then the token. The
+# ansible-pull role removes a token that has no marker (the old write-capable one) and the pull
+# wrapper refuses one; with the marker, the wrapper uses Connect when it answers and falls back to
+# the service-account token when it does not. The token is read once on the controller with your
+# own `op` sign-in and copied to each host; never printed, never diffed.
+#
+# Always pass --limit (the play refuses to run without one). Dry run, then apply:
+#   ansible-playbook -i inventory/olympus.yml playbooks/push/place-connect-token.yml --limit onode-0314ac --check
+#   ansible-playbook -i inventory/olympus.yml playbooks/push/place-connect-token.yml --limit onode-0314ac
+# Then check one natural hourly pull per host: run.log shows "1Password: using Connect".
+# op_connect_token_ref names the secret reference (default below; the owner may name another item).
+#
+# Undo on a host: delete both files; the next pull uses the service-account token again.
+
+- name: Place the host read-only 1Password Connect token
+  hosts: all:!localhost
+  become: true
+  gather_facts: true
+  diff: false
+  vars:
+    op_connect_token_ref: "op://Dev/olympus-fleet-connect-token/credential"
+  tasks:
+    - name: Require --limit
+      ansible.builtin.assert:
+        that: ansible_limit is defined and ansible_limit | length > 0
+        fail_msg: Pass --limit with the hosts to update.
+      run_once: true
+
+    # Once, on the controller, with your own `op` sign-in (an implicit-localhost play would be
+    # dropped by --limit).
+    - name: Read the token (controller, once)
+      ansible.builtin.command:
+        argv: [op, read, "{{ op_connect_token_ref }}"]
+      register: _op_connect_token
+      changed_when: false
+      check_mode: false
+      no_log: true
+      become: false
+      delegate_to: localhost
+      run_once: true
+
+    - name: The token is not empty
+      ansible.builtin.assert:
+        that: _op_connect_token.stdout | length > 0
+        fail_msg: "{{ op_connect_token_ref }} is empty."
+      no_log: true
+      run_once: true
+
+    - name: Check /etc/olympus exists (bootstrap creates it)
+      ansible.builtin.stat:
+        path: /etc/olympus
+      register: _etc_olympus
+
+    - name: Fail when the host was never bootstrapped
+      ansible.builtin.assert:
+        that: _etc_olympus.stat.isdir | default(false)
+        fail_msg: /etc/olympus is missing on {{ inventory_hostname }}; bootstrap the host first.
+
+    # Before the token: a pull that starts in between must not take the new token for the old one.
+    - name: Write the read-only marker
+      ansible.builtin.copy:
+        dest: /etc/olympus/op-connect-token.read-only
+        content: |
+          Read-only 1Password Connect token (Read on Dev and CI) from {{ op_connect_token_ref }}.
+          Placed by playbooks/push/place-connect-token.yml (olympus-sdk#1039). No secret in this file.
+        owner: root
+        group: "{{ 'wheel' if ansible_facts['os_family'] == 'Darwin' else 'root' }}"
+        mode: "0644"
+
+    - name: Write the Connect token
+      ansible.builtin.copy:
+        dest: /etc/olympus/op-connect-token
+        content: "{{ _op_connect_token.stdout }}"
+        owner: "{{ ansible_pull_user | default('ansible') }}"
+        group: "{{ 'staff' if ansible_facts['os_family'] == 'Darwin' else (ansible_pull_user | default('ansible')) }}"
+        mode: "0600"
+      no_log: true

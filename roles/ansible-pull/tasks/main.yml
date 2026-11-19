@@ -38,16 +38,27 @@
   become: true
   when: ansible_pull_state == "present"
 
-# Fleet hosts hold no 1Password Connect token (olympus-sdk#1002). The wrapper
-# does not export it (it unsets OP_CONNECT_*) and no pull role reads it, but the
-# token can write vault Dev. playbooks/place-connect-token.yml, which placed it,
-# is retired; this removes the copies already on the hosts.
-- name: Remove the 1Password Connect token from the host
+# olympus-sdk#1002 removed the hosts' write-capable 1Password Connect token. Hosts may
+# hold a READ-ONLY Connect token at the same path again (olympus-sdk#1039), placed by
+# playbooks/push/place-connect-token.yml, which writes the marker
+# /etc/olympus/op-connect-token.read-only before the token. A token without the marker
+# is the old write-capable one: remove it (the wrapper also refuses it).
+- name: Check for the read-only marker of the 1Password Connect token
+  ansible.builtin.stat:
+    path: /etc/olympus/op-connect-token.read-only
+    get_checksum: false
+  register: _ansible_pull_connect_marker
+  become: true
+  when: ansible_pull_state == "present"
+
+- name: Remove a 1Password Connect token that has no read-only marker (olympus-sdk#1002)
   ansible.builtin.file:
     path: /etc/olympus/op-connect-token
     state: absent
   become: true
-  when: ansible_pull_state == "present"
+  when:
+    - ansible_pull_state == "present"
+    - not (_ansible_pull_connect_marker.stat.exists | default(false))
 
 - name: ansible-pull — macOS (LaunchDaemon)
   ansible.builtin.include_tasks: macos.yml

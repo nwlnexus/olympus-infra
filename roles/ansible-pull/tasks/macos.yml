@@ -117,7 +117,8 @@
   become: true
   when: ansible_pull_state == "present"
 
-# The 1Password service-account token must only be readable by the pull user.
+# The 1Password service-account token, and a read-only Connect token when placed
+# (olympus-sdk#1039), must only be readable by the pull user.
 # /etc/olympus is world-readable on macOS hosts, so the file mode is the control
 # (olympus-infra#301).
 - name: Check the 1Password secret files under /etc/olympus
@@ -126,6 +127,7 @@
   register: _ansible_pull_op_files
   loop:
     - op-service-account-token
+    - op-connect-token
   become: true
   when: ansible_pull_state == "present"
 

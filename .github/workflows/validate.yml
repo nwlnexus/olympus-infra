@@ -20,7 +20,7 @@ jobs:
   validate:
     name: validate
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -87,6 +87,22 @@ jobs:
           # no request, a failed read keeps the cached value, and it works under 1Password Connect; plus static
           # checks that pull roles call `op` in a Connect-compatible form and read the hourly secrets through it.
           ansible-playbook -i tests/op-cache/inventory.yml tests/op-cache/render.yml
+
+      - name: Pull wrapper tests (bats)
+        run: |
+          set -euo pipefail
+          # roles/ansible-pull/templates/ansible-pull-run.j2 rendered with real Jinja2 (the ansible-core venv) and run
+          # against mocks: Hermes paths, exit codes, and the 1Password auth choice (olympus-sdk#1039: read-only Connect
+          # token present, absent, bad mode, no marker, Connect unreachable -> service-account fallback).
+          sudo apt-get install -y -qq bats >/dev/null
+          RENDER_PYTHON="$RUNNER_TEMP/venv/bin/python" bats roles/ansible-pull/tests/bats
+
+      - name: Offline test (place-connect-token)
+        run: |
+          set -euo pipefail
+          # olympus-sdk#1039: the read-only Connect token playbook (--limit required, no_log, no diff, marker before
+          # token) and the ansible-pull role removing only an unmarked (old write-capable) token.
+          ansible-playbook -i tests/place-connect-token/inventory.yml tests/place-connect-token/render.yml
 
       - name: Offline render test (k3s-join-server)
         run: |

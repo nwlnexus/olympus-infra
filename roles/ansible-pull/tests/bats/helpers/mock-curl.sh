@@ -18,6 +18,10 @@
 #                            Overrides MOCK_RESPONSE_FILE.
 #   MOCK_RESP_COMPLETE     — file to cat when URL matches /v1/pull/runs/<id>
 #                            (POST with run-id suffix). Overrides FILE.
+#   MOCK_CONNECT_DOWN      — if set, GET .../heartbeat (1Password Connect) fails
+#                            with exit 7 (connection refused); otherwise it
+#                            prints "." like Connect. Independent of the
+#                            MOCK_RESP* vars above.
 #
 # Recognized curl flags (silently consumed): -f -s -S -X <m> --max-time <n>
 #   -H <hdr> --data-binary @file -d <body>
@@ -29,6 +33,15 @@ if [[ -n "${MOCK_CURL_LOG:-}" ]]; then
   echo "curl $*" >> "$MOCK_CURL_LOG"
 fi
 
+# 1Password Connect heartbeat (the wrapper's reachability check).
+for a in "$@"; do
+  if [[ "$a" == */heartbeat ]]; then
+    [[ -n "${MOCK_CONNECT_DOWN:-}" ]] && exit 7
+    echo "."
+    exit 0
+  fi
+done
+
 if [[ -n "${MOCK_RESPONSE_FAIL:-}" ]]; then
   exit 22
 fi
@@ -39,7 +52,7 @@ url=""
 while (( $# )); do
   case "$1" in
     -X) method="$2"; shift 2 ;;
-    -H|--max-time|-d|--data-binary) shift 2 ;;
+    -H|--max-time|-d|--data-binary|-o) shift 2 ;;
     -f|-s|-S|-fsS|-fs|-fS|-sS|--fail|--silent|--show-error) shift ;;
     --) shift; url="$1"; shift ;;
     -*) shift ;;  # unknown flag with no arg — skip

@@ -48,3 +48,9 @@ ansible_pull_log_file: "{{ ansible_pull_log_dir }}/run.log"
 # (/run is not writable there and /var/run is wiped at boot).
 ansible_pull_state_dir: /var/lib/olympus
 ansible_pull_runtime_dir: "{{ ansible_pull_state_dir }}/run"
+
+# 1Password Connect the wrapper reads through when the host holds a read-only Connect token
+# (/etc/olympus/op-connect-token plus its .read-only marker, placed by
+# playbooks/push/place-connect-token.yml); otherwise it uses the service-account token
+# (olympus-sdk#1039). The Fly-hosted Connect also serves ESO.
+ansible_pull_op_connect_host: https://connect.nwlnexus.net

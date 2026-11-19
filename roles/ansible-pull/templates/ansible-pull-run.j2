@@ -27,6 +27,9 @@ HERMES_URL="{{ hermes_url | default('https://api.nwlnexus.io') }}"
 HERMES_TOKEN_FILE="${WRAPPER_HERMES_TOKEN_FILE:-/etc/olympus/hermes-token}"
 HERMES_DISABLED_FLAG="${WRAPPER_HERMES_DISABLED_FLAG:-/etc/olympus/hermes-disabled}"
 OP_TOKEN_FILE="${WRAPPER_OP_TOKEN_FILE:-/etc/olympus/op-service-account-token}"
+OP_CONNECT_TOKEN_FILE="${WRAPPER_OP_CONNECT_TOKEN_FILE:-/etc/olympus/op-connect-token}"
+OP_CONNECT_MARKER="${WRAPPER_OP_CONNECT_MARKER:-/etc/olympus/op-connect-token.read-only}"
+OP_CONNECT_URL="${WRAPPER_OP_CONNECT_HOST:-{{ ansible_pull_op_connect_host | default('https://connect.nwlnexus.net') }}}"
 
 CACHE_DIR="${WRAPPER_CACHE_DIR:-${STATE_DIRECTORY:-{{ ansible_pull_state_dir }}}}"
 CACHE_FILE="$CACHE_DIR/classify.json"
@@ -94,20 +97,76 @@ log INFO "Starting Ansible Pull (state=$CACHE_DIR runtime=$RUNTIME_DIR log=$LOG_
   || die 78 "ansible-pull binary not found at $ANSIBLE_PULL_BIN"
 
 # ── 1. 1Password auth ─────────────────────────────────────────────────────────
-# Export the service-account token only. Roles call `op` with plain (non-JSON)
-# output, which 1Password Connect rejects ("Connect can only be used in
-# combination with the JSON output format"), and `op` prefers Connect whenever
-# OP_CONNECT_* is set, so exporting Connect here breaks every role that reads a
-# secret. Roles that want Connect set OP_CONNECT_* at the task level.
+# Reads through the Fly-hosted 1Password Connect when the host holds a READ-ONLY
+# Connect token; otherwise the service-account token (olympus-sdk#1039).
+# Service-account requests share one account-wide budget (1,000 per 24 h for all
+# service accounts); Connect reads do not count against it.
+#
+# Connect is used only when all of these hold, else the service account is:
+#   - $OP_CONNECT_TOKEN_FILE exists, is non-empty, owned by this user, mode 0600;
+#   - $OP_CONNECT_MARKER exists: playbooks/push/place-connect-token.yml writes it
+#     with the read-only token. A token without it is the old write-capable one
+#     (olympus-sdk#1002), which the ansible-pull role removes;
+#   - Connect answers GET /heartbeat (no token sent) within 5 s.
+# With Connect, OP_CONNECT_HOST/OP_CONNECT_TOKEN are exported and the
+# service-account token is not; `op` prefers Connect even where a role passes
+# the service-account token itself. Every host-side `op` call is Connect-safe
+# (`op read`, or JSON output: the community.general.onepassword lookup).
+# OP_CONNECT_* inherited from the caller is never used.
+#
+# The service-account token stays required: it is the fallback.
 if [[ ! -e "$OP_TOKEN_FILE" ]]; then
   die 78 "OP service-account token not found at $OP_TOKEN_FILE; bootstrap must place it before pulls can run"
 fi
 [[ -r "$OP_TOKEN_FILE" ]] || die 77 "OP service-account token $OP_TOKEN_FILE is not readable by user $(id -un)"
 
-unset OP_CONNECT_HOST OP_CONNECT_TOKEN
-export OP_SERVICE_ACCOUNT_TOKEN
-OP_SERVICE_ACCOUNT_TOKEN=$(cat "$OP_TOKEN_FILE")
-log INFO "1Password: using service-account token"
+unset OP_CONNECT_HOST OP_CONNECT_TOKEN OP_SERVICE_ACCOUNT_TOKEN
+
+# Prints why the Connect token cannot be used; prints nothing when it can.
+connect_token_problem() {
+  local owner mode
+{% if ansible_facts['os_family'] == 'Darwin' %}
+  owner=$(stat -f '%Su' "$OP_CONNECT_TOKEN_FILE" 2>/dev/null || echo "?")
+  mode=$(stat -f '%Lp' "$OP_CONNECT_TOKEN_FILE" 2>/dev/null || echo "?")
+{% else %}
+  owner=$(stat -c '%U' "$OP_CONNECT_TOKEN_FILE" 2>/dev/null || echo "?")
+  mode=$(stat -c '%a' "$OP_CONNECT_TOKEN_FILE" 2>/dev/null || echo "?")
+{% endif %}
+  if [[ ! -r "$OP_CONNECT_TOKEN_FILE" ]]; then
+    echo "it is not readable by user $(id -un)"
+  elif [[ ! -s "$OP_CONNECT_TOKEN_FILE" ]]; then
+    echo "it is empty"
+  elif [[ "$owner" != "$(id -un)" || "$mode" != "600" ]]; then
+    echo "it is owned by $owner with mode $mode, not $(id -un) with 600"
+  elif [[ ! -e "$OP_CONNECT_MARKER" ]]; then
+    echo "$OP_CONNECT_MARKER is missing (not a token placed by place-connect-token.yml)"
+  fi
+}
+
+OP_AUTH="service-account"
+if [[ -e "$OP_CONNECT_TOKEN_FILE" ]]; then
+  problem=$(connect_token_problem)
+  if [[ -n "$problem" ]]; then
+    log WARN "1Password: not using the Connect token $OP_CONNECT_TOKEN_FILE: $problem; falling back to the service-account token"
+  elif ! command -v curl >/dev/null 2>&1; then
+    log WARN "1Password: curl is not on PATH, cannot check Connect at $OP_CONNECT_URL; falling back to the service-account token"
+  elif ! curl -fsS --max-time 5 -o /dev/null "$OP_CONNECT_URL/heartbeat" 2>/dev/null; then
+    log WARN "1Password: Connect at $OP_CONNECT_URL did not answer /heartbeat; falling back to the service-account token"
+  else
+    OP_AUTH="connect"
+  fi
+fi
+
+if [[ "$OP_AUTH" == "connect" ]]; then
+  export OP_CONNECT_HOST="$OP_CONNECT_URL"
+  export OP_CONNECT_TOKEN
+  OP_CONNECT_TOKEN=$(cat "$OP_CONNECT_TOKEN_FILE")
+  log INFO "1Password: using Connect at $OP_CONNECT_URL (read-only token)"
+else
+  export OP_SERVICE_ACCOUNT_TOKEN
+  OP_SERVICE_ACCOUNT_TOKEN=$(cat "$OP_TOKEN_FILE")
+  log INFO "1Password: using service-account token"
+fi
 
 # ── 2. Hermes disabled? ───────────────────────────────────────────────────────
 HERMES_ENABLED=1

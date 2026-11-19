@@ -33,10 +33,13 @@ setup() {
   export WRAPPER_LOG_DIR="$TMPDIR/var/log"
   export WRAPPER_LOG_FILE="$TMPDIR/var/log/run.log"
   export WRAPPER_OP_TOKEN_FILE="$TMPDIR/etc/olympus/op-service-account-token"
+  export WRAPPER_OP_CONNECT_TOKEN_FILE="$TMPDIR/etc/olympus/op-connect-token"
+  export WRAPPER_OP_CONNECT_MARKER="$TMPDIR/etc/olympus/op-connect-token.read-only"
+  export WRAPPER_OP_CONNECT_HOST="https://connect.example.invalid"
   export WRAPPER_PARSER="$PARSER"
   export WRAPPER_ANSIBLE_PULL_BIN="$MOCK_PULL"
   export MOCK_PULL_ARGS="$TMPDIR/pull-args"
-  unset STATE_DIRECTORY RUNTIME_DIRECTORY MOCK_PULL_RC
+  unset STATE_DIRECTORY RUNTIME_DIRECTORY MOCK_PULL_RC MOCK_CONNECT_DOWN OP_CONNECT_HOST OP_CONNECT_TOKEN OP_SERVICE_ACCOUNT_TOKEN
 
   mkdir -p "$TMPDIR/etc/olympus" "$TMPDIR/var/log"
 
@@ -156,7 +159,7 @@ pull_arg_after() {
   [ ! -f "$MOCK_PULL_ARGS" ]
 }
 
-@test "only the service-account token reaches ansible-pull, even with Connect configured" {
+@test "no Connect token file: only the service-account token reaches ansible-pull, even with OP_CONNECT_* inherited" {
   touch "$WRAPPER_HERMES_DISABLED_FLAG"
   export MOCK_PULL_ENV="$TMPDIR/pull-env"
   OP_CONNECT_HOST=https://connect.example OP_CONNECT_TOKEN=x run bash "$WRAPPER"
@@ -164,6 +167,108 @@ pull_arg_after() {
   grep -q 'using service-account token' "$WRAPPER_LOG_FILE"
   grep -qx 'OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_PULL_ENV"
   ! grep -q '^OP_CONNECT' "$MOCK_PULL_ENV"
+  # No Connect check without a token file
+  ! grep -q 'heartbeat' "$MOCK_CURL_LOG" 2>/dev/null
+}
+
+# place_connect_token [mode] — a read-only Connect token as place-connect-token.yml leaves it.
+place_connect_token() {
+  echo "placeholder-connect-token" > "$WRAPPER_OP_CONNECT_TOKEN_FILE"
+  chmod "${1:-600}" "$WRAPPER_OP_CONNECT_TOKEN_FILE"
+  echo "read-only 1Password Connect token" > "$WRAPPER_OP_CONNECT_MARKER"
+}
+
+@test "read-only Connect token, Connect up: ansible-pull gets Connect only" {
+  touch "$WRAPPER_HERMES_DISABLED_FLAG"
+  place_connect_token
+  export MOCK_PULL_ENV="$TMPDIR/pull-env" MOCK_PULL_OP_VALUES="$TMPDIR/pull-op-values"
+  OP_CONNECT_HOST=https://inherited.example OP_SERVICE_ACCOUNT_TOKEN=inherited run bash "$WRAPPER"
+  [ "$status" -eq 0 ]
+  grep -q '\[INFO\] 1Password: using Connect at https://connect.example.invalid (read-only token)' "$WRAPPER_LOG_FILE"
+  grep -qx 'OP_CONNECT_HOST=https://connect.example.invalid' "$MOCK_PULL_OP_VALUES"
+  grep -qx 'OP_CONNECT_TOKEN=placeholder-connect-token' "$MOCK_PULL_OP_VALUES"
+  ! grep -q 'OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_PULL_ENV"
+  grep -q 'https://connect.example.invalid/heartbeat' "$MOCK_CURL_LOG"
+  # The heartbeat check sends no token, and no token value is ever logged
+  ! grep -q 'placeholder-connect-token' "$MOCK_CURL_LOG"
+  ! grep -q 'placeholder-connect-token\|fake-op-token' "$WRAPPER_LOG_FILE"
+  [[ "$output" != *placeholder-connect-token* ]]
+}
+
+@test "read-only Connect token, Connect unreachable: falls back to the service-account token" {
+  touch "$WRAPPER_HERMES_DISABLED_FLAG"
+  place_connect_token
+  export MOCK_PULL_ENV="$TMPDIR/pull-env" MOCK_CONNECT_DOWN=1
+  run bash "$WRAPPER"
+  [ "$status" -eq 0 ]
+  grep -q '\[WARN\] 1Password: Connect at https://connect.example.invalid did not answer /heartbeat; falling back to the service-account token' "$WRAPPER_LOG_FILE"
+  grep -q 'using service-account token' "$WRAPPER_LOG_FILE"
+  grep -qx 'OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_PULL_ENV"
+  ! grep -q '^OP_CONNECT' "$MOCK_PULL_ENV"
+}
+
+@test "Connect token with mode 0644: not used, service-account fallback" {
+  touch "$WRAPPER_HERMES_DISABLED_FLAG"
+  place_connect_token 644
+  export MOCK_PULL_ENV="$TMPDIR/pull-env"
+  run bash "$WRAPPER"
+  [ "$status" -eq 0 ]
+  grep -q "\[WARN\] 1Password: not using the Connect token .*with mode 644, not $(id -un) with 600" "$WRAPPER_LOG_FILE"
+  grep -qx 'OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_PULL_ENV"
+  ! grep -q '^OP_CONNECT' "$MOCK_PULL_ENV"
+  ! grep -q 'heartbeat' "$MOCK_CURL_LOG" 2>/dev/null
+}
+
+@test "Connect token without the read-only marker (the old write-capable token): not used" {
+  touch "$WRAPPER_HERMES_DISABLED_FLAG"
+  place_connect_token
+  rm -f "$WRAPPER_OP_CONNECT_MARKER"
+  export MOCK_PULL_ENV="$TMPDIR/pull-env"
+  run bash "$WRAPPER"
+  [ "$status" -eq 0 ]
+  grep -q '\[WARN\] 1Password: not using the Connect token .*op-connect-token.read-only is missing' "$WRAPPER_LOG_FILE"
+  grep -qx 'OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_PULL_ENV"
+  ! grep -q '^OP_CONNECT' "$MOCK_PULL_ENV"
+}
+
+@test "empty Connect token: not used" {
+  touch "$WRAPPER_HERMES_DISABLED_FLAG"
+  place_connect_token
+  : > "$WRAPPER_OP_CONNECT_TOKEN_FILE"
+  export MOCK_PULL_ENV="$TMPDIR/pull-env"
+  run bash "$WRAPPER"
+  [ "$status" -eq 0 ]
+  grep -q '\[WARN\] 1Password: not using the Connect token .*it is empty' "$WRAPPER_LOG_FILE"
+  grep -qx 'OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_PULL_ENV"
+}
+
+@test "unreadable Connect token: not used" {
+  skip_if_root
+  touch "$WRAPPER_HERMES_DISABLED_FLAG"
+  place_connect_token 000
+  export MOCK_PULL_ENV="$TMPDIR/pull-env"
+  run bash "$WRAPPER"
+  [ "$status" -eq 0 ]
+  grep -q "\[WARN\] 1Password: not using the Connect token .*it is not readable by user $(id -un)" "$WRAPPER_LOG_FILE"
+  grep -qx 'OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_PULL_ENV"
+}
+
+@test "Connect token present but no service-account token: still a visible failure (78)" {
+  place_connect_token
+  rm -f "$WRAPPER_OP_TOKEN_FILE"
+  run bash "$WRAPPER"
+  [ "$status" -eq 78 ]
+  [[ "$output" == *"[FATAL] OP service-account token not found"* ]]
+}
+
+@test "Connect with Hermes enabled: classify still works" {
+  place_connect_token
+  export MOCK_RESP_START_RUN="$FIXTURES/start-run-resp.json"
+  export MOCK_RESP_CLASSIFY="$FIXTURES/classify-ok.json"
+  run bash "$WRAPPER"
+  [ "$status" -eq 0 ]
+  grep -q 'using Connect at' "$WRAPPER_LOG_FILE"
+  grep -q '/v1/pull/classify' "$MOCK_CURL_LOG"
 }
 
 @test "unwritable state directory fails with EX_CANTCREAT (73)" {

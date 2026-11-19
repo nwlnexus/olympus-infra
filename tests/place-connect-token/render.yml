@@ -1,0 +1,75 @@
+---
+# Static checks for the read-only 1Password Connect token path (olympus-sdk#1039); no host, no token.
+#   - playbooks/push/place-connect-token.yml refuses to run without --limit, reads the token once on the
+#     controller, never logs or diffs it, and writes the read-only marker before the token;
+#   - the ansible-pull role removes /etc/olympus/op-connect-token only when the marker is missing (the old
+#     write-capable token of olympus-sdk#1002) and keeps a placed token at 0600 for the pull user.
+#
+#   ansible-playbook -i tests/place-connect-token/inventory.yml tests/place-connect-token/render.yml
+- name: Read-only Connect token placement and cleanup
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _repo: "{{ playbook_dir }}/../.."
+    _play: "{{ (lookup('ansible.builtin.file', _repo ~ '/playbooks/push/place-connect-token.yml') | from_yaml)[0] }}"
+    _tasks: "{{ _play.tasks }}"
+    _names: "{{ _tasks | map(attribute='name') | list }}"
+    _read: "{{ _tasks | selectattr('name', 'equalto', 'Read the token (controller, once)') | first }}"
+    _write: "{{ _tasks | selectattr('name', 'equalto', 'Write the Connect token') | first }}"
+    _marker: "{{ _tasks | selectattr('name', 'equalto', 'Write the read-only marker') | first }}"
+    _role_main: "{{ lookup('ansible.builtin.file', _repo ~ '/roles/ansible-pull/tasks/main.yml') | from_yaml }}"
+    _remove: "{{ _role_main | selectattr('name', 'defined') | selectattr('name', 'search', 'Remove a 1Password Connect token') | first }}"
+    _marker_stat: "{{ _role_main | selectattr('name', 'defined') | selectattr('name', 'search', 'read-only marker of the 1Password Connect token') | first }}"
+    _linux: "{{ lookup('ansible.builtin.file', _repo ~ '/roles/ansible-pull/tasks/linux.yml') | from_yaml }}"
+    _macos: "{{ lookup('ansible.builtin.file', _repo ~ '/roles/ansible-pull/tasks/macos.yml') | from_yaml }}"
+  tasks:
+    - name: The playbook refuses to run without --limit and never diffs
+      ansible.builtin.assert:
+        that:
+          - _play.diff is sameas false
+          - _names[0] == 'Require --limit'
+          - "'ansible_limit' in (_tasks[0]['ansible.builtin.assert'].that | string)"
+          - _tasks[0].run_once is sameas true
+        quiet: true
+
+    - name: The token is read once, on the controller, with no_log; written 0600 with no_log
+      ansible.builtin.assert:
+        that:
+          - _read.no_log is sameas true
+          - _read.delegate_to == 'localhost'
+          - _read.run_once is sameas true
+          - _read.become is sameas false
+          - _read['ansible.builtin.command'].argv[:2] == ['op', 'read']
+          - _play.vars.op_connect_token_ref is match('^op://Dev/[^/]+/credential$')
+          - _write.no_log is sameas true
+          - _write['ansible.builtin.copy'].dest == '/etc/olympus/op-connect-token'
+          - _write['ansible.builtin.copy'].mode == '0600'
+          - _tasks | selectattr('name', 'search', 'token is not empty') | map(attribute='no_log') | first is sameas true
+        quiet: true
+
+    - name: The marker is written before the token
+      ansible.builtin.assert:
+        that:
+          - _marker['ansible.builtin.copy'].dest == '/etc/olympus/op-connect-token.read-only'
+          - _names.index('Write the read-only marker') < _names.index('Write the Connect token')
+        quiet: true
+
+    - name: The role removes only a Connect token without the marker
+      ansible.builtin.assert:
+        that:
+          - _remove['ansible.builtin.file'].path == '/etc/olympus/op-connect-token'
+          - _remove['ansible.builtin.file'].state == 'absent'
+          - (_remove.when | string) is search('_ansible_pull_connect_marker.stat.exists')
+          - _marker_stat['ansible.builtin.stat'].path == '/etc/olympus/op-connect-token.read-only'
+          - _role_main.index(_marker_stat) < _role_main.index(_remove)
+        quiet: true
+
+    - name: A placed Connect token is kept at 0600 for the pull user (Linux and macOS)
+      vars:
+        _check_l: "{{ _linux | selectattr('name', 'equalto', 'Check the 1Password secret files under /etc/olympus') | first }}"
+        _check_m: "{{ _macos | selectattr('name', 'equalto', 'Check the 1Password secret files under /etc/olympus') | first }}"
+      ansible.builtin.assert:
+        that:
+          - "'op-connect-token' in _check_l.loop"
+          - "'op-connect-token' in _check_m.loop"
+        quiet: true

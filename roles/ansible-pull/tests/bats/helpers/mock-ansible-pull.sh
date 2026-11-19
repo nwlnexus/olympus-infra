@@ -13,6 +13,11 @@ set -euo pipefail
 if [[ -n "${MOCK_PULL_ENV:-}" ]]; then
   env | grep -o '^OP_[A-Z_]*' | sort >> "$MOCK_PULL_ENV" || true
 fi
+# - Records the OP_* variables with their values in $MOCK_PULL_OP_VALUES when set
+#   (tests use placeholder tokens only).
+if [[ -n "${MOCK_PULL_OP_VALUES:-}" ]]; then
+  env | grep '^OP_' | sort >> "$MOCK_PULL_OP_VALUES" || true
+fi
 if [[ -n "${MOCK_PULL_ARGS:-}" ]]; then
   printf '%s\n' "$@" -- >> "$MOCK_PULL_ARGS"
 fi

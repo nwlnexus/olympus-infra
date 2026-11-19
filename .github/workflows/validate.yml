@@ -80,6 +80,14 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Offline test (op-cache)
+        run: |
+          set -euo pipefail
+          # olympus-sdk#1039: the cached `op read` against a fake `op` (no network, no token): fresh cache means
+          # no request, a failed read keeps the cached value, and it works under 1Password Connect; plus static
+          # checks that pull roles call `op` in a Connect-compatible form and read the hourly secrets through it.
+          ansible-playbook -i tests/op-cache/inventory.yml tests/op-cache/render.yml
+
       - name: Offline render test (k3s-join-server)
         run: |
           set -euo pipefail

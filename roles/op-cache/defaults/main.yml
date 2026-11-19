@@ -1,0 +1,26 @@
+---
+# op-cache: read one 1Password secret reference with `op read`, cached on the host
+# (olympus-sdk#1039). Every service account in the 1Password account shares one budget of
+# 1,000 requests per 24 hours; an uncached read in every hourly pull on every host spent it.
+#
+# Inputs (pass with include_role vars):
+#   op_cache_name   file name under op_cache_dir, [A-Za-z0-9._-]+ (required)
+#   op_cache_ref    op://vault/item/field secret reference (required)
+#   op_cache_token_file      service-account token file exported for the read when present
+#                            (push runs over SSH have no OP_* in their environment; pull runs
+#                            already export it, or Connect, from the wrapper)
+#   op_cache_validate_regex  a read value is used and cached only when it matches ('' = any)
+# Outputs (facts): op_cache_value (the value, '' when none), op_cache_status
+#   fresh      cache younger than op_cache_max_age, no 1Password request
+#   refreshed  read from 1Password, cache rewritten
+#   stale      read failed (rate limit, network): cached value used
+#   missing    read failed and no cached value: op_cache_value is ''
+op_cache_name: ""
+op_cache_ref: ""
+op_cache_dir: /var/lib/olympus/op-cache
+op_cache_max_age: 86400
+op_cache_token_file: /etc/olympus/op-service-account-token
+op_cache_validate_regex: ""
+op_cache_become: true
+op_cache_owner: root
+op_cache_group: "{{ 'wheel' if ansible_facts['os_family'] | default('') == 'Darwin' else 'root' }}"

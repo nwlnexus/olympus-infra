@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  role_name: op_cache
+  author: nwlnexus
+  description: Cached `op read` of one 1Password secret reference on the host
+  license: MIT
+  min_ansible_version: "2.16"
+# Included once per secret, with different vars each time.
+allow_duplicates: true
+dependencies: []

@@ -1,0 +1,133 @@
+---
+# Cached `op read` (see defaults/main.yml). The read itself runs as the calling user without
+# become, so it inherits the pull wrapper's OP_SERVICE_ACCOUNT_TOKEN or OP_CONNECT_* (sudo would
+# drop them); only the cache file is root-only. `op read` works with a service account and with
+# 1Password Connect alike (Connect rejects only non-JSON `op item get` output).
+- name: "op-cache | check the inputs ({{ op_cache_name }})"
+  ansible.builtin.assert:
+    that:
+      - op_cache_name is match('^[A-Za-z0-9._-]+$')
+      - op_cache_ref is match('^op://[^/]+/[^/]+/.+')
+      - op_cache_max_age | int > 0
+    fail_msg: op-cache needs op_cache_name ([A-Za-z0-9._-]+) and an op://vault/item/field op_cache_ref.
+    quiet: true
+
+- name: "op-cache | ensure the cache directory exists (root only)"
+  ansible.builtin.file:
+    path: "{{ op_cache_dir }}"
+    state: directory
+    owner: "{{ op_cache_owner }}"
+    group: "{{ op_cache_group }}"
+    mode: "0700"
+  become: "{{ op_cache_become }}"
+
+- name: "op-cache | stat the cached value ({{ op_cache_name }})"
+  ansible.builtin.stat:
+    path: "{{ op_cache_dir }}/{{ op_cache_name }}"
+    get_checksum: false
+  become: "{{ op_cache_become }}"
+  register: _op_cache_stat
+
+- name: "op-cache | decide whether the cached value is fresh ({{ op_cache_name }})"
+  ansible.builtin.set_fact:
+    _op_cache_have: "{{ (_op_cache_stat.stat.exists | default(false)) and (_op_cache_stat.stat.size | default(0) | int) > 0 }}"
+    _op_cache_age: "{{ ((now().timestamp() - _op_cache_stat.stat.mtime) | int) if (_op_cache_stat.stat.exists | default(false)) else -1 }}"
+
+- name: "op-cache | fresh flag ({{ op_cache_name }})"
+  ansible.builtin.set_fact:
+    _op_cache_fresh: "{{ (_op_cache_have | bool) and (_op_cache_age | int) >= 0 and (_op_cache_age | int) < (op_cache_max_age | int) }}"
+
+# Push runs (SSH) have no token in their environment; pass the host's own token file when it is
+# readable. With OP_CONNECT_* exported by the pull wrapper, `op` uses Connect and ignores it.
+- name: "op-cache | read the service-account token file ({{ op_cache_name }})"
+  ansible.builtin.slurp:
+    src: "{{ op_cache_token_file }}"
+  register: _op_cache_sat
+  no_log: true
+  failed_when: false
+  when:
+    - not (_op_cache_fresh | bool)
+    - op_cache_token_file | length > 0
+
+- name: "op-cache | build the read environment ({{ op_cache_name }})"
+  ansible.builtin.set_fact:
+    _op_cache_env: >-
+      {{ {'OP_SERVICE_ACCOUNT_TOKEN': (_op_cache_sat.content | b64decode | trim)}
+         if (_op_cache_sat.content | default('') | length > 0) else {} }}
+  no_log: true
+  when: not (_op_cache_fresh | bool)
+
+- name: "op-cache | read {{ op_cache_name }} from 1Password (cache missing or older than {{ op_cache_max_age }}s)"
+  ansible.builtin.command:
+    argv: [op, read, "{{ op_cache_ref }}"]
+  environment: "{{ _op_cache_env | default({}) }}"
+  register: _op_cache_read
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+  when: not (_op_cache_fresh | bool)
+
+- name: "op-cache | decide whether the read succeeded ({{ op_cache_name }})"
+  ansible.builtin.set_fact:
+    _op_cache_read_ok: >-
+      {{ _op_cache_read is not skipped
+         and (_op_cache_read.rc | default(1)) == 0
+         and (_op_cache_read.stdout | default('') | trim | length) > 0
+         and (op_cache_validate_regex == '' or (_op_cache_read.stdout | default('') | trim) is search(op_cache_validate_regex)) }}
+    _op_cache_rate_limited: "{{ 'Too many requests' in (_op_cache_read.stderr | default('')) }}"
+  no_log: true
+
+- name: "op-cache | write the new value to the cache ({{ op_cache_name }})"
+  ansible.builtin.copy:
+    content: "{{ _op_cache_read.stdout | trim }}"
+    dest: "{{ op_cache_dir }}/{{ op_cache_name }}"
+    owner: "{{ op_cache_owner }}"
+    group: "{{ op_cache_group }}"
+    mode: "0600"
+  become: "{{ op_cache_become }}"
+  no_log: true
+  diff: false
+  when: _op_cache_read_ok | bool
+
+# Bump the mtime when the value is unchanged, so the next read waits a full max age.
+- name: "op-cache | mark the cache as refreshed ({{ op_cache_name }})"
+  ansible.builtin.file:
+    path: "{{ op_cache_dir }}/{{ op_cache_name }}"
+    state: touch
+    access_time: preserve
+  become: "{{ op_cache_become }}"
+  changed_when: false
+  when: _op_cache_read_ok | bool
+
+- name: "op-cache | load the cached value ({{ op_cache_name }})"
+  ansible.builtin.slurp:
+    src: "{{ op_cache_dir }}/{{ op_cache_name }}"
+  become: "{{ op_cache_become }}"
+  register: _op_cache_slurp
+  no_log: true
+  when:
+    - not (_op_cache_read_ok | bool)
+    - _op_cache_have | bool
+
+- name: "op-cache | set op_cache_value and op_cache_status ({{ op_cache_name }})"
+  ansible.builtin.set_fact:
+    op_cache_value: >-
+      {{ (_op_cache_read.stdout | trim) if (_op_cache_read_ok | bool)
+         else ((_op_cache_slurp.content | b64decode | trim) if (_op_cache_slurp.content is defined) else '') }}
+    op_cache_status: >-
+      {{ 'refreshed' if (_op_cache_read_ok | bool)
+         else ('fresh' if (_op_cache_fresh | bool)
+         else ('stale' if (_op_cache_slurp.content is defined) else 'missing')) }}
+  no_log: true
+
+# Status only, never the value. Hosts are checked for "op-cache <name>: fresh" after a change.
+- name: "op-cache | report ({{ op_cache_name }})"
+  ansible.builtin.debug:
+    msg: >-
+      op-cache {{ op_cache_name }}: {{ op_cache_status }}
+      {%- if op_cache_status == 'fresh' %} (age {{ _op_cache_age }}s, no 1Password request)
+      {%- elif op_cache_status == 'refreshed' %} (read from 1Password)
+      {%- else %}; 1Password read failed{{ ' (rate-limited)' if (_op_cache_rate_limited | bool) else ' (rc ' ~ (_op_cache_read.rc | default('?')) ~ ')' }}
+      {%- if op_cache_status == 'stale' %}, using the cached value (age {{ _op_cache_age }}s)
+      {%- else %} and nothing is cached: the caller skips what needs it{% endif %}{% endif %}

@@ -272,13 +272,16 @@
     status_code: 200
   register: ts_oauth_device
   no_log: true
+  # Drift first: `when` stops at the first false item, and each tailscale_oauth_* reference is a
+  # community.general.onepassword lookup (two `op` calls, against the account-wide service-account
+  # budget). Checked last, they cost nothing in a run without drift (olympus-sdk#1039).
   when:
     - tailscale_state == "present"
     - tailscale_is_running
-    - tailscale_oauth_client_id != ""
-    - tailscale_oauth_client_secret != ""
     - (ts_tags_current != ts_tags_desired) or
       (ts_hostname_current is defined and ts_hostname_current != tailscale_hostname)
+    - tailscale_oauth_client_id != ""
+    - tailscale_oauth_client_secret != ""
 
 # Check via Tailscale API whether the node is ephemeral so we can re-auth to
 # make it persistent. A node joined with an ephemeral key is removed from the

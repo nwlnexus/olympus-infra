@@ -1,0 +1,12 @@
+---
+# The baseline role in check mode inside a throwaway Ubuntu container (run.sh), for the
+# converge handover (olympus-sdk#341). No 1Password: op-cli is skipped by tag and the
+# ansible key item is empty.
+- name: baseline in check mode
+  hosts: all
+  gather_facts: true
+  vars:
+    baseline_op_ssh_pubkey_item: ""
+  roles:
+    - role: baseline
+      tags: [baseline]

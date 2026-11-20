@@ -236,7 +236,7 @@
     _repo: "{{ playbook_dir }}/../.."
     _pull_play: "{{ lookup('ansible.builtin.file', _repo ~ '/playbooks/pull/olympus.yml') | from_yaml }}"
     _pull_roles: "{{ _pull_play[0].roles | map(attribute='role') | list }}"
-    _ssh: "{{ lookup('ansible.builtin.file', _repo ~ '/roles/baseline/tasks/ssh.yml') }}"
+    _ssh: "{{ lookup('ansible.builtin.file', _repo ~ '/roles/baseline/tasks/ssh-access.yml') }}"
     _ddclient: "{{ lookup('ansible.builtin.file', _repo ~ '/roles/ddclient/tasks/main.yml') }}"
     _ts_linux: "{{ lookup('ansible.builtin.file', _repo ~ '/roles/tailscale/tasks/linux.yml') | from_yaml }}"
     _mac_agents: "{{ lookup('ansible.builtin.file', _repo ~ '/inventory/group_vars/k3s_mac_agents.yml') | from_yaml }}"

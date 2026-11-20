@@ -14,6 +14,10 @@
 # same run that first reads it. For hosts whose services are managed elsewhere
 # (data-hub: nix-darwin or by hand).
 #
+# converge_managed_roles (list, default []): atlas converge roles that manage the host
+# instead of ansible-pull (olympus-sdk#341). The baseline role skips exactly the tasks
+# each one replaces; the map is at the top of roles/baseline/tasks/linux.yml.
+#
 # Run by the ansible service user via:
 #   Linux:  systemd timer → /opt/ansible-pull/ansible-pull-run
 #   macOS:  LaunchDaemon → /opt/ansible-pull/ansible-pull-run

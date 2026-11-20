@@ -7,7 +7,7 @@
 #   full  = this tree, every converge role listed     -> only the mapped tasks drop out
 # Needs podman. Nothing touches a real host.
 #
-#   tests/converge-handover/run.sh [base-ref]
+#   tests/converge-handover/run.sh [base-ref]    (exit 1 on an unexpected result)
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
@@ -47,3 +47,18 @@ echo "== empty vs full (expected: only the mapped tasks gone or skipped)"
 diff "$work/empty.txt" "$work/full.txt" || true
 echo "== typo (expected: the name check fails)"
 grep -E 'failed|handover' "$work/typo.txt" || true
+
+# Assertions (exit 1 on an unexpected result).
+fail=0
+added=$(diff "$work/base.txt" "$work/empty.txt" | grep -c '^[<>]' || true)
+expected_added=$(diff "$work/base.txt" "$work/empty.txt" | grep -c -E '^> ok\s+baseline : (Converge handover — |baseline — ansible account SSH access$)' || true)
+[ "$added" = 3 ] && [ "$expected_added" = 3 ] || { echo "FAIL: base vs empty differs beyond the handover tasks"; fail=1; }
+for t in 'baseline — ansible account SSH access' 'Ensure ansible user .local/bin exists' 'Configure logrotate for ansible-pull logs'; do
+  grep -q -F "$t" "$work/full.txt" || { echo "FAIL: '$t' missing with every role listed"; fail=1; }
+done
+for t in 'baseline — SSH hardening' 'baseline — fail2ban' 'baseline — unattended upgrades' 'baseline — time sync' 'baseline — firewall (UFW)' 'Install logrotate'; do
+  grep -q -E "^skipped	baseline : ${t//(/\\(}" "$work/full.txt" || { echo "FAIL: '$t' not skipped with every role listed"; fail=1; }
+done
+grep -q -F 'failed	baseline : Converge handover — check the names' "$work/typo.txt" || { echo "FAIL: a typo did not fail the run"; fail=1; }
+[ "$fail" = 0 ] && echo "PASS"
+exit "$fail"

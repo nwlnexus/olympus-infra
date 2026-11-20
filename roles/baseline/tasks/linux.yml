@@ -1,5 +1,48 @@
 ---
 # Imported from main.yml (see the gate there).
+
+# Converge handover (olympus-sdk#341). converge_managed_roles (host_vars, default []) names the
+# atlas converge roles that manage this host instead of ansible-pull; each name skips exactly
+# the baseline tasks that role replaces, nothing else:
+#   sshd                -> ssh.yml (hardening drop-in, sshd -t/-T checks); ssh-access.yml stays
+#   unattended-upgrades -> unattended.yml
+#   fail2ban            -> fail2ban.yml
+#   timesync            -> timesync.yml
+#   base-packages       -> the logrotate package task in logrotate.yml (its pull-log rule and the
+#                          cloud-init-base duplicate fix stay)
+#   firewall            -> firewall.yml (including its "ufw disable" when the firewall is off)
+#   base-sysctl, motd, ansible-account -> nothing (no baseline counterpart: base-sysctl pins
+#                          kernel.*/fs.* keys in its own files, baseline_sysctls writes
+#                          90-olympus-baseline.conf; the ansible account is push-only bootstrap-user)
+# An empty list changes nothing. An unknown name fails the run: a typo would leave two writers.
+- name: Converge handover — read the converge-managed roles
+  ansible.builtin.set_fact:
+    _baseline_converge: "{{ converge_managed_roles | default([], true) }}"
+  tags: [always]
+
+- name: Converge handover — check the names
+  ansible.builtin.assert:
+    that:
+      - _baseline_converge is sequence
+      - _baseline_converge is not string
+      - _baseline_converge | difference(_baseline_converge_known) | length == 0
+    fail_msg: >-
+      converge_managed_roles must be a list of converge role names ({{ _baseline_converge_known | join(', ') }});
+      got {{ _baseline_converge }}
+    quiet: true
+  vars:
+    _baseline_converge_known:
+      - sshd
+      - unattended-upgrades
+      - fail2ban
+      - timesync
+      - base-packages
+      - firewall
+      - base-sysctl
+      - motd
+      - ansible-account
+  tags: [always]
+
 # Credential directory traverse — ansible user must be able to read files
 # inside /etc/olympus (token files, etc.) without becoming root.
 - name: Ensure ansible user can traverse /etc/olympus
@@ -23,18 +66,26 @@
 # later tasks/host_vars is already in place before deny-by-default).
 - name: baseline — SSH hardening
   ansible.builtin.include_tasks: ssh.yml
+  when: "'sshd' not in _baseline_converge"
+  tags: [baseline, baseline-ssh]
+
+- name: baseline — ansible account SSH access
+  ansible.builtin.include_tasks: ssh-access.yml
   tags: [baseline, baseline-ssh]
 
 - name: baseline — unattended upgrades
   ansible.builtin.include_tasks: unattended.yml
+  when: "'unattended-upgrades' not in _baseline_converge"
   tags: [baseline, baseline-unattended]
 
 - name: baseline — fail2ban
   ansible.builtin.include_tasks: fail2ban.yml
+  when: "'fail2ban' not in _baseline_converge"
   tags: [baseline, baseline-fail2ban]
 
 - name: baseline — time sync
   ansible.builtin.include_tasks: timesync.yml
+  when: "'timesync' not in _baseline_converge"
   tags: [baseline, baseline-timesync]
 
 - name: baseline — logrotate for ansible-pull
@@ -91,4 +142,5 @@
 
 - name: baseline — firewall (UFW)
   ansible.builtin.include_tasks: firewall.yml
+  when: "'firewall' not in _baseline_converge"
   tags: [baseline, baseline-firewall]

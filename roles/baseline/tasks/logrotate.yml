@@ -5,7 +5,9 @@
     state: present
     update_cache: false
   become: true
-  when: baseline_state == "present"
+  when:
+    - baseline_state == "present"
+    - "'base-packages' not in _baseline_converge"
 
 - name: Configure logrotate for ansible-pull logs
   ansible.builtin.template:

@@ -4,6 +4,11 @@
 
 baseline_state: present
 
+# Converge handover (olympus-sdk#341): atlas converge role names that manage this host instead
+# of ansible-pull, set per host in host_vars (e.g. [sshd, fail2ban]). Each skips exactly the
+# baseline tasks that role replaces; the map is at the top of tasks/linux.yml. [] = no change.
+converge_managed_roles: []
+
 # Firewall — opt-in. Cluster hosts (k3s, OrbStack) keep this false to
 # avoid breaking pod-to-pod traffic; non-cluster hosts (styx) flip it on.
 baseline_firewall_enabled: false

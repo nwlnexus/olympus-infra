@@ -16,3 +16,15 @@ ddclient_extra_fqdns:
 # Node hardening (baseline role, tasks/node-hardening.yml); rolled out one node at a
 # time: naraka-01, then this node, then onode-0312ce, then onode-030c31.
 baseline_node_hardening: true
+
+# atlas converge manages these roles here; baseline skips exactly the tasks each replaces
+# (map: roles/baseline/tasks/linux.yml). Canary of the converge takeover, olympus-sdk#341.
+converge_managed_roles:
+  - sshd
+  - unattended-upgrades
+  - fail2ban
+  - timesync
+  - base-packages
+  - base-sysctl
+  - motd
+  - ansible-account

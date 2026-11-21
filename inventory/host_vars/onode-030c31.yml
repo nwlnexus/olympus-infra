@@ -30,3 +30,15 @@ baseline_node_hardening: true
 
 # KVM CI node: nested virtualization off (security review #394 m6).
 baseline_kvm_amd_nested_off: true
+
+# atlas converge manages these roles here; baseline skips exactly the tasks each replaces
+# (map: roles/baseline/tasks/linux.yml). Group rollout of the converge takeover, olympus-sdk#341.
+converge_managed_roles:
+  - sshd
+  - unattended-upgrades
+  - fail2ban
+  - timesync
+  - base-packages
+  - base-sysctl
+  - motd
+  - ansible-account

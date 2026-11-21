@@ -12,3 +12,15 @@ k3s_init: false   # joins the existing etcd through the VIP; never cluster-init
 k3s_node_ip: "192.168.253.12"
 
 tailscale_hostname: onode-062caa
+
+# atlas converge manages these roles here; baseline skips exactly the tasks each replaces
+# (map: roles/baseline/tasks/linux.yml). Group rollout of the converge takeover, olympus-sdk#341.
+converge_managed_roles:
+  - sshd
+  - unattended-upgrades
+  - fail2ban
+  - timesync
+  - base-packages
+  - base-sysctl
+  - motd
+  - ansible-account

@@ -26,3 +26,15 @@ baseline_k8s_node_network: true
 # node at a time: naraka-01 first (2026-10-19), then onode-0314ac, onode-0312ce,
 # onode-030c31, verifying after each.
 baseline_node_hardening: true
+
+# atlas converge manages these roles here; baseline skips exactly the tasks each replaces
+# (map: roles/baseline/tasks/linux.yml). Group rollout of the converge takeover, olympus-sdk#341.
+converge_managed_roles:
+  - sshd
+  - unattended-upgrades
+  - fail2ban
+  - timesync
+  - base-packages
+  - base-sysctl
+  - motd
+  - ansible-account

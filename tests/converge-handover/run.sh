@@ -35,7 +35,7 @@ run() { # <name> <roles path> [extra vars json]
     ${3:+-e "$3"} /src/tests/converge-handover/site.yml >"$work/$1.json" || true
   python3 "$here/summarize.py" <"$work/$1.json" >"$work/$1.txt"
 }
-all='{"converge_managed_roles":["sshd","unattended-upgrades","fail2ban","timesync","base-packages","firewall","base-sysctl","motd","ansible-account"]}'
+all='{"converge_managed_roles":["sshd","unattended-upgrades","fail2ban","timesync","base-packages","firewall","base-sysctl","motd","ansible-account","ansible-ssh-key"]}'
 run base /base-roles
 run empty /src/roles
 run full /src/roles "$all"

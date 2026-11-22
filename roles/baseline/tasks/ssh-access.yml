@@ -1,6 +1,7 @@
 ---
 # The ansible account's SSH access (split from ssh.yml, olympus-sdk#341): kept when atlas converge
-# manages the sshd hardening (converge_managed_roles: [sshd]), because converge does not provision keys.
+# manages the sshd hardening (converge_managed_roles: [sshd]). Skipped where converge role ansible-ssh-key
+# provisions the key (converge_managed_roles: [ansible-ssh-key], olympus-sdk#1050).
 
 - name: Ensure ansible user .local/bin exists
   ansible.builtin.file:
@@ -30,6 +31,7 @@
   when:
     - baseline_state == "present"
     - baseline_op_ssh_pubkey_item != ""
+    - "'ansible-ssh-key' not in _baseline_converge"
   tags: [baseline, baseline-ssh]
 
 - name: Keep the SSH public key for this role
@@ -38,6 +40,7 @@
   when:
     - baseline_state == "present"
     - baseline_op_ssh_pubkey_item != ""
+    - "'ansible-ssh-key' not in _baseline_converge"
   tags: [baseline, baseline-ssh]
 
 - name: Provision ansible user SSH public key
@@ -49,4 +52,5 @@
   when:
     - baseline_state == "present"
     - _baseline_ssh_pubkey | default('') | trim | length > 0
+    - "'ansible-ssh-key' not in _baseline_converge"
   tags: [baseline, baseline-ssh]

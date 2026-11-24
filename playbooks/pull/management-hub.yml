@@ -22,7 +22,9 @@
 
     - role: iscsi
       tags: [iscsi]
-      when: iscsi_state is defined
+      when:
+        - iscsi_state is defined
+        - "'iscsi' not in (converge_managed_roles | default([], true))"
 
     - role: atlas
       tags: [atlas]

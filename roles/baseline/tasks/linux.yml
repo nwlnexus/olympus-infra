@@ -13,6 +13,8 @@
 #   base-packages       -> the logrotate package task in logrotate.yml (its pull-log rule and the
 #                          cloud-init-base duplicate fix stay)
 #   firewall            -> firewall.yml (including its "ufw disable" when the firewall is off)
+#   iscsi               -> nothing in baseline: playbooks/pull/olympus.yml skips the whole iscsi role
+#                          (linux_csi_node.yml on the k3s nodes; olympus-sdk#345)
 #   base-sysctl, motd, ansible-account -> nothing (no baseline counterpart: base-sysctl pins
 #                          kernel.*/fs.* keys in its own files, baseline_sysctls writes
 #                          90-olympus-baseline.conf; the ansible account is push-only bootstrap-user)
@@ -44,6 +46,7 @@
       - motd
       - ansible-account
       - ansible-ssh-key
+      - iscsi
   tags: [always]
 
 # Credential directory traverse — ansible user must be able to read files

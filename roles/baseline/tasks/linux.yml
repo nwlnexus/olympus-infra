@@ -5,6 +5,8 @@
 # atlas converge roles that manage this host instead of ansible-pull; each name skips exactly
 # the baseline tasks that role replaces, nothing else:
 #   sshd                -> ssh.yml (hardening drop-in, sshd -t/-T checks); ssh-access.yml stays
+#   ansible-ssh-key     -> the key tasks of ssh-access.yml (1Password read + authorized_key,
+#                          olympus-sdk#1050); its ~ansible/.local/bin task stays
 #   unattended-upgrades -> unattended.yml
 #   fail2ban            -> fail2ban.yml
 #   timesync            -> timesync.yml
@@ -41,6 +43,7 @@
       - base-sysctl
       - motd
       - ansible-account
+      - ansible-ssh-key
   tags: [always]
 
 # Credential directory traverse — ansible user must be able to read files

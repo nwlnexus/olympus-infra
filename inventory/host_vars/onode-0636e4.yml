@@ -24,3 +24,4 @@ converge_managed_roles:
   - base-sysctl
   - motd
   - ansible-account
+  - ansible-ssh-key

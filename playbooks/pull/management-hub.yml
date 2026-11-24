@@ -32,7 +32,9 @@
 
     - role: ddclient
       tags: [ddclient]
-      when: ddclient_state is defined
+      when:
+        - ddclient_state is defined
+        - "'ddclient' not in (converge_managed_roles | default([], true))"
 
     # ── Hermes ENC (must be LAST — appends roles, never displaces) ───────────
     - role: hermes-classify-include

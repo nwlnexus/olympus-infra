@@ -15,6 +15,9 @@
 #   firewall            -> firewall.yml (including its "ufw disable" when the firewall is off)
 #   iscsi               -> nothing in baseline: playbooks/pull/olympus.yml skips the whole iscsi role
 #                          (linux_csi_node.yml on the k3s nodes; olympus-sdk#345)
+#   ddclient            -> nothing in baseline: playbooks/pull/olympus.yml skips the whole ddclient
+#                          role (/etc/ddclient.conf, the package and the service; olympus-sdk#1155).
+#                          Its 1Password token cache (op-cache) stays until removed by hand
 #   base-sysctl, motd, ansible-account -> nothing (no baseline counterpart: base-sysctl pins
 #                          kernel.*/fs.* keys in its own files, baseline_sysctls writes
 #                          90-olympus-baseline.conf; the ansible account is push-only bootstrap-user)
@@ -47,6 +50,7 @@
       - ansible-account
       - ansible-ssh-key
       - iscsi
+      - ddclient
   tags: [always]
 
 # Credential directory traverse — ansible user must be able to read files

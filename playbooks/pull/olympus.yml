@@ -17,7 +17,8 @@
 # converge_managed_roles (list, default []): atlas converge roles that manage the host
 # instead of ansible-pull (olympus-sdk#341). The baseline role skips exactly the tasks
 # each one replaces; the map is at the top of roles/baseline/tasks/linux.yml. `iscsi` skips
-# the whole iscsi role below (converge role iscsi, olympus-sdk#345).
+# the whole iscsi role below (converge role iscsi, olympus-sdk#345); `ddclient` skips the whole
+# ddclient role (converge role ddclient, Linux only, olympus-sdk#1155).
 #
 # Run by the ansible service user via:
 #   Linux:  systemd timer → /opt/ansible-pull/ansible-pull-run
@@ -142,7 +143,9 @@
     # the play for the host and skips every later role (olympus-sdk#703).
     - role: ddclient
       tags: [ddclient]
-      when: "'ddclient' not in (pull_excluded_roles | default([]))"
+      when:
+        - "'ddclient' not in (pull_excluded_roles | default([]))"
+        - "'ddclient' not in (converge_managed_roles | default([], true))"
 
     # ── Always last — Hermes-injected dynamic roles ───────────────────────────
     - role: hermes-classify-include

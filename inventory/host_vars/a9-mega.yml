@@ -21,3 +21,4 @@ converge_managed_roles:
   - motd
   - ansible-account
   - ansible-ssh-key
+  - ddclient

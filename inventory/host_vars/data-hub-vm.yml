@@ -20,3 +20,4 @@ converge_managed_roles:
   - ansible-account
   - ansible-ssh-key
   - iscsi
+  - ddclient

@@ -15,10 +15,9 @@ k3s_ha: true
 k3s_disable: [traefik]
 
 # QNAP CSI (Trident) — cluster-wide storage provisioner for qnap-iscsi PVCs.
-# Runs on the HA primary only (gated in olympus.yml on k3s_primary). iSCSI CHAP
-# creds live in the cluster-named 1Password item (not <hostname>-qnap-iscsi).
+# Runs on the HA primary only (gated in olympus.yml on k3s_primary). The backend
+# credentials come from olympus-gitops (ExternalSecret), not from this role.
 qnap_csi_state: present
-qnap_iscsi_op_item: compute-hub-qnap-iscsi
 qnap_csi_kubeconfig: /etc/rancher/k3s/k3s.yaml
 # Node labels/taints: none. The onodes are the default compute pool (untainted,
 # unlabelled). olympus-gitops places work here with `olympus.io/role DoesNotExist`

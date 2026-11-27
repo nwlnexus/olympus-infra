@@ -4,20 +4,22 @@
 # UNSET here on purpose so the gate only fires where explicitly enabled.
 # Git repo for the QNAP CSI Plugin (Trident-based)
 qnap_csi_repo: https://github.com/qnap-dev/QNAP-CSI-PlugIn.git
-qnap_csi_version: "main"    # pin to a tag/SHA after first successful install
+# Pinned to the commit of tag v1.6.3 (2026-11-24), so a rebuild installs the
+# version this cluster was tested with (olympus-infra#165). The chart's image
+# tags follow the checkout (qnapsystem/qnap-csi*:v1.6.3).
+# The role installs once (sentinel below). Changing the pin does NOT upgrade a
+# running cluster: an upgrade restarts the controller and every node plugin, so
+# it goes through docs/runbooks/2026-11-27-qnap-csi-1.6.3-upgrade.md.
+qnap_csi_version: "3e4e730f15fd3d283202b3edf4f7c169ea5b0c66"  # v1.6.3
 qnap_csi_install_dir: /opt/qnap-csi-plugin
 # Helm release name and namespace
 qnap_csi_helm_release: qnap-trident
 qnap_csi_namespace: trident
 # Idempotency sentinel — presence means Trident is already installed
 qnap_csi_sentinel: /opt/qnap-csi-plugin/.installed
-# 1Password item for QNAP management credentials (shared across clusters)
-qnap_csi_op_item: qnap-csi
-qnap_csi_op_vault: Dev
-# 1Password item for per-host iSCSI CHAP credentials
-# Override per-host: e.g. qnap_iscsi_op_item: ai-hub-qnap-iscsi
-qnap_iscsi_op_item: "{{ inventory_hostname }}-qnap-iscsi"
-qnap_iscsi_op_vault: Dev
+# The backend (storage address, mgmt account, CHAP) is not configured here: the
+# chart takes no credentials. olympus-gitops clusters/olympus/qnap-storage
+# (TridentBackendConfig + ExternalSecret) owns it.
 # k3s kubeconfig path. Default = bare-metal k3s (root-only, mode 0600; the helm
 # task runs with become).
 # Override for non-standard k3s hosts if ever needed.

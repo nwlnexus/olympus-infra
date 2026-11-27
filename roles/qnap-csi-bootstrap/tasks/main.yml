@@ -1,86 +1,70 @@
 ---
-- name: Ensure Git is installed (Homebrew, macOS)
-  community.general.homebrew:
-    name: git
-    state: present
-  become: false
-  when: ansible_facts['os_family'] == "Darwin"
-
-- name: Clone QNAP CSI Plugin repository
-  ansible.builtin.git:
-    repo: "{{ qnap_csi_repo }}"
-    dest: "{{ qnap_csi_install_dir }}"
-    version: "{{ qnap_csi_version }}"
-    force: false
-  become: true
-  when: qnap_csi_state == "present"
-
-# Read creds via the community.general.onepassword lookup (controller-side).
-# Auth comes from the environment: the pull wrapper exports OP_SERVICE_ACCOUNT_TOKEN
-# (push runs may export OP_CONNECT_* instead; the lookup works with either). We pass
-# no explicit token arg so `op` picks up whichever auth env is present.
-- name: Load QNAP management + iSCSI CHAP credentials from 1Password
-  ansible.builtin.set_fact:
-    _qnap_mgmt_user: "{{ lookup('community.general.onepassword',
-        qnap_csi_op_item, field='username', vault=qnap_csi_op_vault) }}"
-    _qnap_mgmt_pass: "{{ lookup('community.general.onepassword',
-        qnap_csi_op_item, field='password', vault=qnap_csi_op_vault) }}"
-    _qnap_storage_addr: "{{ lookup('community.general.onepassword',
-        qnap_iscsi_op_item, field='storageAddress', vault=qnap_iscsi_op_vault) }}"
-    _chap_user: "{{ lookup('community.general.onepassword',
-        qnap_iscsi_op_item, field='chapInitiatorUsername', vault=qnap_iscsi_op_vault) }}"
-    _chap_pass: "{{ lookup('community.general.onepassword',
-        qnap_iscsi_op_item, field='chapInitiatorPassword', vault=qnap_iscsi_op_vault) }}"
-  no_log: true
-  when: qnap_csi_state == "present"
-
-- name: Relax chart kubeVersion ceiling (chart caps at 1.32; k3s may be newer)
-  ansible.builtin.replace:
-    path: "{{ qnap_csi_install_dir }}/Helm/trident/Chart.yaml"
-    regexp: '^kubeVersion:.*$'
-    replace: 'kubeVersion: ">= 1.24.0"'
-  become: true
-  when: qnap_csi_state == "present"
-
+# Install-once role. After the first successful install (sentinel present) every
+# task below is skipped, so re-runs change nothing and never touch the clone.
+# Upgrades: docs/runbooks/2026-11-27-qnap-csi-1.6.3-upgrade.md.
 - name: Check if QNAP CSI Plugin is already installed (sentinel)
   ansible.builtin.stat:
     path: "{{ qnap_csi_sentinel }}"
   register: _qnap_csi_installed
   when: qnap_csi_state == "present"
 
-- name: Install QNAP CSI Plugin via Helm (from local clone)
-  ansible.builtin.command: >
-    helm --kubeconfig {{ qnap_csi_kubeconfig }}
-    install {{ qnap_csi_helm_release }}
-    {{ qnap_csi_install_dir }}/Helm/trident
-    -n {{ qnap_csi_namespace }}
-    --create-namespace
-    --set managementLIF={{ _qnap_storage_addr }}
-    --set username={{ _qnap_mgmt_user }}
-    --set password={{ _qnap_mgmt_pass }}
-    --set chapInitiatorUser={{ _chap_user }}
-    --set chapInitiatorSecret={{ _chap_pass }}
-  become: true  # the k3s kubeconfig is root-only (0600)
-  no_log: true
-  register: _helm_install
-  changed_when:
-    - _helm_install.rc == 0
-  failed_when:
-    - _helm_install.rc != 0
-    - "'already exists' not in (_helm_install.stderr | default(''))"
-    - "'cannot reuse' not in (_helm_install.stderr | default(''))"
+- name: Install QNAP CSI Plugin at the pinned version
   when:
     - qnap_csi_state == "present"
     - not (_qnap_csi_installed.stat.exists | default(false))
+  block:
+    - name: Ensure Git is installed (Homebrew, macOS)
+      community.general.homebrew:
+        name: git
+        state: present
+      become: false
+      when: ansible_facts['os_family'] == "Darwin"
 
-- name: Create install sentinel
-  ansible.builtin.file:
-    path: "{{ qnap_csi_sentinel }}"
-    state: touch
-    mode: "0644"
-  become: true
-  when:
-    - qnap_csi_state == "present"
-    - _helm_install is not skipped
-    - _helm_install.rc is defined
-    - _helm_install.rc == 0 or 'already exists' in (_helm_install.stderr | default(''))
+    - name: Clone QNAP CSI Plugin repository
+      ansible.builtin.git:
+        repo: "{{ qnap_csi_repo }}"
+        dest: "{{ qnap_csi_install_dir }}"
+        version: "{{ qnap_csi_version }}"
+        # A clone left by a failed install carries the kubeVersion edit below;
+        # discard it so the checkout of the pin cannot fail. Only reached
+        # before the sentinel exists, so it never resets a working install.
+        force: true
+      become: true
+
+    - name: Relax chart kubeVersion ceiling (chart caps at 1.35; k3s may be newer)
+      ansible.builtin.replace:
+        path: "{{ qnap_csi_install_dir }}/Helm/trident/Chart.yaml"
+        regexp: '^kubeVersion:.*$'
+        replace: 'kubeVersion: ">= 1.24.0"'
+      become: true
+
+    # The chart takes no credentials (only operator/orchestrator image values);
+    # the backend comes from olympus-gitops (TridentBackendConfig +
+    # ExternalSecret). Passing the QNAP admin and CHAP secrets here only stored
+    # them in the Helm release Secret, so they are no longer passed.
+    - name: Install QNAP CSI Plugin via Helm (from local clone)
+      ansible.builtin.command: >
+        helm --kubeconfig {{ qnap_csi_kubeconfig }}
+        install {{ qnap_csi_helm_release }}
+        {{ qnap_csi_install_dir }}/Helm/trident
+        -n {{ qnap_csi_namespace }}
+        --create-namespace
+      become: true  # the k3s kubeconfig is root-only (0600)
+      register: _helm_install
+      changed_when:
+        - _helm_install.rc == 0
+      failed_when:
+        - _helm_install.rc != 0
+        - "'cannot re-use a name that is still in use' not in (_helm_install.stderr | default(''))"
+
+    - name: Create install sentinel
+      ansible.builtin.file:
+        path: "{{ qnap_csi_sentinel }}"
+        state: touch
+        mode: "0644"
+        modification_time: preserve
+        access_time: preserve
+      become: true
+      when:
+        - _helm_install.rc is defined
+        - _helm_install.rc == 0 or 'cannot re-use a name that is still in use' in (_helm_install.stderr | default(''))
